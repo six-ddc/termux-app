@@ -23,15 +23,41 @@
             android:layout_above="@+id/terminal_toolbar_view_pager"
             android:layout_height="match_parent">
 
-            <com.termux.view.TerminalView
-                android:id="@+id/terminal_view"
+            <LinearLayout
+                android:id="@+id/terminal_workspace"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:defaultFocusHighlightEnabled="false"
-                android:focusableInTouchMode="true"
-                android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
-                android:scrollbars="vertical"
-                tools:ignore="UnusedAttribute" />
+                android:orientation="vertical">
+
+                <HorizontalScrollView
+                    android:id="@+id/terminal_sessions_tab_strip_scroll"
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:background="?attr/termuxActivityDrawerBackground"
+                    android:fillViewport="false"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:id="@+id/terminal_sessions_tab_strip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal" />
+
+                </HorizontalScrollView>
+
+                <com.termux.view.TerminalView
+                    android:id="@+id/terminal_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:defaultFocusHighlightEnabled="false"
+                    android:focusableInTouchMode="true"
+                    android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
+                    android:scrollbars="vertical"
+                    tools:ignore="UnusedAttribute" />
+
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/left_drawer"

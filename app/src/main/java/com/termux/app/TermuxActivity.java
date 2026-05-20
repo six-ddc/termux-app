@@ -43,6 +43,7 @@ import com.termux.app.activities.HelpActivity;
 import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.termux.crash.TermuxCrashUtils;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
+import com.termux.app.terminal.TermuxSessionTabStripController;
 import com.termux.app.terminal.TermuxSessionsListViewController;
 import com.termux.app.terminal.io.TerminalToolbarViewPager;
 import com.termux.app.terminal.TermuxTerminalViewClient;
@@ -137,6 +138,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      * The termux sessions list controller.
      */
     TermuxSessionsListViewController mTermuxSessionListViewController;
+
+    /**
+     * The horizontal session tab strip controller.
+     */
+    TermuxSessionTabStripController mTermuxSessionTabStripController;
 
     /**
      * The {@link TermuxActivity} broadcast receiver for various things like terminal style configuration changes.
@@ -503,6 +509,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         termuxSessionsListView.setAdapter(mTermuxSessionListViewController);
         termuxSessionsListView.setOnItemClickListener(mTermuxSessionListViewController);
         termuxSessionsListView.setOnItemLongClickListener(mTermuxSessionListViewController);
+
+        mTermuxSessionTabStripController = new TermuxSessionTabStripController(this);
+        mTermuxSessionTabStripController.notifyUpdated(mTermuxService.getTermuxSessions());
     }
 
 
@@ -856,7 +865,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
     public void termuxSessionListNotifyUpdated() {
-        mTermuxSessionListViewController.notifyDataSetChanged();
+        if (mTermuxSessionListViewController != null)
+            mTermuxSessionListViewController.notifyDataSetChanged();
+        if (mTermuxSessionTabStripController != null && mTermuxService != null)
+            mTermuxSessionTabStripController.notifyUpdated(mTermuxService.getTermuxSessions());
     }
 
     public boolean isVisible() {

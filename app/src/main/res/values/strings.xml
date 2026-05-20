@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <!DOCTYPE resources [
-    <!ENTITY TERMUX_PACKAGE_NAME "com.termux">
-    <!ENTITY TERMUX_APP_NAME "Termux">
-    <!ENTITY TERMUX_API_APP_NAME "Termux:API">
-    <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
-    <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
-    <!ENTITY TERMUX_STYLING_APP_NAME "Termux:Styling">
-    <!ENTITY TERMUX_TASKER_APP_NAME "Termux:Tasker">
-    <!ENTITY TERMUX_WIDGET_APP_NAME "Termux:Widget">
+    <!ENTITY TERMUX_PACKAGE_NAME "com.yourcompany.termuxplus">
+    <!ENTITY TERMUX_APP_NAME "TermuxPlus">
+    <!ENTITY TERMUX_API_APP_NAME "TermuxPlus:API">
+    <!ENTITY TERMUX_BOOT_APP_NAME "TermuxPlus:Boot">
+    <!ENTITY TERMUX_FLOAT_APP_NAME "TermuxPlus:Float">
+    <!ENTITY TERMUX_STYLING_APP_NAME "TermuxPlus:Styling">
+    <!ENTITY TERMUX_TASKER_APP_NAME "TermuxPlus:Tasker">
+    <!ENTITY TERMUX_WIDGET_APP_NAME "TermuxPlus:Widget">
     ]>
 
 <resources>
@@ -53,9 +53,21 @@
     <string name="action_create_named_session_confirm">Create</string>
 
     <string name="action_toggle_soft_keyboard">Keyboard</string>
+    <string name="action_close_session">Close session</string>
 
     <string name="msg_enabling_terminal_toolbar">Enabling Terminal Toolbar</string>
     <string name="msg_disabling_terminal_toolbar">Disabling Terminal Toolbar</string>
+
+    <string name="termuxplus_toolbar_mode_keys">Keys</string>
+    <string name="termuxplus_toolbar_mode_command">Command</string>
+    <string name="termuxplus_toolbar_mode_paste">Paste</string>
+    <string name="termuxplus_toolbar_mode_snippets">Snippets</string>
+    <string name="termuxplus_command_hint">Command</string>
+    <string name="termuxplus_paste_hint">Paste text</string>
+    <string name="termuxplus_snippet_search_hint">Search snippets</string>
+    <string name="termuxplus_insert">Insert</string>
+    <string name="termuxplus_run">Run</string>
+    <string name="termuxplus_send">Send</string>
 
 
 

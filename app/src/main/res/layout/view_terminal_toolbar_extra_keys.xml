@@ -1,8 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.termux.shared.termux.extrakeys.ExtraKeysView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/terminal_toolbar_extra_keys"
-    style="?android:attr/buttonBarStyle"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_alignParentBottom="true"
-    android:orientation="horizontal" />
+    android:background="@color/black"
+    android:orientation="vertical">
+
+    <HorizontalScrollView
+        android:id="@+id/terminal_toolbar_mode_bar"
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/terminal_toolbar_mode_bar_buttons"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal" />
+
+    </HorizontalScrollView>
+
+    <com.termux.shared.termux.extrakeys.ExtraKeysView
+        android:id="@+id/terminal_toolbar_extra_keys"
+        style="?android:attr/buttonBarStyle"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_alignParentBottom="true"
+        android:orientation="horizontal" />
+
+</LinearLayout>

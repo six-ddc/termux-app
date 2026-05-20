@@ -41,6 +41,8 @@ android {
     }
 
     defaultConfig {
+        applicationId "com.yourcompany.termuxplus"
+
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
         versionCode 118
@@ -51,14 +53,14 @@ android {
 
         buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\"" // Used by TermuxApplication class
 
-        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
-        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
-        manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
-        manifestPlaceholders.TERMUX_BOOT_APP_NAME = "Termux:Boot"
-        manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "Termux:Float"
-        manifestPlaceholders.TERMUX_STYLING_APP_NAME = "Termux:Styling"
-        manifestPlaceholders.TERMUX_TASKER_APP_NAME = "Termux:Tasker"
-        manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "Termux:Widget"
+        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.yourcompany.termuxplus"
+        manifestPlaceholders.TERMUX_APP_NAME = "TermuxPlus"
+        manifestPlaceholders.TERMUX_API_APP_NAME = "TermuxPlus:API"
+        manifestPlaceholders.TERMUX_BOOT_APP_NAME = "TermuxPlus:Boot"
+        manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "TermuxPlus:Float"
+        manifestPlaceholders.TERMUX_STYLING_APP_NAME = "TermuxPlus:Styling"
+        manifestPlaceholders.TERMUX_TASKER_APP_NAME = "TermuxPlus:Tasker"
+        manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "TermuxPlus:Widget"
 
         externalNativeBuild {
             ndkBuild {
@@ -132,10 +134,10 @@ android {
         variant.outputs.all { output ->
             if (variant.buildType.name == "debug") {
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("termuxplus-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
             } else if (variant.buildType.name == "release") {
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("termuxplus-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
             }
         }
     }
@@ -165,6 +167,20 @@ def validateVersionName(String versionName) {
 }
 
 def downloadBootstrap(String arch, String expectedChecksum, String version) {
+    def customBootstrapDir = System.getenv("TERMUXPLUS_BOOTSTRAP_DIR") ?: ""
+    if (customBootstrapDir) {
+        def source = new File(customBootstrapDir, "bootstrap-" + arch + ".zip")
+        if (!source.exists()) {
+            throw new GradleException("TERMUXPLUS_BOOTSTRAP_DIR does not contain " + source.getName() + ". Build matching bootstraps for /data/data/com.yourcompany.termuxplus/files/usr first.")
+        }
+
+        def target = new File(projectDir, "src/main/cpp/bootstrap-" + arch + ".zip")
+        target.parentFile.mkdirs()
+        target.bytes = source.bytes
+        logger.quiet("Using TermuxPlus bootstrap " + source + " for " + arch)
+        return
+    }
+
     def digest = java.security.MessageDigest.getInstance("SHA-256")
 
     def localUrl = "src/main/cpp/bootstrap-" + arch + ".zip"

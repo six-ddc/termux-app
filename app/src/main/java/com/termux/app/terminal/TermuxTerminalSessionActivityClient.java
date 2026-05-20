@@ -35,7 +35,9 @@ import com.termux.terminal.TextStyle;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.util.HashSet;
 import java.util.Properties;
+import java.util.Set;
 
 /** The {@link TerminalSessionClient} implementation that may require an {@link Activity} for its interface methods. */
 public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionClientBase {
@@ -47,6 +49,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     private SoundPool mBellSoundPool;
 
     private int mBellSoundId;
+
+    private final Set<String> mSessionsPendingClose = new HashSet<>();
 
     private static final String LOG_TAG = "TermuxTerminalSessionActivityClient";
 
@@ -146,6 +150,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         }
 
         int index = service.getIndexOfSession(finishedSession);
+        boolean pendingClose = mSessionsPendingClose.remove(finishedSession.mHandle);
 
         // For plugin commands that expect the result back, we should immediately close the session
         // and send the result back instead of waiting fo the user to press enter.
@@ -168,13 +173,13 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         if (mActivity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
             // On Android TV devices we need to use older behaviour because we may
             // not be able to have multiple launcher icons.
-            if (service.getTermuxSessionsSize() > 1 || isPluginExecutionCommandWithPendingResult) {
+            if (service.getTermuxSessionsSize() > 1 || isPluginExecutionCommandWithPendingResult || pendingClose) {
                 removeFinishedSession(finishedSession);
             }
         } else {
             // Once we have a separate launcher icon for the failsafe session, it
             // should be safe to auto-close session on exit code '0' or '130'.
-            if (finishedSession.getExitStatus() == 0 || finishedSession.getExitStatus() == 130 || isPluginExecutionCommandWithPendingResult) {
+            if (finishedSession.getExitStatus() == 0 || finishedSession.getExitStatus() == 130 || isPluginExecutionCommandWithPendingResult || pendingClose) {
                 removeFinishedSession(finishedSession);
             }
         }
@@ -301,6 +306,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         // We call the following even when the session is already being displayed since config may
         // be stale, like current session not selected or scrolled to.
         checkAndScrollToSession(session);
+        termuxSessionListNotifyUpdated();
         updateBackgroundColor();
     }
 
@@ -448,6 +454,35 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             TermuxSession termuxSession = service.getTermuxSession(index);
             if (termuxSession != null)
                 setCurrentSession(termuxSession.getTerminalSession());
+        }
+    }
+
+    public void closeSession(TerminalSession session) {
+        TermuxService service = mActivity.getTermuxService();
+        if (service == null || session == null) return;
+
+        if (session.isRunning()) {
+            mSessionsPendingClose.add(session.mHandle);
+            session.finishIfRunning();
+            return;
+        }
+
+        int index = service.removeTermuxSession(session);
+        if (index < 0) return;
+
+        int size = service.getTermuxSessionsSize();
+        if (size == 0) {
+            mActivity.finishActivityIfNotFinishing();
+            return;
+        }
+
+        if (session == mActivity.getCurrentSession()) {
+            if (index >= size) index = size - 1;
+            TermuxSession termuxSession = service.getTermuxSession(index);
+            if (termuxSession != null)
+                setCurrentSession(termuxSession.getTerminalSession());
+        } else {
+            termuxSessionListNotifyUpdated();
         }
     }
 

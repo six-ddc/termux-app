@@ -11,7 +11,6 @@ import android.graphics.Typeface;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.text.TextUtils;
-import android.widget.ListView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -305,18 +304,13 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
         // We call the following even when the session is already being displayed since config may
         // be stale, like current session not selected or scrolled to.
-        checkAndScrollToSession(session);
         termuxSessionListNotifyUpdated();
         updateBackgroundColor();
     }
 
     void notifyOfSessionChange() {
-        if (!mActivity.isVisible()) return;
-
-        if (!mActivity.getProperties().areTerminalSessionChangeToastsDisabled()) {
-            TerminalSession session = mActivity.getCurrentSession();
-            mActivity.showToast(toToastTitle(session), false);
-        }
+        // The tab strip is now the primary session switch feedback. Avoid a platform toast
+        // overlay like "[2]" flashing over the selected tab.
     }
 
     public void switchToSession(boolean forward) {
@@ -389,8 +383,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
             TerminalSession newTerminalSession = newTermuxSession.getTerminalSession();
             setCurrentSession(newTerminalSession);
-
-            mActivity.getDrawer().closeDrawers();
         }
     }
 
@@ -489,22 +481,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void termuxSessionListNotifyUpdated() {
         mActivity.termuxSessionListNotifyUpdated();
     }
-
-    public void checkAndScrollToSession(TerminalSession session) {
-        if (!mActivity.isVisible()) return;
-        TermuxService service = mActivity.getTermuxService();
-        if (service == null) return;
-
-        final int indexOfSession = service.getIndexOfSession(session);
-        if (indexOfSession < 0) return;
-        final ListView termuxSessionsListView = mActivity.findViewById(R.id.terminal_sessions_list);
-        if (termuxSessionsListView == null) return;
-
-        termuxSessionsListView.setItemChecked(indexOfSession, true);
-        // Delay is necessary otherwise sometimes scroll to newly added session does not happen
-        termuxSessionsListView.postDelayed(() -> termuxSessionsListView.smoothScrollToPosition(indexOfSession), 1000);
-    }
-
 
     String toToastTitle(TerminalSession session) {
         TermuxService service = mActivity.getTermuxService();

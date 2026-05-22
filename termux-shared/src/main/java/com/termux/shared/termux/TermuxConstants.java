@@ -347,11 +347,9 @@ public final class TermuxConstants {
      */
 
     /** Termux app name */
-    public static final String TERMUX_APP_NAME = "TermuxPlus"; // Default: "Termux"
+    public static final String TERMUX_APP_NAME = "Termux"; // Default: "Termux"
     /** Termux package name */
-    public static final String TERMUX_PACKAGE_NAME = "com.yourcompany.termuxplus"; // Default: "com.termux"
-    /** Java package used by the forked app classes. Keep this stable while applicationId changes. */
-    public static final String TERMUX_APP_CLASS_PACKAGE_NAME = "com.termux"; // Default: "com.termux"
+    public static final String TERMUX_PACKAGE_NAME = "com.termux"; // Default: "com.termux"
     /** Termux GitHub repo name */
     public static final String TERMUX_GITHUB_REPO_NAME = "termux-app"; // Default: "termux-app"
     /** Termux GitHub repo url */
@@ -363,7 +361,7 @@ public final class TermuxConstants {
 
 
     /** Termux:API app name */
-    public static final String TERMUX_API_APP_NAME = "TermuxPlus:API"; // Default: "Termux:API"
+    public static final String TERMUX_API_APP_NAME = "Termux:API"; // Default: "Termux:API"
     /** Termux:API app package name */
     public static final String TERMUX_API_PACKAGE_NAME = TERMUX_PACKAGE_NAME + ".api"; // Default: "com.termux.api"
     /** Termux:API GitHub repo name */
@@ -377,7 +375,7 @@ public final class TermuxConstants {
 
 
     /** Termux:Boot app name */
-    public static final String TERMUX_BOOT_APP_NAME = "TermuxPlus:Boot"; // Default: "Termux:Boot"
+    public static final String TERMUX_BOOT_APP_NAME = "Termux:Boot"; // Default: "Termux:Boot"
     /** Termux:Boot app package name */
     public static final String TERMUX_BOOT_PACKAGE_NAME = TERMUX_PACKAGE_NAME + ".boot"; // Default: "com.termux.boot"
     /** Termux:Boot GitHub repo name */
@@ -391,7 +389,7 @@ public final class TermuxConstants {
 
 
     /** Termux:Float app name */
-    public static final String TERMUX_FLOAT_APP_NAME = "TermuxPlus:Float"; // Default: "Termux:Float"
+    public static final String TERMUX_FLOAT_APP_NAME = "Termux:Float"; // Default: "Termux:Float"
     /** Termux:Float app package name */
     public static final String TERMUX_FLOAT_PACKAGE_NAME = TERMUX_PACKAGE_NAME + ".window"; // Default: "com.termux.window"
     /** Termux:Float GitHub repo name */
@@ -405,7 +403,7 @@ public final class TermuxConstants {
 
 
     /** Termux:Styling app name */
-    public static final String TERMUX_STYLING_APP_NAME = "TermuxPlus:Styling"; // Default: "Termux:Styling"
+    public static final String TERMUX_STYLING_APP_NAME = "Termux:Styling"; // Default: "Termux:Styling"
     /** Termux:Styling app package name */
     public static final String TERMUX_STYLING_PACKAGE_NAME = TERMUX_PACKAGE_NAME + ".styling"; // Default: "com.termux.styling"
     /** Termux:Styling GitHub repo name */
@@ -419,7 +417,7 @@ public final class TermuxConstants {
 
 
     /** Termux:Tasker app name */
-    public static final String TERMUX_TASKER_APP_NAME = "TermuxPlus:Tasker"; // Default: "Termux:Tasker"
+    public static final String TERMUX_TASKER_APP_NAME = "Termux:Tasker"; // Default: "Termux:Tasker"
     /** Termux:Tasker app package name */
     public static final String TERMUX_TASKER_PACKAGE_NAME = TERMUX_PACKAGE_NAME + ".tasker"; // Default: "com.termux.tasker"
     /** Termux:Tasker GitHub repo name */
@@ -433,7 +431,7 @@ public final class TermuxConstants {
 
 
     /** Termux:Widget app name */
-    public static final String TERMUX_WIDGET_APP_NAME = "TermuxPlus:Widget"; // Default: "Termux:Widget"
+    public static final String TERMUX_WIDGET_APP_NAME = "Termux:Widget"; // Default: "Termux:Widget"
     /** Termux:Widget app package name */
     public static final String TERMUX_WIDGET_PACKAGE_NAME = TERMUX_PACKAGE_NAME + ".widget"; // Default: "com.termux.widget"
     /** Termux:Widget GitHub repo name */
@@ -927,17 +925,17 @@ public final class TermuxConstants {
 
 
         /** Termux app BuildConfig class name */
-        public static final String BUILD_CONFIG_CLASS_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".BuildConfig"; // Default: "com.termux.BuildConfig"
+        public static final String BUILD_CONFIG_CLASS_NAME = TERMUX_PACKAGE_NAME + ".BuildConfig"; // Default: "com.termux.BuildConfig"
 
         /** Termux app FileShareReceiverActivity class name */
-        public static final String FILE_SHARE_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.api.file.FileShareReceiverActivity"; // Default: "com.termux.app.api.file.FileShareReceiverActivity"
+        public static final String FILE_SHARE_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_PACKAGE_NAME + ".app.api.file.FileShareReceiverActivity"; // Default: "com.termux.app.api.file.FileShareReceiverActivity"
 
         /** Termux app FileViewReceiverActivity class name */
-        public static final String FILE_VIEW_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.api.file.FileViewReceiverActivity"; // Default: "com.termux.app.api.file.FileViewReceiverActivity"
+        public static final String FILE_VIEW_RECEIVER_ACTIVITY_CLASS_NAME = TERMUX_PACKAGE_NAME + ".app.api.file.FileViewReceiverActivity"; // Default: "com.termux.app.api.file.FileViewReceiverActivity"
 
 
         /** Termux app core activity name. */
-        public static final String TERMUX_ACTIVITY_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.TermuxActivity"; // Default: "com.termux.app.TermuxActivity"
+        public static final String TERMUX_ACTIVITY_NAME = TERMUX_PACKAGE_NAME + ".app.TermuxActivity"; // Default: "com.termux.app.TermuxActivity"
 
         /**
          * Termux app core activity.
@@ -971,14 +969,14 @@ public final class TermuxConstants {
 
 
         /** Termux app settings activity name. */
-        public static final String TERMUX_SETTINGS_ACTIVITY_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.activities.SettingsActivity"; // Default: "com.termux.app.activities.SettingsActivity"
+        public static final String TERMUX_SETTINGS_ACTIVITY_NAME = TERMUX_PACKAGE_NAME + ".app.activities.SettingsActivity"; // Default: "com.termux.app.activities.SettingsActivity"
 
 
 
 
 
         /** Termux app core service name. */
-        public static final String TERMUX_SERVICE_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.TermuxService"; // Default: "com.termux.app.TermuxService"
+        public static final String TERMUX_SERVICE_NAME = TERMUX_PACKAGE_NAME + ".app.TermuxService"; // Default: "com.termux.app.TermuxService"
 
         /**
          * Termux app core service.
@@ -1122,7 +1120,7 @@ public final class TermuxConstants {
 
 
         /** Termux app run command service name. */
-        public static final String RUN_COMMAND_SERVICE_NAME = TERMUX_APP_CLASS_PACKAGE_NAME + ".app.RunCommandService"; // Termux app service to receive commands from 3rd party apps "com.termux.app.RunCommandService"
+        public static final String RUN_COMMAND_SERVICE_NAME = TERMUX_PACKAGE_NAME + ".app.RunCommandService"; // Termux app service to receive commands from 3rd party apps "com.termux.app.RunCommandService"
 
         /**
          * Termux app run command service to receive commands sent by 3rd party apps.

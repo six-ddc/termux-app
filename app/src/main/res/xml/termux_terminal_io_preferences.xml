@@ -5,6 +5,23 @@
         app:title="@string/termux_keyboard_header">
 
         <SwitchPreferenceCompat
+            app:key="show_extra_keys"
+            app:summaryOff="@string/termux_show_terminal_toolbar_off"
+            app:summaryOn="@string/termux_show_terminal_toolbar_on"
+            app:title="@string/termux_show_terminal_toolbar_title" />
+
+        <SwitchPreferenceCompat
+            app:key="termuxplus_snippets_enabled"
+            app:summaryOff="@string/termuxplus_snippets_enabled_off"
+            app:summaryOn="@string/termuxplus_snippets_enabled_on"
+            app:title="@string/termuxplus_snippets_enabled_title" />
+
+        <Preference
+            app:key="termuxplus_manage_snippets"
+            app:summary="@string/termuxplus_manage_snippets_summary"
+            app:title="@string/termuxplus_manage_snippets_title" />
+
+        <SwitchPreferenceCompat
             app:key="soft_keyboard_enabled"
             app:summaryOff="@string/termux_soft_keyboard_enabled_off"
             app:summaryOn="@string/termux_soft_keyboard_enabled_on"

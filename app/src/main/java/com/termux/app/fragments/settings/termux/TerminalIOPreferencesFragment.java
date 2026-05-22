@@ -4,12 +4,15 @@ import android.content.Context;
 import android.os.Bundle;
 
 import androidx.annotation.Keep;
+import androidx.preference.Preference;
 import androidx.preference.PreferenceDataStore;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceManager;
 
 import com.termux.R;
+import com.termux.app.activities.TermuxPlusSnippetsActivity;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
+import com.termux.shared.termux.settings.preferences.TermuxPreferenceConstants.TERMUX_APP;
 
 @Keep
 public class TerminalIOPreferencesFragment extends PreferenceFragmentCompat {
@@ -23,6 +26,14 @@ public class TerminalIOPreferencesFragment extends PreferenceFragmentCompat {
         preferenceManager.setPreferenceDataStore(TerminalIOPreferencesDataStore.getInstance(context));
 
         setPreferencesFromResource(R.xml.termux_terminal_io_preferences, rootKey);
+
+        Preference manageSnippetsPreference = findPreference("termuxplus_manage_snippets");
+        if (manageSnippetsPreference != null) {
+            manageSnippetsPreference.setOnPreferenceClickListener(preference -> {
+                TermuxPlusSnippetsActivity.start(context);
+                return true;
+            });
+        }
     }
 
 }
@@ -46,18 +57,22 @@ class TerminalIOPreferencesDataStore extends PreferenceDataStore {
         return mInstance;
     }
 
-
-
     @Override
     public void putBoolean(String key, boolean value) {
         if (mPreferences == null) return;
         if (key == null) return;
 
         switch (key) {
-            case "soft_keyboard_enabled":
-                    mPreferences.setSoftKeyboardEnabled(value);
+            case TERMUX_APP.KEY_SHOW_TERMINAL_TOOLBAR:
+                mPreferences.setShowTerminalToolbar(value);
                 break;
-            case "soft_keyboard_enabled_only_if_no_hardware":
+            case TERMUX_APP.KEY_TERMUXPLUS_SNIPPETS_ENABLED:
+                mPreferences.setTermuxPlusSnippetsEnabled(value);
+                break;
+            case TERMUX_APP.KEY_SOFT_KEYBOARD_ENABLED:
+                mPreferences.setSoftKeyboardEnabled(value);
+                break;
+            case TERMUX_APP.KEY_SOFT_KEYBOARD_ENABLED_ONLY_IF_NO_HARDWARE:
                 mPreferences.setSoftKeyboardEnabledOnlyIfNoHardware(value);
                 break;
             default:
@@ -67,15 +82,20 @@ class TerminalIOPreferencesDataStore extends PreferenceDataStore {
 
     @Override
     public boolean getBoolean(String key, boolean defValue) {
-        if (mPreferences == null) return false;
+        if (mPreferences == null) return defValue;
+        if (key == null) return defValue;
 
         switch (key) {
-            case "soft_keyboard_enabled":
+            case TERMUX_APP.KEY_SHOW_TERMINAL_TOOLBAR:
+                return mPreferences.shouldShowTerminalToolbar();
+            case TERMUX_APP.KEY_TERMUXPLUS_SNIPPETS_ENABLED:
+                return mPreferences.areTermuxPlusSnippetsEnabled();
+            case TERMUX_APP.KEY_SOFT_KEYBOARD_ENABLED:
                 return mPreferences.isSoftKeyboardEnabled();
-            case "soft_keyboard_enabled_only_if_no_hardware":
+            case TERMUX_APP.KEY_SOFT_KEYBOARD_ENABLED_ONLY_IF_NO_HARDWARE:
                 return mPreferences.isSoftKeyboardEnabledOnlyIfNoHardware();
             default:
-                return false;
+                return defValue;
         }
     }
 

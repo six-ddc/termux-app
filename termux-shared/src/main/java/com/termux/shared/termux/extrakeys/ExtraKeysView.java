@@ -2,6 +2,10 @@ package com.termux.shared.termux.extrakeys;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -74,6 +78,13 @@ import com.termux.shared.theme.ThemeUtils;
  * leave the rest to the super class.
  */
 public final class ExtraKeysView extends GridLayout {
+
+    public interface OnHorizontalSwipeListener {
+        void onHorizontalSwipe(int direction);
+    }
+
+    public static final int SWIPE_DIRECTION_LEFT = 1;
+    public static final int SWIPE_DIRECTION_RIGHT = -1;
 
     /** The client for the {@link ExtraKeysView}. */
     public interface IExtraKeysView {
@@ -207,6 +218,11 @@ public final class ExtraKeysView extends GridLayout {
     protected Handler mHandler;
     protected SpecialButtonsLongHoldRunnable mSpecialButtonsLongHoldRunnable;
     protected int mLongPressCount;
+    protected OnHorizontalSwipeListener mOnHorizontalSwipeListener;
+    protected int mTouchSlop;
+    protected float mTouchDownRawX;
+    protected float mTouchDownRawY;
+    protected boolean mHorizontalSwipeConsumed;
 
 
     public ExtraKeysView(Context context, AttributeSet attrs) {
@@ -223,6 +239,7 @@ public final class ExtraKeysView extends GridLayout {
 
         setLongPressTimeout(ViewConfiguration.getLongPressTimeout());
         setLongPressRepeatDelay(DEFAULT_LONG_PRESS_REPEAT_DELAY);
+        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
     }
 
 
@@ -234,6 +251,10 @@ public final class ExtraKeysView extends GridLayout {
     /** Set {@link #mExtraKeysViewClient}. */
     public void setExtraKeysViewClient(IExtraKeysView extraKeysViewClient) {
         mExtraKeysViewClient = extraKeysViewClient;
+    }
+
+    public void setOnHorizontalSwipeListener(OnHorizontalSwipeListener listener) {
+        mOnHorizontalSwipeListener = listener;
     }
 
 
@@ -384,6 +405,8 @@ public final class ExtraKeysView extends GridLayout {
      */
     @SuppressLint("ClickableViewAccessibility")
     public void reload(ExtraKeysInfo extraKeysInfo, float heightPx) {
+        dismissPopup();
+
         if (extraKeysInfo == null)
             return;
 
@@ -412,7 +435,15 @@ public final class ExtraKeysView extends GridLayout {
                 button.setText(buttonInfo.getDisplay());
                 button.setTextColor(mButtonTextColor);
                 button.setAllCaps(mButtonTextAllCaps);
+                button.setTextSize(12);
+                button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                button.setIncludeFontPadding(false);
+                button.setMinHeight(0);
+                button.setMinWidth(0);
+                button.setMinimumHeight(0);
+                button.setMinimumWidth(0);
                 button.setPadding(0, 0, 0, 0);
+                button.setBackgroundColor(mButtonBackgroundColor);
 
                 button.setOnClickListener(view -> {
                     performExtraKeyButtonHapticFeedback(view, buttonInfo, button);
@@ -422,13 +453,29 @@ public final class ExtraKeysView extends GridLayout {
                 button.setOnTouchListener((view, event) -> {
                     switch (event.getAction()) {
                         case MotionEvent.ACTION_DOWN:
+                            dismissPopup();
+                            mTouchDownRawX = event.getRawX();
+                            mTouchDownRawY = event.getRawY();
+                            mHorizontalSwipeConsumed = false;
                             view.setBackgroundColor(mButtonActiveBackgroundColor);
                             // Start long press scheduled executors which will be stopped in next MotionEvent
                             startScheduledExecutors(view, buttonInfo, button);
                             return true;
 
                         case MotionEvent.ACTION_MOVE:
-                            if (buttonInfo.getPopup() != null) {
+                            float dx = event.getRawX() - mTouchDownRawX;
+                            float dy = event.getRawY() - mTouchDownRawY;
+                            if (!mHorizontalSwipeConsumed && isHorizontalSwipe(dx, dy)) {
+                                mHorizontalSwipeConsumed = true;
+                                stopScheduledExecutors();
+                                dismissPopup();
+                                view.setBackgroundColor(mButtonBackgroundColor);
+                                if (mOnHorizontalSwipeListener != null)
+                                    mOnHorizontalSwipeListener.onHorizontalSwipe(dx < 0 ? SWIPE_DIRECTION_LEFT : SWIPE_DIRECTION_RIGHT);
+                                return true;
+                            }
+
+                            if (!mHorizontalSwipeConsumed && buttonInfo.getPopup() != null && Math.abs(dy) > Math.abs(dx)) {
                                 // Show popup on swipe up
                                 if (mPopupWindow == null && event.getY() < 0) {
                                     stopScheduledExecutors();
@@ -445,11 +492,19 @@ public final class ExtraKeysView extends GridLayout {
                         case MotionEvent.ACTION_CANCEL:
                             view.setBackgroundColor(mButtonBackgroundColor);
                             stopScheduledExecutors();
+                            dismissPopup();
+                            mHorizontalSwipeConsumed = false;
+                            requestParentDisallowInterceptTouchEvent(false);
                             return true;
 
                         case MotionEvent.ACTION_UP:
                             view.setBackgroundColor(mButtonBackgroundColor);
                             stopScheduledExecutors();
+                            requestParentDisallowInterceptTouchEvent(false);
+                            if (mHorizontalSwipeConsumed) {
+                                mHorizontalSwipeConsumed = false;
+                                return true;
+                            }
                             // If ACTION_UP up was not from a repetitive key or was with a key with a popup button
                             if (mLongPressCount == 0 || mPopupWindow != null) {
                                 // Trigger popup button click if swipe up complete
@@ -476,7 +531,7 @@ public final class ExtraKeysView extends GridLayout {
                 } else {
                     param.height = 0;
                 }
-                param.setMargins(0, 0, 0, 0);
+                param.setMargins(2, 2, 2, 2);
                 param.columnSpec = GridLayout.spec(col, GridLayout.FILL, 1.f);
                 param.rowSpec = GridLayout.spec(row, GridLayout.FILL, 1.f);
                 button.setLayoutParams(param);
@@ -484,6 +539,17 @@ public final class ExtraKeysView extends GridLayout {
                 addView(button);
             }
         }
+    }
+
+    private boolean isHorizontalSwipe(float dx, float dy) {
+        float absoluteDx = Math.abs(dx);
+        float absoluteDy = Math.abs(dy);
+        return absoluteDx > Math.max(mTouchSlop * 2, dp(36)) && absoluteDx > (absoluteDy * 1.5f);
+    }
+
+    private void requestParentDisallowInterceptTouchEvent(boolean disallowIntercept) {
+        if (getParent() != null)
+            getParent().requestDisallowInterceptTouchEvent(disallowIntercept);
     }
 
 
@@ -599,6 +665,9 @@ public final class ExtraKeysView extends GridLayout {
         }
         button.setText(extraButton.getDisplay());
         button.setAllCaps(mButtonTextAllCaps);
+        button.setTextSize(12);
+        button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        button.setIncludeFontPadding(false);
         button.setPadding(0, 0, 0, 0);
         button.setMinHeight(0);
         button.setMinWidth(0);
@@ -606,20 +675,33 @@ public final class ExtraKeysView extends GridLayout {
         button.setMinimumHeight(0);
         button.setWidth(width);
         button.setHeight(height);
-        button.setBackgroundColor(mButtonActiveBackgroundColor);
-        mPopupWindow = new PopupWindow(this);
-        mPopupWindow.setWidth(LayoutParams.WRAP_CONTENT);
-        mPopupWindow.setHeight(LayoutParams.WRAP_CONTENT);
-        mPopupWindow.setContentView(button);
+        button.setBackground(createButtonBackground(mButtonActiveBackgroundColor));
+
+        mPopupWindow = new PopupWindow(button, width, height, false);
+        mPopupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         mPopupWindow.setOutsideTouchable(true);
         mPopupWindow.setFocusable(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+            mPopupWindow.setElevation(dp(4));
         mPopupWindow.showAsDropDown(view, 0, -2 * height);
     }
 
     public void dismissPopup() {
+        if (mPopupWindow == null) return;
         mPopupWindow.setContentView(null);
         mPopupWindow.dismiss();
         mPopupWindow = null;
+    }
+
+    private GradientDrawable createButtonBackground(int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(3));
+        return drawable;
+    }
+
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
 

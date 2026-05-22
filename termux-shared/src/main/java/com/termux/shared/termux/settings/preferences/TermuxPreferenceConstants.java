@@ -1,7 +1,7 @@
 package com.termux.shared.termux.settings.preferences;
 
 /*
- * Version: v0.16.0
+ * Version: v0.17.0
  *
  * Changelog
  *
@@ -69,6 +69,10 @@ package com.termux.shared.termux.settings.preferences;
  * - 0.16.0 (2022-06-11)
  *      - Added following to `TERMUX_APP`:
  *          `KEY_APP_SHELL_NUMBER_SINCE_BOOT` and `KEY_TERMINAL_SESSION_NUMBER_SINCE_BOOT`.
+ *
+ * - 0.17.0 (2026-05-20)
+ *      - Added following to `TERMUX_APP`:
+ *          `KEY_TERMUXPLUS_SNIPPETS_ENABLED`.
  */
 
 import com.termux.shared.shell.command.ExecutionCommand;
@@ -101,6 +105,12 @@ public final class TermuxPreferenceConstants {
          */
         public static final String KEY_SHOW_TERMINAL_TOOLBAR = "show_extra_keys";
         public static final boolean DEFAULT_VALUE_SHOW_TERMINAL_TOOLBAR = true;
+
+        /**
+         * Defines the key for whether TermuxPlus snippets are enabled.
+         */
+        public static final String KEY_TERMUXPLUS_SNIPPETS_ENABLED = "termuxplus_snippets_enabled";
+        public static final boolean DEFAULT_VALUE_TERMUXPLUS_SNIPPETS_ENABLED = true;
 
 
         /**

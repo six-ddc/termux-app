@@ -26,7 +26,8 @@ import com.termux.shared.view.ViewUtils;
  * resize the view and push the terminal up when soft keyboard is opened. However, this does not
  * always work properly. When `enforce-char-based-input=true` is set in `termux.properties`
  * and {@link com.termux.view.TerminalView#onCreateInputConnection(EditorInfo)} sets the inputType
- * to `InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS`
+ * to `InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD |
+ * InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS`
  * instead of the default `InputType.TYPE_NULL` for termux, some keyboards may still show suggestions.
  * Gboard does too, but only when text is copied and clipboard suggestions **and** number keys row
  * toggles are enabled in its settings. When number keys row toggle is not enabled, Gboard will still

@@ -1,7 +1,7 @@
 package com.termux.app.terminal;
 
-import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -15,13 +15,16 @@ import androidx.core.content.ContextCompat;
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
-import com.termux.shared.theme.NightMode;
-import com.termux.shared.theme.ThemeUtils;
 import com.termux.terminal.TerminalSession;
 
 import java.util.List;
 
 public class TermuxSessionTabStripController {
+
+    private static final int TAB_HEIGHT_DP = 24;
+    private static final int TAB_TITLE_WIDTH_DP = 92;
+    private static final int TAB_MIN_WIDTH_DP = 92;
+    private static final int CLOSE_BUTTON_WIDTH_DP = 24;
 
     private final TermuxActivity mActivity;
     private final LinearLayout mTabStrip;
@@ -55,41 +58,47 @@ public class TermuxSessionTabStripController {
 
     private View createSessionTab(int index, TerminalSession session) {
         boolean selected = session == mActivity.getCurrentSession();
-        boolean darkTheme = ThemeUtils.shouldEnableDarkTheme(mActivity, NightMode.getAppNightMode().getName());
 
         LinearLayout tab = new LinearLayout(mActivity);
         tab.setOrientation(LinearLayout.HORIZONTAL);
         tab.setGravity(Gravity.CENTER_VERTICAL);
         tab.setActivated(selected);
-        tab.setBackground(ContextCompat.getDrawable(mActivity,
-            darkTheme ? R.drawable.session_background_black_selected : R.drawable.session_background_selected));
-        tab.setPadding(dp(8), 0, dp(2), 0);
-        tab.setMinimumWidth(dp(96));
+        tab.setSelected(selected);
+        tab.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_tab_bg));
+        tab.setPadding(dp(8), 0, dp(1), 0);
+        tab.setMinimumWidth(dp(TAB_MIN_WIDTH_DP));
         tab.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().setCurrentSession(session));
         tab.setOnLongClickListener(v -> {
             mActivity.getTermuxTerminalSessionClient().renameSession(session);
             return true;
         });
+        LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, dp(TAB_HEIGHT_DP));
+        tabParams.setMargins(0, dp(3), dp(4), dp(3));
+        tab.setLayoutParams(tabParams);
 
         TextView title = new TextView(mActivity);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         title.setText(getTabTitle(index, session));
         title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setTextSize(13);
-        title.setTextColor(getTabTextColor(darkTheme, session));
+        title.setIncludeFontPadding(false);
+        title.setTextSize(11);
+        title.setTypeface(Typeface.MONOSPACE, selected ? Typeface.BOLD : Typeface.NORMAL);
+        title.setTextColor(getTabTextColor(selected, session));
         if (!session.isRunning())
             title.setPaintFlags(title.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
-        tab.addView(title, new LinearLayout.LayoutParams(dp(112), LinearLayout.LayoutParams.MATCH_PARENT));
+        tab.addView(title, new LinearLayout.LayoutParams(dp(TAB_TITLE_WIDTH_DP), LinearLayout.LayoutParams.MATCH_PARENT));
 
         ImageButton close = new ImageButton(mActivity);
-        close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
-        close.setBackgroundColor(Color.TRANSPARENT);
+        close.setImageResource(R.drawable.ic_termuxplus_close_18);
+        close.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_icon_button_bg));
         close.setContentDescription(mActivity.getString(R.string.action_close_session));
-        close.setColorFilter(darkTheme ? Color.WHITE : Color.BLACK);
-        close.setPadding(dp(8), dp(8), dp(8), dp(8));
+        close.setColorFilter(ContextCompat.getColor(mActivity,
+            selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
+        close.setPadding(dp(5), dp(5), dp(5), dp(5));
         close.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().closeSession(session));
-        tab.addView(close, new LinearLayout.LayoutParams(dp(40), LinearLayout.LayoutParams.MATCH_PARENT));
+        tab.addView(close, new LinearLayout.LayoutParams(dp(CLOSE_BUTTON_WIDTH_DP), LinearLayout.LayoutParams.MATCH_PARENT));
 
         return tab;
     }
@@ -98,14 +107,20 @@ public class TermuxSessionTabStripController {
         TextView add = new TextView(mActivity);
         add.setText("+");
         add.setGravity(Gravity.CENTER);
-        add.setTextSize(24);
+        add.setIncludeFontPadding(false);
+        add.setTextSize(18);
+        add.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
+        add.setTextColor(ContextCompat.getColor(mActivity, R.color.termuxplus_text_secondary));
+        add.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_add_bg));
         add.setContentDescription(mActivity.getString(R.string.action_new_session));
         add.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().addNewSession(false, null));
         add.setOnLongClickListener(v -> {
-            mActivity.findViewById(R.id.new_session_button).performLongClick();
+            mActivity.showCreateNamedSessionDialog();
             return true;
         });
-        add.setMinWidth(dp(48));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(30), dp(TAB_HEIGHT_DP));
+        params.setMargins(0, dp(3), dp(4), dp(3));
+        add.setLayoutParams(params);
         return add;
     }
 
@@ -117,9 +132,11 @@ public class TermuxSessionTabStripController {
         return "Session " + (index + 1);
     }
 
-    private int getTabTextColor(boolean darkTheme, TerminalSession session) {
-        int defaultColor = darkTheme ? Color.WHITE : Color.BLACK;
-        return session.isRunning() || session.getExitStatus() == 0 ? defaultColor : Color.RED;
+    private int getTabTextColor(boolean selected, TerminalSession session) {
+        if (!session.isRunning() && session.getExitStatus() != 0)
+            return ContextCompat.getColor(mActivity, R.color.termuxplus_text_error);
+        return ContextCompat.getColor(mActivity,
+            selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary);
     }
 
     private void scrollToCurrentSession() {

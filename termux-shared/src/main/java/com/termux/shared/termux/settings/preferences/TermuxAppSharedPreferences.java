@@ -83,6 +83,13 @@ public class TermuxAppSharedPreferences extends AppSharedPreferences {
     }
 
 
+    public boolean areTermuxPlusSnippetsEnabled() {
+        return SharedPreferenceUtils.getBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMUXPLUS_SNIPPETS_ENABLED, TERMUX_APP.DEFAULT_VALUE_TERMUXPLUS_SNIPPETS_ENABLED);
+    }
+
+    public void setTermuxPlusSnippetsEnabled(boolean value) {
+        SharedPreferenceUtils.setBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMUXPLUS_SNIPPETS_ENABLED, value, false);
+    }
 
     public boolean isTerminalMarginAdjustmentEnabled() {
         return SharedPreferenceUtils.getBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMINAL_MARGIN_ADJUSTMENT, TERMUX_APP.DEFAULT_TERMINAL_MARGIN_ADJUSTMENT);

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <!DOCTYPE resources [
-    <!ENTITY TERMUX_PACKAGE_NAME "com.yourcompany.termuxplus">
-    <!ENTITY TERMUX_APP_NAME "TermuxPlus">
-    <!ENTITY TERMUX_API_APP_NAME "TermuxPlus:API">
-    <!ENTITY TERMUX_BOOT_APP_NAME "TermuxPlus:Boot">
-    <!ENTITY TERMUX_FLOAT_APP_NAME "TermuxPlus:Float">
-    <!ENTITY TERMUX_STYLING_APP_NAME "TermuxPlus:Styling">
-    <!ENTITY TERMUX_TASKER_APP_NAME "TermuxPlus:Tasker">
-    <!ENTITY TERMUX_WIDGET_APP_NAME "TermuxPlus:Widget">
+    <!ENTITY TERMUX_PACKAGE_NAME "com.termux">
+    <!ENTITY TERMUX_APP_NAME "Termux">
+    <!ENTITY TERMUX_API_APP_NAME "Termux:API">
+    <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
+    <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
+    <!ENTITY TERMUX_STYLING_APP_NAME "Termux:Styling">
+    <!ENTITY TERMUX_TASKER_APP_NAME "Termux:Tasker">
+    <!ENTITY TERMUX_WIDGET_APP_NAME "Termux:Widget">
     ]>
 
 <resources>
@@ -58,16 +58,32 @@
     <string name="msg_enabling_terminal_toolbar">Enabling Terminal Toolbar</string>
     <string name="msg_disabling_terminal_toolbar">Disabling Terminal Toolbar</string>
 
-    <string name="termuxplus_toolbar_mode_keys">Keys</string>
-    <string name="termuxplus_toolbar_mode_command">Command</string>
-    <string name="termuxplus_toolbar_mode_paste">Paste</string>
-    <string name="termuxplus_toolbar_mode_snippets">Snippets</string>
-    <string name="termuxplus_command_hint">Command</string>
-    <string name="termuxplus_paste_hint">Paste text</string>
     <string name="termuxplus_snippet_search_hint">Search snippets</string>
     <string name="termuxplus_insert">Insert</string>
     <string name="termuxplus_run">Run</string>
-    <string name="termuxplus_send">Send</string>
+    <string name="termuxplus_manage">Manage</string>
+    <string name="termuxplus_back">Back</string>
+    <string name="termuxplus_add">Add</string>
+    <string name="termuxplus_edit">Edit</string>
+    <string name="termuxplus_delete">Delete</string>
+    <string name="termuxplus_save">Save</string>
+    <string name="termuxplus_snippets_title">Snippets</string>
+    <string name="termuxplus_new_snippet_title">New snippet</string>
+    <string name="termuxplus_edit_snippet_title">Edit snippet</string>
+    <string name="termuxplus_snippet_field_title">Title</string>
+    <string name="termuxplus_snippet_field_command">Command</string>
+    <string name="termuxplus_snippet_field_description">Description</string>
+    <string name="termuxplus_snippet_field_category">Category</string>
+    <string name="termuxplus_snippet_field_tags">Tags</string>
+    <string name="termuxplus_snippet_run_by_default">Run by default</string>
+    <string name="termuxplus_snippet_required_fields">Title and command are required.</string>
+    <string name="termuxplus_snippet_saved">Snippet saved.</string>
+    <string name="termuxplus_snippet_save_failed">Unable to save snippet.</string>
+    <string name="termuxplus_snippet_deleted">Snippet deleted.</string>
+    <string name="termuxplus_snippet_delete_failed">Unable to delete snippet.</string>
+    <string name="termuxplus_snippet_delete_confirm">Delete \"%1$s\"?</string>
+    <string name="termuxplus_snippets_disabled">Snippets are disabled.</string>
+    <string name="termuxplus_no_snippets">No snippets found.</string>
 
 
 
@@ -199,6 +215,18 @@
                     hardware keyboard is connected. (Default)</string>
                 <string name="termux_soft_keyboard_enabled_only_if_no_hardware_on">Soft keyboard will be enabled only if
                     no hardware keyboard is connected.</string>
+
+                <!-- Terminal Toolbar -->
+                <string name="termux_show_terminal_toolbar_title">Show toolbar</string>
+                <string name="termux_show_terminal_toolbar_off">Terminal toolbar will be hidden.</string>
+                <string name="termux_show_terminal_toolbar_on">Terminal toolbar will be shown. (Default)</string>
+
+                <!-- TermuxPlus Toolbar -->
+                <string name="termuxplus_snippets_enabled_title">Snippets</string>
+                <string name="termuxplus_snippets_enabled_off">Snippets will be disabled.</string>
+                <string name="termuxplus_snippets_enabled_on">Snippets will be enabled. (Default)</string>
+                <string name="termuxplus_manage_snippets_title">Manage snippets</string>
+                <string name="termuxplus_manage_snippets_summary">Create, edit, and delete snippets.</string>
 
 
         <!-- Terminal View Preferences -->

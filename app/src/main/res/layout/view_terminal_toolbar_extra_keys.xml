@@ -2,22 +2,38 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/black"
+    android:background="@color/termuxplus_surface"
     android:orientation="vertical">
 
-    <HorizontalScrollView
-        android:id="@+id/terminal_toolbar_mode_bar"
+    <LinearLayout
+        android:id="@+id/terminal_toolbar_key_actions"
         android:layout_width="match_parent"
-        android:layout_height="32dp"
-        android:scrollbars="none">
+        android:layout_height="@dimen/termuxplus_terminal_toolbar_actions_height"
+        android:gravity="end|center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp">
 
-        <LinearLayout
-            android:id="@+id/terminal_toolbar_mode_bar_buttons"
-            android:layout_width="wrap_content"
+        <Button
+            android:id="@+id/terminal_toolbar_snippets_button"
+            android:layout_width="36dp"
             android:layout_height="match_parent"
-            android:orientation="horizontal" />
+            android:background="@drawable/termuxplus_toolbar_action_button"
+            android:contentDescription="@string/termuxplus_snippets_title"
+            android:fontFamily="monospace"
+            android:includeFontPadding="false"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:singleLine="true"
+            android:text="▤"
+            android:textAllCaps="false"
+            android:textColor="@color/termuxplus_text_primary"
+            android:textSize="15sp" />
 
-    </HorizontalScrollView>
+    </LinearLayout>
 
     <com.termux.shared.termux.extrakeys.ExtraKeysView
         android:id="@+id/terminal_toolbar_extra_keys"
@@ -25,7 +41,10 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_alignParentBottom="true"
-        android:orientation="horizontal" />
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp" />
 
 </LinearLayout>

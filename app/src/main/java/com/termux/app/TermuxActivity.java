@@ -20,9 +20,6 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.EditText;
-import android.widget.ImageButton;
-import android.widget.ListView;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
 
@@ -41,10 +38,10 @@ import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY;
 import com.termux.app.activities.HelpActivity;
 import com.termux.app.activities.SettingsActivity;
+import com.termux.app.activities.TermuxPlusSnippetsActivity;
 import com.termux.shared.termux.crash.TermuxCrashUtils;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.app.terminal.TermuxSessionTabStripController;
-import com.termux.app.terminal.TermuxSessionsListViewController;
 import com.termux.app.terminal.io.TerminalToolbarViewPager;
 import com.termux.app.terminal.TermuxTerminalViewClient;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
@@ -63,7 +60,7 @@ import com.termux.view.TerminalViewClient;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import java.util.Arrays;
@@ -135,11 +132,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     TermuxTerminalExtraKeys mTermuxTerminalExtraKeys;
 
     /**
-     * The termux sessions list controller.
-     */
-    TermuxSessionsListViewController mTermuxSessionListViewController;
-
-    /**
      * The horizontal session tab strip controller.
      */
     TermuxSessionTabStripController mTermuxSessionTabStripController;
@@ -194,8 +186,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_HELP_ID = 7;
     private static final int CONTEXT_MENU_SETTINGS_ID = 8;
     private static final int CONTEXT_MENU_REPORT_ID = 9;
+    private static final int CONTEXT_MENU_SNIPPETS_ID = 12;
 
-    private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
     private static final String LOG_TAG = "TermuxActivity";
@@ -250,12 +242,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setTermuxTerminalViewAndClients();
 
         setTerminalToolbarView(savedInstanceState);
-
-        setSettingsButtonView();
-
-        setNewSessionButtonView();
-
-        setToggleKeyboardView();
 
         registerForContextMenu(mTerminalView);
 
@@ -347,7 +333,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         removeTermuxActivityRootViewGlobalLayoutListener();
 
         unregisterTermuxActivityBroadcastReceiver();
-        getDrawer().closeDrawers();
     }
 
     @Override
@@ -376,7 +361,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logVerbose(LOG_TAG, "onSaveInstanceState");
 
         super.onSaveInstanceState(savedInstanceState);
-        saveTerminalToolbarTextInput(savedInstanceState);
         savedInstanceState.putBoolean(ARG_ACTIVITY_RECREATED, true);
     }
 
@@ -395,7 +379,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         mTermuxService = ((TermuxService.LocalBinder) service).service;
 
-        setTermuxSessionsListView();
+        setTermuxSessionTabStrip();
 
         final Intent intent = getIntent();
         setIntent(null);
@@ -503,13 +487,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTermuxTerminalSessionActivityClient.onCreate();
     }
 
-    private void setTermuxSessionsListView() {
-        ListView termuxSessionsListView = findViewById(R.id.terminal_sessions_list);
-        mTermuxSessionListViewController = new TermuxSessionsListViewController(this, mTermuxService.getTermuxSessions());
-        termuxSessionsListView.setAdapter(mTermuxSessionListViewController);
-        termuxSessionsListView.setOnItemClickListener(mTermuxSessionListViewController);
-        termuxSessionsListView.setOnItemLongClickListener(mTermuxSessionListViewController);
-
+    private void setTermuxSessionTabStrip() {
         mTermuxSessionTabStripController = new TermuxSessionTabStripController(this);
         mTermuxSessionTabStripController.notifyUpdated(mTermuxService.getTermuxSessions());
     }
@@ -528,12 +506,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setTerminalToolbarHeight();
 
-        String savedTextInput = null;
-        if (savedInstanceState != null)
-            savedTextInput = savedInstanceState.getString(ARG_TERMINAL_TOOLBAR_TEXT_INPUT);
-
-        terminalToolbarViewPager.setAdapter(new TerminalToolbarViewPager.PageAdapter(this, savedTextInput));
+        terminalToolbarViewPager.setAdapter(new TerminalToolbarViewPager.PageAdapter(this));
         terminalToolbarViewPager.addOnPageChangeListener(new TerminalToolbarViewPager.OnPageChangeListener(this, terminalToolbarViewPager));
+        terminalToolbarViewPager.setCurrentItem(TerminalToolbarViewPager.MODE_KEYS, false);
     }
 
     private void setTerminalToolbarHeight() {
@@ -541,10 +516,17 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (terminalToolbarViewPager == null) return;
 
         ViewGroup.LayoutParams layoutParams = terminalToolbarViewPager.getLayoutParams();
-        layoutParams.height = Math.round(mTerminalToolbarDefaultHeight *
-            (mTermuxTerminalExtraKeys.getExtraKeysInfo() == null ? 0 : mTermuxTerminalExtraKeys.getExtraKeysInfo().getMatrix().length) *
+        int actionsHeight = mTermuxTerminalExtraKeys != null && mTermuxTerminalExtraKeys.getExtraKeysPageCount() > 0
+            ? getResources().getDimensionPixelSize(R.dimen.termuxplus_terminal_toolbar_actions_height)
+            : 0;
+        int extraKeysRows = mTermuxTerminalExtraKeys == null ? 0 : mTermuxTerminalExtraKeys.getMaxExtraKeysRows();
+        layoutParams.height = Math.round((actionsHeight + (mTerminalToolbarDefaultHeight * extraKeysRows)) *
             mProperties.getTerminalToolbarHeightScaleFactor());
         terminalToolbarViewPager.setLayoutParams(layoutParams);
+    }
+
+    public void updateTerminalToolbarHeight() {
+        setTerminalToolbarHeight();
     }
 
     public void toggleTerminalToolbar() {
@@ -554,67 +536,36 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         final boolean showNow = mPreferences.toogleShowTerminalToolbar();
         Logger.showToast(this, (showNow ? getString(R.string.msg_enabling_terminal_toolbar) : getString(R.string.msg_disabling_terminal_toolbar)), true);
         terminalToolbarViewPager.setVisibility(showNow ? View.VISIBLE : View.GONE);
-        if (showNow && isTerminalToolbarTextInputViewSelected()) {
-            // Focus the text input view if just revealed.
-            findViewById(R.id.terminal_toolbar_text_input).requestFocus();
-        }
     }
 
-    private void saveTerminalToolbarTextInput(Bundle savedInstanceState) {
-        if (savedInstanceState == null) return;
+    public void showTerminalToolbarSnippetsPopup() {
+        final ViewPager terminalToolbarViewPager = getTerminalToolbarViewPager();
+        if (terminalToolbarViewPager == null) return;
 
-        final EditText textInputView = findViewById(R.id.terminal_toolbar_text_input);
-        if (textInputView != null) {
-            String textInput = textInputView.getText().toString();
-            if (!textInput.isEmpty()) savedInstanceState.putString(ARG_TERMINAL_TOOLBAR_TEXT_INPUT, textInput);
-        }
+        PagerAdapter adapter = terminalToolbarViewPager.getAdapter();
+        if (adapter instanceof TerminalToolbarViewPager.PageAdapter)
+            ((TerminalToolbarViewPager.PageAdapter) adapter).showSnippetsPopup();
     }
 
-
-
-    private void setSettingsButtonView() {
-        ImageButton settingsButton = findViewById(R.id.settings_button);
-        settingsButton.setOnClickListener(v -> {
-            ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
-        });
-    }
-
-    private void setNewSessionButtonView() {
-        View newSessionButton = findViewById(R.id.new_session_button);
-        newSessionButton.setOnClickListener(v -> mTermuxTerminalSessionActivityClient.addNewSession(false, null));
-        newSessionButton.setOnLongClickListener(v -> {
-            TextInputDialogUtils.textInput(TermuxActivity.this, R.string.title_create_named_session, null,
-                R.string.action_create_named_session_confirm, text -> mTermuxTerminalSessionActivityClient.addNewSession(false, text),
-                R.string.action_new_session_failsafe, text -> mTermuxTerminalSessionActivityClient.addNewSession(true, text),
-                -1, null, null);
-            return true;
-        });
-    }
-
-    private void setToggleKeyboardView() {
-        findViewById(R.id.toggle_keyboard_button).setOnClickListener(v -> {
-            mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
-            getDrawer().closeDrawers();
-        });
-
-        findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
-            toggleTerminalToolbar();
-            return true;
-        });
+    public void openTermuxPlusSnippetsManager() {
+        TermuxPlusSnippetsActivity.start(this);
     }
 
 
 
+    public void showCreateNamedSessionDialog() {
+        TextInputDialogUtils.textInput(TermuxActivity.this, R.string.title_create_named_session, null,
+            R.string.action_create_named_session_confirm, text -> mTermuxTerminalSessionActivityClient.addNewSession(false, text),
+            R.string.action_new_session_failsafe, text -> mTermuxTerminalSessionActivityClient.addNewSession(true, text),
+            -1, null, null);
+    }
 
 
-    @SuppressLint("RtlHardcoded")
+
+    @SuppressLint({"RtlHardcoded", "MissingSuperCall"})
     @Override
     public void onBackPressed() {
-        if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
-            getDrawer().closeDrawers();
-        } else {
-            finishActivityIfNotFinishing();
-        }
+        finishActivityIfNotFinishing();
     }
 
     public void finishActivityIfNotFinishing() {
@@ -654,6 +605,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE, getResources().getString(R.string.action_kill_process, getCurrentSession().getPid())).setEnabled(currentSession.isRunning());
         menu.add(Menu.NONE, CONTEXT_MENU_STYLING_ID, Menu.NONE, R.string.action_style_terminal);
         menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on).setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
+        menu.add(Menu.NONE, CONTEXT_MENU_SNIPPETS_ID, Menu.NONE, R.string.termuxplus_manage_snippets_title);
         menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
         menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
         menu.add(Menu.NONE, CONTEXT_MENU_REPORT_ID, Menu.NONE, R.string.action_report_issue);
@@ -697,6 +649,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 return true;
             case CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON:
                 toggleKeepScreenOn();
+                return true;
+            case CONTEXT_MENU_SNIPPETS_ID:
+                TermuxPlusSnippetsActivity.start(this);
                 return true;
             case CONTEXT_MENU_HELP_ID:
                 ActivityUtils.startActivity(this, new Intent(this, HelpActivity.class));
@@ -842,11 +797,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mExtraKeysView = extraKeysView;
     }
 
-    public DrawerLayout getDrawer() {
-        return (DrawerLayout) findViewById(R.id.drawer_layout);
-    }
-
-
     public ViewPager getTerminalToolbarViewPager() {
         return (ViewPager) findViewById(R.id.terminal_toolbar_view_pager);
     }
@@ -856,17 +806,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     public boolean isTerminalViewSelected() {
-        return getTerminalToolbarViewPager().getCurrentItem() == 0;
-    }
-
-    public boolean isTerminalToolbarTextInputViewSelected() {
-        return getTerminalToolbarViewPager().getCurrentItem() == 1;
+        return true;
     }
 
 
     public void termuxSessionListNotifyUpdated() {
-        if (mTermuxSessionListViewController != null)
-            mTermuxSessionListViewController.notifyDataSetChanged();
         if (mTermuxSessionTabStripController != null && mTermuxService != null)
             mTermuxSessionTabStripController.notifyUpdated(mTermuxService.getTermuxSessions());
     }
@@ -982,6 +926,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             reloadProperties();
 
             if (mExtraKeysView != null) {
+                mTermuxTerminalExtraKeys.reloadExtraKeys();
                 mExtraKeysView.setButtonTextAllCaps(mProperties.shouldExtraKeysTextBeAllCaps());
                 mExtraKeysView.reload(mTermuxTerminalExtraKeys.getExtraKeysInfo(), mTerminalToolbarDefaultHeight);
             }

@@ -1,0 +1,56 @@
+[
+  {
+    "id": "pkg-update-upgrade",
+    "title": "Update packages",
+    "description": "Refresh package metadata and upgrade installed packages.",
+    "command": "pkg update && pkg upgrade",
+    "category": "Packages",
+    "tags": ["pkg", "apt", "upgrade"],
+    "mode": "run"
+  },
+  {
+    "id": "setup-storage",
+    "title": "Set up storage",
+    "description": "Grant TermuxPlus access to shared storage.",
+    "command": "termux-setup-storage",
+    "category": "Android",
+    "tags": ["storage", "android"],
+    "mode": "run"
+  },
+  {
+    "id": "install-dev-basics",
+    "title": "Install dev basics",
+    "description": "Install common local development tools.",
+    "command": "pkg install git curl wget vim nano tmux openssh",
+    "category": "Packages",
+    "tags": ["git", "curl", "ssh", "tmux"],
+    "mode": "insert"
+  },
+  {
+    "id": "start-ssh",
+    "title": "Start SSH server",
+    "description": "Start the OpenSSH daemon in the current environment.",
+    "command": "sshd",
+    "category": "Network",
+    "tags": ["ssh", "server"],
+    "mode": "run"
+  },
+  {
+    "id": "python-http-server",
+    "title": "Python HTTP server",
+    "description": "Serve the current directory over HTTP.",
+    "command": "python -m http.server 8000",
+    "category": "Development",
+    "tags": ["python", "http", "server"],
+    "mode": "insert"
+  },
+  {
+    "id": "git-status-short",
+    "title": "Git short status",
+    "description": "Show concise git repository state.",
+    "command": "git status --short --branch",
+    "category": "Git",
+    "tags": ["git", "status"],
+    "mode": "run"
+  }
+]

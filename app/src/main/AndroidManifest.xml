@@ -103,6 +103,15 @@
             android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
 
         <activity
+            android:name=".app.activities.TermuxPlusSnippetsActivity"
+            android:exported="false"
+            android:label="@string/termuxplus_snippets_title"
+            android:parentActivityName=".app.TermuxActivity"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.TermuxActivity.DayNight.NoActionBar"
+            tools:targetApi="n" />
+
+        <activity
             android:name=".shared.activities.ReportActivity"
             android:theme="@style/Theme.MarkdownViewActivity.DayNight"
             android:documentLaunchMode="intoExisting" />

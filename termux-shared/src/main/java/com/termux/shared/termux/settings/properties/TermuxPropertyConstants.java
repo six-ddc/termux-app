@@ -443,7 +443,6 @@ public final class TermuxPropertyConstants {
         KEY_DISABLE_FILE_VIEW_RECEIVER,
         KEY_DISABLE_HARDWARE_KEYBOARD_SHORTCUTS,
         KEY_DISABLE_TERMINAL_SESSION_CHANGE_TOAST,
-        KEY_ENFORCE_CHAR_BASED_INPUT,
         KEY_HIDE_SOFT_KEYBOARD_ON_STARTUP,
         KEY_TERMINAL_ONCLICK_URL_OPEN,
         KEY_USE_CTRL_SPACE_WORKAROUND,
@@ -458,6 +457,7 @@ public final class TermuxPropertyConstants {
      * default: true
      */
     public static final Set<String> TERMUX_DEFAULT_TRUE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST = new HashSet<>(Arrays.asList(
+        KEY_ENFORCE_CHAR_BASED_INPUT,
         KEY_EXTRA_KEYS_TEXT_ALL_CAPS,
         KEY_RUN_TERMUX_AM_SOCKET_SERVER
     ));

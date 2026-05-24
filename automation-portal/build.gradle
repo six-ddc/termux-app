@@ -1,0 +1,70 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+base {
+    archivesName = "autotermux"
+}
+
+android {
+    namespace "com.termux.autotermux"
+    compileSdkVersion project.properties.compileSdkVersion.toInteger()
+
+    defaultConfig {
+        applicationId "com.termux.autotermux"
+        minSdkVersion 26
+        targetSdkVersion 34
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildFeatures {
+        viewBinding true
+        buildConfig true
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file("../app/testkey_untrusted.jks")
+            keyAlias "alias"
+            storePassword "xrj45yWGLbsO7W0v"
+            keyPassword "xrj45yWGLbsO7W0v"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core-ktx:1.13.1"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.biometric:biometric:1.1.0"
+    implementation "com.google.android.material:material:1.12.0"
+    implementation "org.java-websocket:Java-WebSocket:1.6.0"
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
+    testImplementation "io.mockk:mockk:1.13.13"
+}

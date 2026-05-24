@@ -146,6 +146,18 @@ android {
         }
     }
 
+    androidResources {
+        noCompress += "apk"
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += "$buildDir/generated/assets/autotermux"
+            assets.srcDirs += "$buildDir/generated/assets/termuxplus-cli"
+            assets.srcDirs += "$buildDir/generated/assets/termuxplus-home"
+        }
+    }
+
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             if (variant.buildType.name == "debug") {
@@ -376,6 +388,87 @@ task downloadBootstraps() {
 
 afterEvaluate {
     android.applicationVariants.all { variant ->
+        def autoTermuxVariantName = variant.name.capitalize()
+        def autoTermuxBuildTypeName = variant.buildType.name
+        def autoTermuxGeneratedAssetsRoot = file("$buildDir/generated/assets/autotermux")
+        def autoTermuxAssetDir = file("$buildDir/generated/assets/autotermux/autotermux")
+        def autoTermuxApkFileProvider = project(":automation-portal").layout.buildDirectory.file(
+            "outputs/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
+        )
+        def termuxPlusCliGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-cli")
+        def termuxPlusCliAssetDir = file("$buildDir/generated/assets/termuxplus-cli/termuxplus/bin")
+        def termuxPlusCliSource = rootProject.file("bootstrap/bin/tp-android")
+        def termuxPlusHomeGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-home")
+        def termuxPlusHomeAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/home")
+        def termuxPlusSkillsAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/codex-skills")
+        def termuxPlusHomeAgentsSource = rootProject.file("bootstrap/home/AGENTS.md")
+        def termuxPlusHomeSkillsSource = rootProject.file("bootstrap/home/.codex/skills")
+        def copyAutoTermuxAssetTask = tasks.register("copyAutoTermux${autoTermuxVariantName}Asset") {
+            dependsOn(":automation-portal:assemble${autoTermuxVariantName}")
+            inputs.file(autoTermuxApkFileProvider)
+            outputs.dir(autoTermuxGeneratedAssetsRoot)
+            doLast {
+                def sourceApk = autoTermuxApkFileProvider.get().asFile
+                if (!sourceApk.isFile()) {
+                    throw new GradleException("AutoTermux APK was not built at ${sourceApk}")
+                }
+
+                project.delete(autoTermuxGeneratedAssetsRoot)
+                autoTermuxAssetDir.mkdirs()
+                def targetApk = new File(autoTermuxAssetDir, "AutoTermux.apk")
+                targetApk.bytes = sourceApk.bytes
+
+                def manifestFile = new File(autoTermuxAssetDir, "manifest.json")
+                manifestFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                    packageName: "com.termux.autotermux",
+                    versionName: "0.1.0",
+                    sourceApk: sourceApk.name
+                ])) + "\n"
+            }
+        }
+        def copyTermuxPlusCliAssetTask = tasks.register("copyTermuxPlusCli${autoTermuxVariantName}Asset") {
+            inputs.file(termuxPlusCliSource)
+            outputs.dir(termuxPlusCliGeneratedAssetsRoot)
+            doLast {
+                if (!termuxPlusCliSource.isFile()) {
+                    throw new GradleException("TermuxPlus CLI source was not found at ${termuxPlusCliSource}")
+                }
+
+                project.delete(termuxPlusCliGeneratedAssetsRoot)
+                termuxPlusCliAssetDir.mkdirs()
+                def targetCli = new File(termuxPlusCliAssetDir, "tp-android")
+                targetCli.bytes = termuxPlusCliSource.bytes
+            }
+        }
+        def copyTermuxPlusHomeAssetTask = tasks.register("copyTermuxPlusHome${autoTermuxVariantName}Asset") {
+            inputs.file(termuxPlusHomeAgentsSource)
+            inputs.dir(termuxPlusHomeSkillsSource)
+            outputs.dir(termuxPlusHomeGeneratedAssetsRoot)
+            doLast {
+                if (!termuxPlusHomeAgentsSource.isFile()) {
+                    throw new GradleException("TermuxPlus home AGENTS.md source was not found at ${termuxPlusHomeAgentsSource}")
+                }
+                if (!termuxPlusHomeSkillsSource.isDirectory()) {
+                    throw new GradleException("TermuxPlus home skills source was not found at ${termuxPlusHomeSkillsSource}")
+                }
+
+                project.delete(termuxPlusHomeGeneratedAssetsRoot)
+                termuxPlusHomeAssetDir.mkdirs()
+                def targetAgents = new File(termuxPlusHomeAssetDir, "AGENTS.md")
+                targetAgents.bytes = termuxPlusHomeAgentsSource.bytes
+                project.copy {
+                    from termuxPlusHomeSkillsSource
+                    into termuxPlusSkillsAssetDir
+                    includeEmptyDirs = false
+                }
+            }
+        }
+
+        variant.mergeAssetsProvider.configure {
+            dependsOn(copyAutoTermuxAssetTask)
+            dependsOn(copyTermuxPlusCliAssetTask)
+            dependsOn(copyTermuxPlusHomeAssetTask)
+        }
         variant.preBuildProvider.configure { dependsOn(downloadBootstraps) }
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
     }

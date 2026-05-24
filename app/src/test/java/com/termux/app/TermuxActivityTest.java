@@ -27,6 +27,15 @@ public class TermuxActivityTest {
 
         assertUrlsAre("hello https://example.com/#bar https://example.com/foo#bar",
             "https://example.com/#bar", "https://example.com/foo#bar");
+
+        assertUrlsAre("login at https://auth.openai.com/authorize?client_id=codex&code_challenge=a.b-c_d~e%2Ff&state=xyz#done",
+            "https://auth.openai.com/authorize?client_id=codex&code_challenge=a.b-c_d~e%2Ff&state=xyz#done");
+
+        assertUrlsAre("open (https://example.com/callback?code=abc&state=xyz).",
+            "https://example.com/callback?code=abc&state=xyz");
+
+        assertUrlsAre("balanced https://example.com/path(foo)",
+            "https://example.com/path(foo)");
     }
 
 }

@@ -27,6 +27,9 @@
 
     <!-- Termux Bootstrap Packages Installation -->
     <string name="bootstrap_installer_body">Installing bootstrap packages…</string>
+    <string name="autotermux_install_permission_required">Allow Termux to install unknown apps, then run tp-android install-companion again.</string>
+    <string name="autotermux_install_failed">Could not start AutoTermux installer: %1$s</string>
+    <string name="autotermux_install_complete">AutoTermux installed.</string>
     <string name="bootstrap_error_title">Unable to install bootstrap</string>
     <string name="bootstrap_error_body">&TERMUX_APP_NAME; was unable to install the bootstrap packages.</string>
     <string name="bootstrap_error_abort">Abort</string>
@@ -112,6 +115,8 @@
 
     <string name="action_style_terminal">Style</string>
     <string name="action_toggle_keep_screen_on">Keep screen on</string>
+    <string name="action_enable_floating_terminal">Enable floating terminal</string>
+    <string name="action_show_floating_terminal">Show floating terminal</string>
     <string name="action_open_help">Help</string>
     <string name="action_open_settings">Settings</string>
 
@@ -132,6 +137,7 @@
 
 
     <!-- TermuxService -->
+    <string name="termuxplus_floating_terminal_title">&TERMUX_APP_NAME;</string>
     <string name="error_display_over_other_apps_permission_not_granted_to_start_terminal">&TERMUX_APP_NAME; requires
         \"Display over other apps\" permission to start terminal sessions from background on Android >= 10.
         Grants it from Settings -> Apps -> &TERMUX_APP_NAME; -> Advanced</string>

@@ -13,14 +13,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 应用身份保持上游默认：`com.termux`，`$PREFIX = /data/data/com.termux/files/usr`。
 - 不要恢复旧 custom package/prefix 方案（`/data/data/com.yourcompany.termuxplus`）。
-- 产品方案和完整实现说明在 `docs/termuxplus-plan.md`。
 
 ## Gradle 模块结构
 
 | 模块 | 产物 | 说明 |
 |------|------|------|
 | `:app` | `com.termux` APK | 主终端 App，Java，包含 TermuxPlus UI 改动 |
-| `:automation-portal` | `com.termux.autotermux` APK | AutoTermux 独立配套 App，Kotlin，最低 API 26 |
+| `:autotermux` | `com.termux.autotermux` APK | AutoTermux 独立配套 App，Kotlin，最低 API 26 |
 | `:terminal-emulator` | 库 | 终端仿真核心（纯 Java，无 Android 依赖） |
 | `:terminal-view` | 库 | 终端 Android View 渲染层 |
 | `:termux-shared` | 库 | 跨模块共享常量、工具类、TermuxConstants |
@@ -42,14 +41,14 @@ TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :
 构建 AutoTermux：
 
 ```sh
-./gradlew :automation-portal:assembleDebug
+./gradlew :autotermux:assembleDebug
 ```
 
 运行单元测试：
 
 ```sh
 ./gradlew :app:test
-./gradlew :automation-portal:test
+./gradlew :autotermux:test
 ```
 
 安装到设备：
@@ -96,7 +95,7 @@ TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :
 - **AutoTermux 集成**：`app/src/main/java/com/termux/app/autotermux/` 包含安装引导（`AutoTermuxInstallActivity`、`AutoTermuxInstallReceiver`）和 APK provider（`AutoTermuxApkProvider`）
 - **Bootstrap 安装后处理**：`TermuxPlusCliInstaller`（安装 `tp-android` CLI）、`TermuxPlusHomeInstaller`（复制 home 模板文件）
 
-## AutoTermux 模块架构（`:automation-portal`）
+## AutoTermux 模块架构（`:autotermux`）
 
 独立 App（`com.termux.autotermux`），通过 Android 跨进程机制向 Termux 提供设备自动化能力。
 
@@ -139,7 +138,7 @@ TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :
 
 ## tp-android CLI
 
-`bootstrap/bin/tp-android` 是 227KB Python 脚本（v0.5.0），构建时注入到 `$PREFIX/bin/tp-android`。默认 transport 是 signature-protected broadcast bridge（`TermuxAutomationBridgeReceiver`）；HTTP transport 仅在显式使用 `tp-android server` 命令或 `--transport=http` 时才启动（`127.0.0.1:8080`）。用户配置读自 `~/.termuxplus/android-automation.json`。完整命令集见 `docs/termuxplus-plan.md` 的"tp-android CLI"章节。
+`bootstrap/bin/tp-android` 是 227KB Python 脚本（v0.5.0），构建时注入到 `$PREFIX/bin/tp-android`。默认 transport 是 signature-protected broadcast bridge（`TermuxAutomationBridgeReceiver`）；HTTP transport 仅在显式使用 `tp-android server` 命令或 `--transport=http` 时才启动（`127.0.0.1:8080`）。用户配置读自 `~/.termuxplus/android-automation.json`。完整命令集运行 `tp-android --help` 查看。
 
 ## 设置页架构
 

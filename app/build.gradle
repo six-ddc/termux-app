@@ -392,7 +392,7 @@ afterEvaluate {
         def autoTermuxBuildTypeName = variant.buildType.name
         def autoTermuxGeneratedAssetsRoot = file("$buildDir/generated/assets/autotermux")
         def autoTermuxAssetDir = file("$buildDir/generated/assets/autotermux/autotermux")
-        def autoTermuxApkFileProvider = project(":automation-portal").layout.buildDirectory.file(
+        def autoTermuxApkFileProvider = project(":autotermux").layout.buildDirectory.file(
             "outputs/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
         )
         def termuxPlusCliGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-cli")
@@ -404,7 +404,7 @@ afterEvaluate {
         def termuxPlusHomeAgentsSource = rootProject.file("bootstrap/home/AGENTS.md")
         def termuxPlusHomeSkillsSource = rootProject.file("bootstrap/home/.codex/skills")
         def copyAutoTermuxAssetTask = tasks.register("copyAutoTermux${autoTermuxVariantName}Asset") {
-            dependsOn(":automation-portal:assemble${autoTermuxVariantName}")
+            dependsOn(":autotermux:assemble${autoTermuxVariantName}")
             inputs.file(autoTermuxApkFileProvider)
             outputs.dir(autoTermuxGeneratedAssetsRoot)
             doLast {

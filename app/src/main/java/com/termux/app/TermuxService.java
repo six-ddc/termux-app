@@ -20,6 +20,7 @@ import androidx.annotation.Nullable;
 
 import com.termux.R;
 import com.termux.app.event.SystemEventReceiver;
+import com.termux.app.terminal.TermuxFloatingTerminalController;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
@@ -98,6 +99,11 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
      */
     private TermuxShellManager mShellManager;
 
+    /**
+     * Small overlay terminal used while Termux is in the background and another app is being automated.
+     */
+    private TermuxFloatingTerminalController mFloatingTerminalController;
+
     /** The wake lock and wifi lock are always acquired and released together. */
     private PowerManager.WakeLock mWakeLock;
     private WifiManager.WifiLock mWifiLock;
@@ -116,6 +122,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         mProperties = TermuxAppSharedProperties.getProperties();
 
         mShellManager = TermuxShellManager.getShellManager();
+        mFloatingTerminalController = new TermuxFloatingTerminalController(this);
 
         runStartForeground();
 
@@ -178,6 +185,9 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         TermuxShellManager.onAppExit(this);
 
         SystemEventReceiver.unregisterPackageUpdateEvents(this);
+
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.hide();
 
         runStopForeground();
     }
@@ -617,6 +627,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             mTermuxTerminalSessionActivityClient.termuxSessionListNotifyUpdated();
 
         updateNotification();
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.onSessionsChanged();
 
         // No need to recreate the activity since it likely just started and theme should already have applied
         TermuxActivity.updateTermuxActivityStyling(this, false);
@@ -654,6 +666,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         }
 
         updateNotification();
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.onSessionsChanged();
     }
 
 
@@ -924,6 +938,19 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         return null;
     }
 
+    @Nullable
+    public synchronized TerminalSession getCurrentStoredTerminalSessionOrLast() {
+        TermuxAppSharedPreferences preferences = TermuxAppSharedPreferences.build(this);
+        if (preferences != null) {
+            TerminalSession storedSession = getTerminalSessionForHandle(preferences.getCurrentSession());
+            if (storedSession != null)
+                return storedSession;
+        }
+
+        TermuxSession lastTermuxSession = getLastTermuxSession();
+        return lastTermuxSession == null ? null : lastTermuxSession.getTerminalSession();
+    }
+
     public synchronized AppShell getTermuxTaskForShellName(String name) {
         if (DataUtils.isNullOrEmpty(name)) return null;
         AppShell appShell;
@@ -952,6 +979,21 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
     public boolean wantsToStop() {
         return mWantsToStop;
+    }
+
+    public void showFloatingTerminalIfAllowed() {
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.showCollapsedIfAllowed();
+    }
+
+    public void showFloatingTerminalExpandedIfAllowed() {
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.showExpandedIfAllowed();
+    }
+
+    public void hideFloatingTerminal() {
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.hide();
     }
 
 }

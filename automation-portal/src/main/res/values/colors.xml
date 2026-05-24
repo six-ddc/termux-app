@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <color name="autotermux_primary">#0D9373</color>
+    <color name="autotermux_primary_dark">#0D9373</color>
+    <color name="autotermux_primary_light">#07C983</color>
+    <color name="autotermux_secondary">#0D9373</color>
+    <color name="autotermux_warning">#FFD740</color>
+    <color name="autotermux_warning_surface">#2A250C</color>
+    <color name="autotermux_warning_button">#FFD740</color>
+
+    <color name="background_primary">#0F0F0F</color>
+    <color name="background_tertiary">#161616</color>
+    <color name="background_card">#1A1A1A</color>
+    <color name="background_code">#131313</color>
+
+    <color name="text_white">#FFFFFF</color>
+    <color name="text_gray_light">#AAAAAA</color>
+
+    <color name="stroke_gray">#2A2A2A</color>
+</resources>

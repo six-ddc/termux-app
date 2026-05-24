@@ -1,0 +1,30 @@
+<resources>
+    <string name="app_name">AutoTermux</string>
+    <string name="accessibility_service_description">AutoTermux identifies visible UI elements and executes local automation commands requested from Termux.</string>
+    <string name="accessibility_status_label">Accessibility status</string>
+    <string name="keyboard_status_label">Keyboard status</string>
+    <string name="local_api_status_label">Local API status</string>
+    <string name="bridge_status_label">Bridge status</string>
+    <string name="keyboard_name">AutoTermux Keyboard</string>
+    <string name="keyboard_on">AutoTermux Keyboard</string>
+
+    <string name="local_connection_service_title">Local connection active</string>
+    <string name="local_connection_service_text">WebSocket server is ready for local commands</string>
+    <string name="disable_ws_server_action">Disable WS Server</string>
+    <string name="websocket_server_started">WebSocket server started on port %1$d</string>
+
+    <string name="media_projection_auto_accept_failed">Screen capture auto-accept failed. Please accept manually.</string>
+    <string name="keep_screen_awake_notification_title">Keep Screen Awake</string>
+    <string name="keep_screen_awake_notification_text">Monitoring the device to prevent screen sleep</string>
+    <string name="keep_screen_awake_notification_stop">Stop</string>
+
+    <string name="permission_required_title">Permission Required</string>
+    <string name="install_permission_message">To install apps, AutoTermux needs permission to install from unknown sources.</string>
+    <string name="install_permission_steps">1. Tap \"Open Settings\" below\n2. Enable \"Allow from this source\"\n3. Return and try again</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="cancel">Cancel</string>
+
+    <string name="keyboard_switch_settings_help">Enable another keyboard, then switch to it.</string>
+    <string name="keyboard_switch_unavailable">Could not open keyboard switching options.</string>
+    <string name="switch_keyboard">Switch</string>
+</resources>

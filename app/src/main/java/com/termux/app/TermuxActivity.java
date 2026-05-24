@@ -11,7 +11,9 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.Gravity;
@@ -173,6 +175,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private float mTerminalToolbarDefaultHeight;
 
+    private final Handler mFloatingTerminalStopHandler = new Handler(Looper.getMainLooper());
+    private boolean mSuppressFloatingTerminalOnStop;
+
 
     private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
     private static final int CONTEXT_MENU_SHARE_TRANSCRIPT_ID = 1;
@@ -187,6 +192,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_SETTINGS_ID = 8;
     private static final int CONTEXT_MENU_REPORT_ID = 9;
     private static final int CONTEXT_MENU_SNIPPETS_ID = 12;
+    private static final int CONTEXT_MENU_FLOATING_TERMINAL_ID = 13;
 
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
@@ -280,6 +286,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mIsInvalidState) return;
 
         mIsVisible = true;
+        mSuppressFloatingTerminalOnStop = false;
+        mFloatingTerminalStopHandler.removeCallbacksAndMessages(null);
+
+        if (mTermuxService != null)
+            mTermuxService.hideFloatingTerminal();
 
         if (mTermuxTerminalSessionActivityClient != null)
             mTermuxTerminalSessionActivityClient.onStart();
@@ -333,6 +344,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         removeTermuxActivityRootViewGlobalLayoutListener();
 
         unregisterTermuxActivityBroadcastReceiver();
+
+        maybeShowFloatingTerminalAfterLeavingApp();
     }
 
     @Override
@@ -571,8 +584,21 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void finishActivityIfNotFinishing() {
         // prevent duplicate calls to finish() if called from multiple places
         if (!TermuxActivity.this.isFinishing()) {
+            mSuppressFloatingTerminalOnStop = true;
             finish();
         }
+    }
+
+    private void maybeShowFloatingTerminalAfterLeavingApp() {
+        if (mSuppressFloatingTerminalOnStop || isFinishing() || isChangingConfigurations())
+            return;
+
+        mFloatingTerminalStopHandler.postDelayed(() -> {
+            if (mTermuxService == null || mIsVisible || TermuxApplication.isAppInForeground())
+                return;
+
+            mTermuxService.showFloatingTerminalIfAllowed();
+        }, 350);
     }
 
     /** Show a toast and dismiss the last one if still visible. */
@@ -605,6 +631,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE, getResources().getString(R.string.action_kill_process, getCurrentSession().getPid())).setEnabled(currentSession.isRunning());
         menu.add(Menu.NONE, CONTEXT_MENU_STYLING_ID, Menu.NONE, R.string.action_style_terminal);
         menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on).setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
+        menu.add(Menu.NONE, CONTEXT_MENU_FLOATING_TERMINAL_ID, Menu.NONE,
+            PermissionUtils.checkDisplayOverOtherAppsPermission(this)
+                ? R.string.action_show_floating_terminal
+                : R.string.action_enable_floating_terminal);
         menu.add(Menu.NONE, CONTEXT_MENU_SNIPPETS_ID, Menu.NONE, R.string.termuxplus_manage_snippets_title);
         menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
         menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
@@ -649,6 +679,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 return true;
             case CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON:
                 toggleKeepScreenOn();
+                return true;
+            case CONTEXT_MENU_FLOATING_TERMINAL_ID:
+                if (!PermissionUtils.checkDisplayOverOtherAppsPermission(this)) {
+                    PermissionUtils.requestDisplayOverOtherAppsPermission(this);
+                } else if (mTermuxService != null) {
+                    mTermuxService.showFloatingTerminalExpandedIfAllowed();
+                }
                 return true;
             case CONTEXT_MENU_SNIPPETS_ID:
                 TermuxPlusSnippetsActivity.start(this);

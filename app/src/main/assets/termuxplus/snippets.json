@@ -1,5 +1,23 @@
 [
   {
+    "id": "codex-full-access",
+    "title": "Codex full access",
+    "description": "Start Codex with approval prompts and sandbox disabled.",
+    "command": "codex --dangerously-bypass-approvals-and-sandbox",
+    "category": "Codex",
+    "tags": ["codex", "agent", "full-access"],
+    "mode": "run"
+  },
+  {
+    "id": "codex-doctor",
+    "title": "Codex doctor",
+    "description": "Check Codex runtime, auth, network, and terminal support.",
+    "command": "codex doctor --summary --ascii",
+    "category": "Codex",
+    "tags": ["codex", "doctor", "diagnostics"],
+    "mode": "run"
+  },
+  {
     "id": "pkg-update-upgrade",
     "title": "Update packages",
     "description": "Refresh package metadata and upgrade installed packages.",
@@ -15,42 +33,6 @@
     "command": "termux-setup-storage",
     "category": "Android",
     "tags": ["storage", "android"],
-    "mode": "run"
-  },
-  {
-    "id": "install-dev-basics",
-    "title": "Install dev basics",
-    "description": "Install common local development tools.",
-    "command": "pkg install git curl wget vim nano tmux openssh",
-    "category": "Packages",
-    "tags": ["git", "curl", "ssh", "tmux"],
-    "mode": "insert"
-  },
-  {
-    "id": "start-ssh",
-    "title": "Start SSH server",
-    "description": "Start the OpenSSH daemon in the current environment.",
-    "command": "sshd",
-    "category": "Network",
-    "tags": ["ssh", "server"],
-    "mode": "run"
-  },
-  {
-    "id": "python-http-server",
-    "title": "Python HTTP server",
-    "description": "Serve the current directory over HTTP.",
-    "command": "python -m http.server 8000",
-    "category": "Development",
-    "tags": ["python", "http", "server"],
-    "mode": "insert"
-  },
-  {
-    "id": "git-status-short",
-    "title": "Git short status",
-    "description": "Show concise git repository state.",
-    "command": "git status --short --branch",
-    "category": "Git",
-    "tags": ["git", "status"],
     "mode": "run"
   }
 ]

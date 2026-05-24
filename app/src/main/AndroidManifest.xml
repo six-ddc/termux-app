@@ -36,6 +36,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="com.termux.autotermux.permission.BRIDGE" />
 
     <application
         android:name=".app.TermuxApplication"
@@ -112,6 +113,21 @@
             tools:targetApi="n" />
 
         <activity
+            android:name=".app.autotermux.AutoTermuxInstallActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:resizeableActivity="false"
+            android:theme="@style/Theme.TermuxActivity.DayNight.NoActionBar" />
+
+        <receiver
+            android:name=".app.autotermux.AutoTermuxInstallReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.termux.autotermux.INSTALL_COMPANION" />
+            </intent-filter>
+        </receiver>
+
+        <activity
             android:name=".shared.activities.ReportActivity"
             android:theme="@style/Theme.MarkdownViewActivity.DayNight"
             android:documentLaunchMode="intoExisting" />
@@ -184,6 +200,11 @@
             android:grantUriPermissions="true"
             android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND" />
 
+        <provider
+            android:name=".app.autotermux.AutoTermuxApkProvider"
+            android:authorities="${TERMUX_PACKAGE_NAME}.autotermux.apk"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <receiver
             android:name=".app.TermuxOpenReceiver"

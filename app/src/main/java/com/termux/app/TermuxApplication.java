@@ -1,7 +1,9 @@
 package com.termux.app;
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.os.Bundle;
 
 import com.termux.BuildConfig;
 import com.termux.shared.errors.Error;
@@ -20,11 +22,45 @@ import com.termux.shared.termux.theme.TermuxThemeUtils;
 public class TermuxApplication extends Application {
 
     private static final String LOG_TAG = "TermuxApplication";
+    private static int sStartedActivities;
 
     public void onCreate() {
         super.onCreate();
 
         Context context = getApplicationContext();
+
+        registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
+            @Override
+            public void onActivityStarted(Activity activity) {
+                sStartedActivities++;
+            }
+
+            @Override
+            public void onActivityStopped(Activity activity) {
+                if (sStartedActivities > 0)
+                    sStartedActivities--;
+            }
+
+            @Override
+            public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+            }
+
+            @Override
+            public void onActivityResumed(Activity activity) {
+            }
+
+            @Override
+            public void onActivityPaused(Activity activity) {
+            }
+
+            @Override
+            public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+            }
+
+            @Override
+            public void onActivityDestroyed(Activity activity) {
+            }
+        });
 
         // Set crash handler for the app
         TermuxCrashUtils.setDefaultCrashHandler(this);
@@ -71,6 +107,10 @@ public class TermuxApplication extends Application {
         if (isTermuxFilesDirectoryAccessible) {
             TermuxShellEnvironment.writeEnvironmentToFile(this);
         }
+    }
+
+    public static boolean isAppInForeground() {
+        return sStartedActivities > 0;
     }
 
     public static void setLogConfig(Context context) {

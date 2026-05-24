@@ -13,7 +13,7 @@ public class TermuxUrlUtils {
 
         StringBuilder regex_sb = new StringBuilder();
 
-        regex_sb.append("(");                       // Begin first matching group.
+        regex_sb.append("(");                       // Begin matching group.
         regex_sb.append("(?:");                     // Begin scheme group.
         regex_sb.append("dav|");                    // The DAV proto.
         regex_sb.append("dict|");                   // The DICT proto.
@@ -44,45 +44,12 @@ public class TermuxUrlUtils {
         regex_sb.append("vnc|");                    // The VNC proto.
         regex_sb.append("ws(?:s?)");                // The Websocket proto.
         regex_sb.append(")://");                    // End scheme group.
-        regex_sb.append(")");                       // End first matching group.
-
-
-        // Begin second matching group.
-        regex_sb.append("(");
-
-        // User name and/or password in format 'user:pass@'.
-        regex_sb.append("(?:\\S+(?::\\S*)?@)?");
-
-        // Begin host group.
-        regex_sb.append("(?:");
-
-        // IP address (from http://www.regular-expressions.info/examples.html).
-        regex_sb.append("(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|");
-
-        // Host name or domain.
-        regex_sb.append("(?:(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)(?:(?:\\.(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)*(?:\\.(?:[a-z\\u00a1-\\uffff0-9]-*){1,}[a-z\\u00a1-\\uffff0-9]{1,}))?|");
-
-        // Just path. Used in case of 'file://' scheme.
-        regex_sb.append("/(?:(?:[a-z\\u00a1-\\uffff0-9]-*)*[a-z\\u00a1-\\uffff0-9]+)");
-
-        // End host group.
-        regex_sb.append(")");
-
-        // Port number.
-        regex_sb.append("(?::\\d{1,5})?");
-
-        // Resource path with optional query string.
-        regex_sb.append("(?:/[a-zA-Z0-9:@%\\-._~!$&()*+,;=?/]*)?");
-
-        // Fragment.
-        regex_sb.append("(?:#[a-zA-Z0-9:@%\\-._~!$&()*+,;=?/]*)?");
-
-        // End second matching group.
-        regex_sb.append(")");
+        regex_sb.append("[^\\s<>\"'`]+");           // URL body, including query strings and fragments.
+        regex_sb.append(")");                       // End matching group.
 
         URL_MATCH_REGEX = Pattern.compile(
             regex_sb.toString(),
-            Pattern.CASE_INSENSITIVE | Pattern.MULTILINE | Pattern.DOTALL);
+            Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
 
         return URL_MATCH_REGEX;
     }
@@ -94,11 +61,51 @@ public class TermuxUrlUtils {
         while (matcher.find()) {
             int matchStart = matcher.start(1);
             int matchEnd = matcher.end();
-            String url = text.substring(matchStart, matchEnd);
-            urlSet.add(url);
+            String url = trimUrlMatch(text.substring(matchStart, matchEnd));
+            if (!url.isEmpty()) urlSet.add(url);
         }
 
         return urlSet;
+    }
+
+    private static String trimUrlMatch(String url) {
+        int end = url.length();
+        while (end > 0 && shouldTrimTrailingChar(url, end))
+            end--;
+        return url.substring(0, end);
+    }
+
+    private static boolean shouldTrimTrailingChar(String url, int end) {
+        char c = url.charAt(end - 1);
+        switch (c) {
+            case '.':
+            case ',':
+            case ';':
+            case ':':
+            case '!':
+            case '?':
+                return true;
+            case ')':
+                return hasMoreClosingThanOpening(url, end, '(', ')');
+            case ']':
+                return hasMoreClosingThanOpening(url, end, '[', ']');
+            case '}':
+                return hasMoreClosingThanOpening(url, end, '{', '}');
+            default:
+                return false;
+        }
+    }
+
+    private static boolean hasMoreClosingThanOpening(String text, int end, char open, char close) {
+        int balance = 0;
+        for (int i = 0; i < end; i++) {
+            char c = text.charAt(i);
+            if (c == open)
+                balance++;
+            else if (c == close)
+                balance--;
+        }
+        return balance < 0;
     }
 
 }

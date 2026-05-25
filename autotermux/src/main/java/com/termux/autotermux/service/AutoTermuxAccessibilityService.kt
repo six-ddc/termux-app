@@ -19,9 +19,9 @@ import android.view.accessibility.AccessibilityWindowInfo
 import android.os.SystemClock
 import android.widget.Toast
 import com.termux.autotermux.R
-import com.termux.autotermux.model.ElementNode
-import com.termux.autotermux.model.PhoneState
 import com.termux.autotermux.api.ApiHandler
+import com.termux.autotermux.audit.AuditEntry
+import com.termux.autotermux.audit.AuditLog
 import com.termux.autotermux.core.AccessibilityTraversalGuard
 import com.termux.autotermux.core.StateRepository
 import com.termux.autotermux.config.ConfigManager
@@ -42,6 +42,8 @@ import com.termux.autotermux.events.model.DeviceEvent
 import com.termux.autotermux.events.model.EventType
 import com.termux.autotermux.keepalive.KeepAliveController
 import com.termux.autotermux.keepalive.KeepAliveRecoveryActivity
+import com.termux.autotermux.model.ElementNode
+import com.termux.autotermux.model.PhoneState
 import com.termux.autotermux.triggers.TriggerRuntime
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
@@ -197,6 +199,7 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastWebSocketServerToastAtMs = 0L
     private var lastAutoAcceptFailureToastAtMs = 0L
+    private var serviceDisconnectedAuditRecorded = false
 
     // Servers
     // TODO Make nullable
@@ -259,24 +262,9 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        serviceDisconnectedAuditRecorded = false
 
-        serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPES_ALL_MASK
-
-            packageNames = null
-
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-
-            // Set flags for better access
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE
-
-            // Enable screenshot capability (API 34+)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_2_FINGER_PASSTHROUGH
-            }
-        }
+        serviceInfo = buildAccessibilityServiceInfo(configManager.armed)
 
         applyConfiguration()
 
@@ -302,9 +290,15 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
                 put("websocket_port", configManager.websocketPort)
             },
         )
+        AuditLog.getInstance(this).record(
+            AuditEntry.Kind.SERVICE_CONNECTED,
+            "Accessibility service connected",
+        )
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!configManager.armed) return
+
         val eventPackage = event?.packageName?.toString() ?: ""
         val eventClassName = event?.className?.toString() ?: ""
         val previousPackage = currentPackageName
@@ -357,7 +351,12 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
             val rootNode = rootInActiveWindow
             if (rootNode != null) {
                 try {
-                    val result = MediaProjectionAutoAccept.tryAutoAccept(rootNode, eventClassName)
+                    val result = MediaProjectionAutoAccept.tryAutoAccept(rootNode, eventClassName) {
+                        AuditLog.getInstance(this).record(
+                            AuditEntry.Kind.AUTO_ACCEPT_FIRED,
+                            "MediaProjection auto-accepted",
+                        )
+                    }
                     if (result is MediaProjectionAutoAccept.AutoAcceptResult.Failed) {
                         showAutoAcceptFailedToastIfEnoughTimeIsPassed()
                     }
@@ -374,7 +373,14 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
             val rootNode = rootInActiveWindow
             if (rootNode != null) {
                 try {
-                    PackageInstallerAutoAccept.tryAutoAccept(rootNode, eventClassName)
+                    if (PackageInstallerAutoAccept.tryAutoAccept(rootNode, eventClassName) is
+                        PackageInstallerAutoAccept.AutoAcceptResult.ActionPerformed
+                    ) {
+                        AuditLog.getInstance(this).record(
+                            AuditEntry.Kind.AUTO_ACCEPT_FIRED,
+                            "APK install auto-accepted",
+                        )
+                    }
                 } finally {
                     rootNode.recycle()
                 }
@@ -421,6 +427,22 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
     private fun emitDeviceEvent(type: EventType, payload: JSONObject = JSONObject()) {
         EventHub.emit(DeviceEvent(type = type, payload = payload))
     }
+
+    private fun buildAccessibilityServiceInfo(armed: Boolean): AccessibilityServiceInfo =
+        AccessibilityServiceInfo().apply {
+            eventTypes = if (armed) AccessibilityEvent.TYPES_ALL_MASK else 0
+            packageNames = if (armed) null else emptyArray<String>()
+
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_2_FINGER_PASSTHROUGH
+            }
+        }
 
     private fun accessibilityPayload(
         event: AccessibilityEvent?,
@@ -1519,6 +1541,17 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         }
     }
 
+    override fun onArmedChanged(armed: Boolean) {
+        mainHandler.post {
+            try {
+                serviceInfo = buildAccessibilityServiceInfo(armed)
+                Log.i(TAG, "Accessibility service armed state changed: $armed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to apply armed state", e)
+            }
+        }
+    }
+
     fun updateSocketServerPort(port: Int): Boolean {
         if (port !in 1..65535) {
             Log.e(TAG, "Invalid port: $port")
@@ -1688,6 +1721,11 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         hideLocalWebSocketConnectionNotification()
     }
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        recordServiceDisconnectedAudit()
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopPeriodicUpdates()
@@ -1699,7 +1737,17 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         configManager.removeListener(this)
         instance = null
         emitDeviceEvent(EventType.ACCESSIBILITY_SERVICE_DISCONNECTED)
+        recordServiceDisconnectedAudit()
         Log.d(TAG, "Accessibility service destroyed")
+    }
+
+    private fun recordServiceDisconnectedAudit() {
+        if (serviceDisconnectedAuditRecorded) return
+        serviceDisconnectedAuditRecorded = true
+        AuditLog.getInstance(this).record(
+            AuditEntry.Kind.SERVICE_DISCONNECTED,
+            "Accessibility service disconnected",
+        )
     }
 
     private fun addElementAndChildrenToOverlay(element: ElementNode, depth: Int) {

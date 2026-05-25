@@ -11,6 +11,9 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import androidx.core.content.ContextCompat
+import com.termux.autotermux.audit.AuditEntry
+import com.termux.autotermux.audit.AuditLog
+import com.termux.autotermux.config.ConfigManager
 import com.termux.autotermux.events.EventHub
 import com.termux.autotermux.events.model.DeviceEvent
 import com.termux.autotermux.events.model.EventType
@@ -30,6 +33,7 @@ object TriggerRuntime {
     private lateinit var repository: TriggerRepository
     private lateinit var scheduler: TriggerScheduler
     private lateinit var commandLauncher: TriggerTermuxCommandLauncher
+    private lateinit var configManager: ConfigManager
 
     private var batteryReceiver: BroadcastReceiver? = null
     private var screenReceiver: BroadcastReceiver? = null
@@ -49,6 +53,7 @@ object TriggerRuntime {
     fun initialize(context: Context) {
         synchronized(initLock) {
             appContext = context.applicationContext
+            configManager = ConfigManager.getInstance(appContext)
             repository = TriggerRepository.getInstance(appContext)
             scheduler = TriggerScheduler(appContext)
             commandLauncher = TriggerTermuxCommandLauncher(appContext)
@@ -144,6 +149,10 @@ object TriggerRuntime {
         ensureInitialized()
         val rule = repository.getRule(ruleId) ?: return
         if (!rule.enabled) return
+        if (!configManager.armed) {
+            auditTriggerBlocked(rule, TriggerSignal(rule.source))
+            return
+        }
         evaluateRule(
             rule,
             TriggerSignal(
@@ -167,6 +176,12 @@ object TriggerRuntime {
     private fun handleDeviceEvent(event: DeviceEvent) {
         val signals = eventToSignals(event)
         if (signals.isEmpty()) return
+        if (!configManager.armed) {
+            signals.distinctBy { it.source }.forEach { signal ->
+                auditTriggerBlocked(rule = null, signal = signal)
+            }
+            return
+        }
         signals.forEach { signal ->
             val nowMs = System.currentTimeMillis()
             repository.listRules()
@@ -250,6 +265,10 @@ object TriggerRuntime {
     }
 
     private fun evaluateRule(rule: TriggerRule, signal: TriggerSignal, isTestRun: Boolean) {
+        if (!isTestRun && !configManager.armed) {
+            auditTriggerBlocked(rule, signal)
+            return
+        }
         val nowMs = System.currentTimeMillis()
         repository.updateRuleTimestamps(rule.id, matchedAtMs = nowMs, launchedAtMs = null)
         logRun(
@@ -278,6 +297,7 @@ object TriggerRuntime {
                     signal = signal,
                     renderedPrompt = renderedPrompt,
                 )
+                auditTriggerFired(updatedRule, signal, isTestRun)
                 finalizeTimeRuleIfNeeded(updatedRule, isTestRun)
             }
 
@@ -289,6 +309,7 @@ object TriggerRuntime {
                     signal = signal,
                     renderedPrompt = renderedPrompt,
                 )
+                auditTriggerFailed(rule, signal, result.message, isTestRun)
                 finalizeTimeRuleIfNeeded(rule, isTestRun)
             }
         }
@@ -342,6 +363,53 @@ object TriggerRuntime {
                 }.toString(),
                 renderedPrompt = renderedPrompt,
             ),
+        )
+    }
+
+    private fun auditTriggerBlocked(rule: TriggerRule?, signal: TriggerSignal) {
+        AuditLog.getInstance(appContext).record(
+            AuditEntry.Kind.TRIGGER_BLOCKED_DISARMED,
+            "Skipped ${signal.source.name}",
+            JSONObject().apply {
+                put("signal_source", signal.source.name)
+                rule?.let {
+                    put("rule_id", it.id)
+                    put("rule_name", it.name)
+                }
+            },
+        )
+    }
+
+    private fun auditTriggerFired(rule: TriggerRule, signal: TriggerSignal, isTestRun: Boolean) {
+        AuditLog.getInstance(appContext).record(
+            AuditEntry.Kind.TRIGGER_FIRED,
+            "${rule.name} -> ${rule.commandPath.orEmpty()}",
+            JSONObject().apply {
+                put("rule_id", rule.id)
+                put("rule_name", rule.name)
+                put("signal_source", signal.source.name)
+                put("command_path", rule.commandPath.orEmpty())
+                put("test_run", isTestRun)
+            },
+        )
+    }
+
+    private fun auditTriggerFailed(
+        rule: TriggerRule,
+        signal: TriggerSignal,
+        message: String,
+        isTestRun: Boolean,
+    ) {
+        AuditLog.getInstance(appContext).record(
+            AuditEntry.Kind.TRIGGER_FAILED,
+            "${rule.name} failed: $message",
+            JSONObject().apply {
+                put("rule_id", rule.id)
+                put("rule_name", rule.name)
+                put("signal_source", signal.source.name)
+                put("message", message)
+                put("test_run", isTestRun)
+            },
         )
     }
 

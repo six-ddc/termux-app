@@ -10,6 +10,7 @@
     <color name="autotermux_warning">#FFD740</color>
     <color name="autotermux_warning_surface">#2A250C</color>
     <color name="autotermux_warning_button">#FFD740</color>
+    <color name="autotermux_error">#FF6B6B</color>
 
     <color name="background_primary">#0F0F0F</color>
     <color name="background_tertiary">#161616</color>

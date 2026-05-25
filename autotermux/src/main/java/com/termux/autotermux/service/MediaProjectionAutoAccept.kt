@@ -196,6 +196,7 @@ object MediaProjectionAutoAccept {
     fun tryAutoAccept(
         rootNode: AccessibilityNodeInfo?,
         eventClassName: String? = null,
+        onAccepted: (() -> Unit)? = null,
     ): AutoAcceptResult {
         if (rootNode == null) return AutoAcceptResult.NoAction
 
@@ -323,6 +324,7 @@ object MediaProjectionAutoAccept {
                     lastSuccessTime = now
                     clearTransientState()
                     Log.i(TAG, "MediaProjection dialog accepted!")
+                    onAccepted?.invoke()
                     AutoAcceptResult.ActionPerformed
                 } else {
                     markFailure("Failed to click positive button")

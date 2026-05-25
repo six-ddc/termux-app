@@ -64,9 +64,56 @@
                 android:text="Runtime" />
 
             <LinearLayout
+                android:id="@+id/armed_status_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/autotermux_permission_ready_bg"
+                android:gravity="center_vertical"
+                android:minHeight="72dp"
+                android:orientation="horizontal"
+                android:padding="12dp">
+
+                <ImageView
+                    android:id="@+id/armed_icon"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:contentDescription="Control status"
+                    android:src="@drawable/ic_autotermux_accessibility_24" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_marginEnd="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/AutoTermux_StatusRow"
+                        android:layout_marginTop="0dp"
+                        android:text="Control" />
+
+                    <TextView
+                        android:id="@+id/armed_status"
+                        style="@style/AutoTermux_StatusValue"
+                        android:maxLines="1" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/armed_action"
+                    style="@style/AutoTermux_Button_Secondary"
+                    android:layout_width="94dp"
+                    android:layout_height="42dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/accessibility_status_panel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
                 android:background="@drawable/autotermux_permission_required_bg"
                 android:gravity="center_vertical"
                 android:minHeight="72dp"
@@ -306,21 +353,59 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <TextView
-                style="@style/AutoTermux_SectionTitle"
-                android:text="CLI" />
-
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/AutoTermux_SectionTitle"
+                    android:layout_width="0dp"
+                    android:layout_marginBottom="0dp"
+                    android:layout_weight="1"
+                    android:text="Activity" />
+
+                <TextView
+                    android:id="@+id/activity_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textColor="@color/text_gray_light"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/activity_clear"
+                    style="@style/AutoTermux_Button_Secondary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="Clear"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/activity_log_list"
+                android:layout_width="match_parent"
+                android:layout_height="360dp"
+                android:layout_marginTop="12dp"
                 android:background="@drawable/autotermux_code_bg"
-                android:fontFamily="monospace"
-                android:lineSpacingExtra="4dp"
-                android:padding="12dp"
-                android:text="tp-android doctor&#10;tp-android ui dump --pretty&#10;tp-android input tap 540 1200"
-                android:textColor="@color/text_white"
-                android:textIsSelectable="true"
-                android:textSize="13sp" />
+                android:padding="6dp"
+                android:scrollbars="vertical" />
+
+            <TextView
+                android:id="@+id/activity_empty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingTop="24dp"
+                android:paddingBottom="24dp"
+                android:text="No activity yet"
+                android:textColor="@color/text_gray_light"
+                android:textSize="13sp"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

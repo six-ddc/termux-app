@@ -1,8 +1,12 @@
 package com.termux.autotermux.service
 
 import android.util.Base64
+import android.content.Context
 import com.termux.autotermux.api.ApiHandler
 import com.termux.autotermux.api.ApiResponse
+import com.termux.autotermux.audit.AuditEntry
+import com.termux.autotermux.audit.AuditLog
+import com.termux.autotermux.config.ConfigManager
 import com.termux.autotermux.triggers.TriggerApi
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,6 +19,28 @@ class ActionDispatcher(
     companion object {
         private const val DEFAULT_SWIPE_DURATION_MS = 300
         private const val MAX_BASE64_UPLOAD_BYTES = 16L * 1024L * 1024L
+        private val NOISY_AUDIT_METHODS = setOf(
+            "ping",
+            "mode_status",
+            "auth_token",
+            "state",
+            "state_full",
+            "state/full",
+            "state/connection",
+            "connection/state",
+            "phone_state",
+            "phone-state",
+            "ui/phone-state",
+            "a11y_tree",
+            "tree",
+            "ui/tree",
+            "a11y_tree_full",
+            "tree/full",
+            "ui/tree/full",
+            "a11y_tree/cache",
+            "tree/cache",
+            "ui/tree/cache",
+        )
     }
 
     enum class Origin {
@@ -31,6 +57,36 @@ class ActionDispatcher(
         requestId: Any? = null,
     ): ApiResponse {
         val method = normalizeAction(action)
+        val configManager = configManagerOrNull()
+        if (configManager != null && !configManager.armed && !isAllowedWhenDisarmed(method)) {
+            auditLogOrNull(apiHandler.applicationContext)?.record(
+                AuditEntry.Kind.BRIDGE_BLOCKED_DISARMED,
+                "$method blocked",
+                JSONObject()
+                    .put("method", method)
+                    .put("origin", origin.name)
+                    .put("request_id", requestId?.toString() ?: JSONObject.NULL),
+            )
+            return ApiResponse.Error("AutoTermux is disarmed")
+        }
+        val response = dispatchAllowed(method, params)
+        if (configManager != null && response !is ApiResponse.Error && shouldAuditBridgeAction(method)) {
+            auditLogOrNull(apiHandler.applicationContext)?.record(
+                AuditEntry.Kind.BRIDGE_ACTION,
+                "$method from ${origin.name.lowercase()}",
+                JSONObject()
+                    .put("method", method)
+                    .put("origin", origin.name)
+                    .put("request_id", requestId?.toString() ?: JSONObject.NULL),
+            )
+        }
+        return response
+    }
+
+    private fun dispatchAllowed(
+        method: String,
+        params: JSONObject,
+    ): ApiResponse {
         val termuxApiPrefix = when {
             method.startsWith("termux-api/") -> "termux-api/"
             method.startsWith("termux_api/") -> "termux_api/"
@@ -50,6 +106,8 @@ class ActionDispatcher(
 
         return when (method) {
             "ping" -> apiHandler.ping()
+
+            "mode_status" -> buildModeStatus()
 
             "tap" -> apiHandler.performTap(params.optInt("x", 0), params.optInt("y", 0))
 
@@ -293,6 +351,38 @@ class ActionDispatcher(
             else -> ApiResponse.Error("Unknown method: $method")
         }
     }
+
+    private fun isAllowedWhenDisarmed(method: String): Boolean =
+        method == "ping" ||
+            method == "mode_status" ||
+            method == "triggers" ||
+            method.startsWith("triggers/")
+
+    private fun shouldAuditBridgeAction(method: String): Boolean =
+        !NOISY_AUDIT_METHODS.contains(method)
+
+    private fun buildModeStatus(): ApiResponse {
+        val configManager = configManagerOrNull()
+            ?: return ApiResponse.Error("AutoTermux context unavailable")
+        return ApiResponse.RawObject(
+            JSONObject().apply {
+                put("armed", configManager.armed)
+                put("no_a11y_mode", configManager.noA11yMode)
+                put("accessibility_service", AutoTermuxAccessibilityService.getInstance() != null)
+                put("local_automation_service", LocalAutomationService.getInstance() != null)
+                put("http_server_enabled", configManager.socketServerEnabled)
+                put("http_server_port", configManager.socketServerPort)
+                put("websocket_enabled", configManager.websocketEnabled)
+                put("websocket_port", configManager.websocketPort)
+            },
+        )
+    }
+
+    private fun configManagerOrNull(): ConfigManager? =
+        runCatching { ConfigManager.getInstance(apiHandler.applicationContext) }.getOrNull()
+
+    private fun auditLogOrNull(context: Context): AuditLog? =
+        runCatching { AuditLog.getInstance(context) }.getOrNull()
 
     private fun normalizeAction(action: String): String =
         action.removePrefix("/action/")

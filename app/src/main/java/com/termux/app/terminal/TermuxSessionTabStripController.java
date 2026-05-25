@@ -17,6 +17,7 @@ import com.termux.app.TermuxActivity;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.terminal.TerminalSession;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class TermuxSessionTabStripController {
@@ -29,6 +30,9 @@ public class TermuxSessionTabStripController {
     private final TermuxActivity mActivity;
     private final LinearLayout mTabStrip;
     private final HorizontalScrollView mTabStripScrollView;
+    private final List<TerminalSession> mRenderedSessions = new ArrayList<>();
+    private TerminalSession mLastCurrentSession;
+    private final Runnable mScrollToCurrentSessionRunnable = this::smoothScrollToCurrentSessionNow;
 
     public TermuxSessionTabStripController(TermuxActivity activity) {
         mActivity = activity;
@@ -39,21 +43,28 @@ public class TermuxSessionTabStripController {
     public void notifyUpdated(List<TermuxSession> sessions) {
         if (mTabStrip == null) return;
 
-        mTabStrip.removeAllViews();
-        if (sessions == null) return;
+        List<TerminalSession> terminalSessions = getTerminalSessions(sessions);
+        boolean sameSessions = hasSameRenderedSessions(terminalSessions)
+            && mTabStrip.getChildCount() == terminalSessions.size() + 1;
+        TerminalSession currentSession = mActivity.getCurrentSession();
+        boolean shouldScrollToCurrentSession = !sameSessions || currentSession != mLastCurrentSession;
 
-        for (int i = 0; i < sessions.size(); i++) {
-            TermuxSession termuxSession = sessions.get(i);
-            if (termuxSession == null) continue;
+        if (sameSessions) {
+            for (int i = 0; i < terminalSessions.size(); i++)
+                updateSessionTab(mTabStrip.getChildAt(i), i, terminalSessions.get(i));
+        } else {
+            mTabStrip.removeAllViews();
+            for (int i = 0; i < terminalSessions.size(); i++)
+                mTabStrip.addView(createSessionTab(i, terminalSessions.get(i)));
 
-            TerminalSession terminalSession = termuxSession.getTerminalSession();
-            if (terminalSession == null) continue;
-
-            mTabStrip.addView(createSessionTab(i, terminalSession));
+            mTabStrip.addView(createNewSessionTab());
+            mRenderedSessions.clear();
+            mRenderedSessions.addAll(terminalSessions);
         }
 
-        mTabStrip.addView(createNewSessionTab());
-        scrollToCurrentSession();
+        mLastCurrentSession = currentSession;
+        if (shouldScrollToCurrentSession)
+            scrollToCurrentSession();
     }
 
     private View createSessionTab(int index, TerminalSession session) {
@@ -103,6 +114,33 @@ public class TermuxSessionTabStripController {
         return tab;
     }
 
+    private void updateSessionTab(View tabView, int index, TerminalSession session) {
+        if (!(tabView instanceof LinearLayout)) return;
+
+        boolean selected = session == mActivity.getCurrentSession();
+        tabView.setActivated(selected);
+        tabView.setSelected(selected);
+
+        LinearLayout tab = (LinearLayout) tabView;
+        if (tab.getChildCount() > 0 && tab.getChildAt(0) instanceof TextView) {
+            TextView title = (TextView) tab.getChildAt(0);
+            title.setText(getTabTitle(index, session));
+            title.setTypeface(Typeface.MONOSPACE, selected ? Typeface.BOLD : Typeface.NORMAL);
+            title.setTextColor(getTabTextColor(selected, session));
+
+            int paintFlags = title.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG;
+            if (!session.isRunning())
+                paintFlags |= Paint.STRIKE_THRU_TEXT_FLAG;
+            title.setPaintFlags(paintFlags);
+        }
+
+        if (tab.getChildCount() > 1 && tab.getChildAt(1) instanceof ImageButton) {
+            ImageButton close = (ImageButton) tab.getChildAt(1);
+            close.setColorFilter(ContextCompat.getColor(mActivity,
+                selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
+        }
+    }
+
     private View createNewSessionTab() {
         TextView add = new TextView(mActivity);
         add.setText("+");
@@ -139,7 +177,40 @@ public class TermuxSessionTabStripController {
             selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary);
     }
 
+    private List<TerminalSession> getTerminalSessions(List<TermuxSession> sessions) {
+        List<TerminalSession> terminalSessions = new ArrayList<>();
+        if (sessions == null) return terminalSessions;
+
+        for (TermuxSession termuxSession : sessions) {
+            if (termuxSession == null) continue;
+
+            TerminalSession terminalSession = termuxSession.getTerminalSession();
+            if (terminalSession != null)
+                terminalSessions.add(terminalSession);
+        }
+
+        return terminalSessions;
+    }
+
+    private boolean hasSameRenderedSessions(List<TerminalSession> sessions) {
+        if (mRenderedSessions.size() != sessions.size()) return false;
+
+        for (int i = 0; i < sessions.size(); i++) {
+            if (mRenderedSessions.get(i) != sessions.get(i))
+                return false;
+        }
+
+        return true;
+    }
+
     private void scrollToCurrentSession() {
+        if (mTabStripScrollView == null || mActivity.getTermuxService() == null) return;
+
+        mTabStripScrollView.removeCallbacks(mScrollToCurrentSessionRunnable);
+        mTabStripScrollView.postDelayed(mScrollToCurrentSessionRunnable, 200);
+    }
+
+    private void smoothScrollToCurrentSessionNow() {
         if (mTabStripScrollView == null || mActivity.getTermuxService() == null) return;
 
         TerminalSession session = mActivity.getCurrentSession();
@@ -147,7 +218,7 @@ public class TermuxSessionTabStripController {
         if (index < 0 || index >= mTabStrip.getChildCount()) return;
 
         View selectedTab = mTabStrip.getChildAt(index);
-        mTabStripScrollView.postDelayed(() -> mTabStripScrollView.smoothScrollTo(selectedTab.getLeft(), 0), 200);
+        mTabStripScrollView.smoothScrollTo(selectedTab.getLeft(), 0);
     }
 
     private int dp(int value) {

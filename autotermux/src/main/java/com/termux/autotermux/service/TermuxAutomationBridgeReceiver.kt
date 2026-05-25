@@ -76,6 +76,7 @@ class TermuxAutomationBridgeReceiver : BroadcastReceiver() {
                 })
 
                 ACTION_MODE_STATUS -> ApiResponse.RawObject(JSONObject().apply {
+                    put("armed", configManager.armed)
                     put("no_a11y_mode", configManager.noA11yMode)
                     put("accessibility_service", AutoTermuxAccessibilityService.getInstance() != null)
                     put("local_automation_service", LocalAutomationService.getInstance() != null)

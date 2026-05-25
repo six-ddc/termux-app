@@ -3,7 +3,10 @@ package com.termux.autotermux.config
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.termux.autotermux.audit.AuditEntry
+import com.termux.autotermux.audit.AuditLog
 import com.termux.autotermux.events.model.EventType
+import org.json.JSONObject
 
 class ConfigManager private constructor(context: Context) {
 
@@ -21,6 +24,7 @@ class ConfigManager private constructor(context: Context) {
         private const val KEY_WEBSOCKET_ENABLED = "websocket_enabled"
         private const val KEY_WEBSOCKET_PORT = "websocket_port"
         private const val KEY_NO_A11Y_MODE = "no_a11y_mode"
+        private const val KEY_ARMED = "armed"
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_MEDIA_PROJECTION_AUTO_ACCEPT_ENABLED =
@@ -121,6 +125,12 @@ class ConfigManager private constructor(context: Context) {
         get() = sharedPrefs.getBoolean(KEY_NO_A11Y_MODE, false)
         set(value) {
             sharedPrefs.edit(commit = true) { putBoolean(KEY_NO_A11Y_MODE, value) }
+        }
+
+    var armed: Boolean
+        get() = sharedPrefs.getBoolean(KEY_ARMED, true)
+        set(value) {
+            sharedPrefs.edit(commit = true) { putBoolean(KEY_ARMED, value) }
         }
 
     var socketServerEnabled: Boolean
@@ -297,6 +307,17 @@ class ConfigManager private constructor(context: Context) {
         listeners.forEach { it.onKeepScreenAwakeEnabledChanged(enabled) }
     }
 
+    fun setArmedWithNotification(armedValue: Boolean) {
+        if (armed == armedValue) return
+        armed = armedValue
+        AuditLog.getInstance(appContext).record(
+            AuditEntry.Kind.ARMED_CHANGED,
+            if (armedValue) "Armed" else "Disarmed",
+            JSONObject().put("armed", armedValue),
+        )
+        listeners.forEach { it.onArmedChanged(armedValue) }
+    }
+
     fun nextKeepAliveRecoveryToken(): Long {
         val next = sharedPrefs.getLong(KEY_KEEP_ALIVE_NEXT_RECOVERY_TOKEN, 0L) + 1L
         sharedPrefs.edit { putLong(KEY_KEEP_ALIVE_NEXT_RECOVERY_TOKEN, next) }
@@ -381,13 +402,14 @@ class ConfigManager private constructor(context: Context) {
     )
 
     interface ConfigChangeListener {
-        fun onOverlayVisibilityChanged(visible: Boolean)
-        fun onOverlayOffsetChanged(offset: Int)
-        fun onSocketServerEnabledChanged(enabled: Boolean)
-        fun onSocketServerPortChanged(port: Int)
+        fun onOverlayVisibilityChanged(visible: Boolean) {}
+        fun onOverlayOffsetChanged(offset: Int) {}
+        fun onSocketServerEnabledChanged(enabled: Boolean) {}
+        fun onSocketServerPortChanged(port: Int) {}
         fun onWebSocketEnabledChanged(enabled: Boolean) {}
         fun onWebSocketPortChanged(port: Int) {}
         fun onKeepScreenAwakeEnabledChanged(enabled: Boolean) {}
         fun onProductionModeChanged(enabled: Boolean) {}
+        fun onArmedChanged(armed: Boolean) {}
     }
 }

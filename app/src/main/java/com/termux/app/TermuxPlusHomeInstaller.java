@@ -28,6 +28,10 @@ final class TermuxPlusHomeInstaller {
 
     private static final String HOME_AGENTS_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/AGENTS.md";
     private static final String HOME_SKILLS_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.codex/skills";
+    private static final String HOME_TERMUX_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termux";
+    private static final String HOME_TERMUX_SHELL_TARGET_FILE_PATH = HOME_TERMUX_TARGET_DIR_PATH + "/shell";
+    private static final String HOME_ZSHRC_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zshrc";
+    private static final String PREFIX_ZSH_EXECUTABLE_FILE_PATH = TERMUX_PREFIX_DIR_PATH + "/bin/zsh";
 
     private static final int PRIVATE_DIRECTORY_MODE = 0700;
     private static final int PRIVATE_FILE_MODE = 0600;
@@ -36,11 +40,57 @@ final class TermuxPlusHomeInstaller {
 
     static void syncBundledHomeFilesIfAvailable(Context context) {
         try {
+            installDefaultShellIfMissing();
+            installDefaultZshrcIfMissing();
             installAgentsFile(context);
             installSkills(context);
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to sync TermuxPlus home files", e);
         }
+    }
+
+    private static void installDefaultShellIfMissing() throws Exception {
+        File zshExecutableFile = new File(PREFIX_ZSH_EXECUTABLE_FILE_PATH);
+        if (!zshExecutableFile.canExecute() || FileUtils.fileExists(HOME_TERMUX_SHELL_TARGET_FILE_PATH, false)) {
+            return;
+        }
+
+        ensureDirectory(new File(HOME_TERMUX_TARGET_DIR_PATH));
+        Error error = FileUtils.createSymlinkFile("TermuxPlus default shell", PREFIX_ZSH_EXECUTABLE_FILE_PATH,
+            HOME_TERMUX_SHELL_TARGET_FILE_PATH, false, false, true);
+        if (error != null) {
+            throw new RuntimeException(Error.getMinimalErrorString(error));
+        }
+    }
+
+    private static void installDefaultZshrcIfMissing() throws Exception {
+        if (hasUserZshStartupFile()) {
+            return;
+        }
+
+        ensureDirectory(new File(HOME_ZSHRC_TARGET_FILE_PATH).getParentFile());
+        try (FileOutputStream outputStream = new FileOutputStream(HOME_ZSHRC_TARGET_FILE_PATH, false)) {
+            outputStream.write(("# Created by TermuxPlus so zsh does not show the first-run configuration wizard.\n" +
+                "# Global defaults are loaded from $PREFIX/etc/zshrc.\n").getBytes("UTF-8"));
+        }
+        Os.chmod(HOME_ZSHRC_TARGET_FILE_PATH, PRIVATE_FILE_MODE);
+    }
+
+    private static boolean hasUserZshStartupFile() {
+        String[] startupFilePaths = new String[] {
+            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zshenv",
+            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zprofile",
+            HOME_ZSHRC_TARGET_FILE_PATH,
+            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zlogin"
+        };
+
+        for (String startupFilePath : startupFilePaths) {
+            if (FileUtils.fileExists(startupFilePath, false)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void installAgentsFile(Context context) throws Exception {

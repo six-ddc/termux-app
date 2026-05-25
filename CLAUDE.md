@@ -26,6 +26,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build And Test
 
+如果当前 agent 本身运行在 Android/Termux 环境内（例如 `$PREFIX` 是
+`/data/data/com.termux/files/usr`，或 `uname -o` 显示 Android），不要直接跑裸的
+`:app:assembleDebug`，也不要优先走 `adb install`。这种环境下默认 Gradle 可能会尝试使用
+Maven 下载的 Linux `aapt2`，在 Android/Termux 内报 `AAPT2 ... Daemon startup failed`。
+此时按 `docs/termux-android-build-environment.md` 使用 Termux 原生工具参数：
+
+```sh
+TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug \
+  -Pandroid.aapt2FromMavenOverride="$PREFIX/bin/aapt2" \
+  -PcompileSdkVersion=34 \
+  -Pandroid.injected.build.abi=arm64-v8a \
+  -Pandroid.injected.testOnly=false
+```
+
+Android/Termux 本机构建的 APK 输出路径：
+
+```sh
+app/build/intermediates/apk/debug/termux-app_apt-android-7-debug_arm64-v8a.apk
+```
+
+在 Android/Termux 本机安装 APK 时，`tp-android apk install` 只接受 `http(s)` URL，不接受本地相对路径或
+`file://` URI。用 localhost 临时服务安装：
+
+```sh
+cd app/build/intermediates/apk/debug
+python3 -m http.server 8765 --bind 127.0.0.1
+```
+
+另一个 shell 中执行：
+
+```sh
+tp-android apk install "http://127.0.0.1:8765/termux-app_apt-android-7-debug_arm64-v8a.apk" --pretty
+```
+
+安装后停止 `python3 -m http.server`。如果安装替换的是当前正在运行的 `com.termux`，
+Termux/Codex 或 bridge 可能被系统杀掉；`tp-android` 可能显示 `Broadcast completed: result=0`，
+但只要本地 HTTP 服务出现 APK 的 `GET ... 200` 且系统安装器/自动确认完成，就先以设备实际安装状态为准。
+
 本地快速验证（只构建 aarch64）：
 
 ```sh

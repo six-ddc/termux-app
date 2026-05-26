@@ -283,6 +283,17 @@ class ActionDispatcher(
 
             "overlay/visible", "overlay/is-visible" -> apiHandler.isOverlayVisible()
 
+            "hud/show", "hud_show" -> apiHandler.hudShow()
+            "hud/hide", "hud_hide" -> apiHandler.hudHide()
+            "hud/update", "hud_update" -> apiHandler.hudUpdate(params)
+            "hud/state", "hud_state", "hud/status" -> apiHandler.hudState()
+            "termux/floating/hide", "termux-floating/hide", "floating/hide" -> apiHandler.floatingHide()
+            "termux/floating/show", "termux-floating/show", "floating/show" -> apiHandler.floatingShow()
+
+            "keepalive/start", "background/start" -> apiHandler.backgroundStart(params)
+            "keepalive/update", "background/update" -> apiHandler.backgroundUpdate(params)
+            "keepalive/stop", "background/stop" -> apiHandler.backgroundStop()
+
             "overlay/auto-offset/status", "overlay/auto_offset/status" ->
                 apiHandler.getOverlayAutoOffsetStatus()
 

@@ -1,0 +1,197 @@
+package com.termux.autotermux.ui.overlay
+
+import android.content.Context
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.text.TextUtils
+import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+
+/**
+ * Status HUD shown at the top of the screen while a tp-android agent run is
+ * active. Renders a thin (36dp) bar with task title + step indicator on the
+ * left and Pause / Cancel buttons on the right. State is pushed by the
+ * `hud/update` bridge action from tp-android.
+ *
+ * Lives independently of [OverlayManager] (which draws element rects) — we
+ * intentionally don't share state to keep these two visual concerns
+ * independent. Both can be attached at the same time.
+ */
+class HudOverlay(private val context: Context) {
+
+    data class State(
+        val runId: String? = null,
+        val task: String? = null,
+        val step: Int = 0,
+        val totalSteps: Int = 0,
+        val stepLabel: String? = null,
+        val percent: Float? = null,
+        val state: String = "idle", // running / waiting / done / cancelled / error / idle
+        val pendingPrompt: String? = null,
+    )
+
+    private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val handler = Handler(Looper.getMainLooper())
+
+    @Volatile private var view: FrameLayout? = null
+    @Volatile private var currentState: State = State()
+
+    /** Invoked when the user taps the Pause/Cancel buttons. */
+    var onPauseClick: (() -> Unit)? = null
+    var onCancelClick: (() -> Unit)? = null
+
+    fun isShowing(): Boolean = view != null
+
+    fun show() {
+        handler.post {
+            if (view != null) return@post
+            try {
+                val container = buildView()
+                val lp = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    dp(36),
+                    overlayType(),
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT,
+                ).apply {
+                    gravity = Gravity.TOP
+                }
+                wm.addView(container, lp)
+                view = container
+                renderState()
+            } catch (t: Throwable) {
+                Log.e(TAG, "HudOverlay.show failed: ${t.message}", t)
+            }
+        }
+    }
+
+    fun hide() {
+        handler.post {
+            val v = view ?: return@post
+            try {
+                wm.removeView(v)
+            } catch (t: Throwable) {
+                Log.w(TAG, "HudOverlay.hide removeView: ${t.message}")
+            }
+            view = null
+        }
+    }
+
+    fun update(newState: State) {
+        currentState = newState
+        handler.post { renderState() }
+    }
+
+    fun snapshot(): State = currentState
+
+    private fun overlayType(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+
+    private fun renderState() {
+        val v = view ?: return
+        val title = v.findViewWithTag<TextView>("title") ?: return
+        val pause = v.findViewWithTag<TextView>("pause") ?: return
+        val cancel = v.findViewWithTag<TextView>("cancel") ?: return
+        val s = currentState
+
+        val prefix = when (s.state) {
+            "waiting" -> "⏸"
+            "error" -> "✗"
+            "done" -> "✓"
+            "cancelled" -> "◌"
+            "idle" -> "○"
+            else -> "●"
+        }
+        val taskText = s.task ?: "(no task)"
+        val stepText = when {
+            s.totalSteps > 0 -> " · ${s.step}/${s.totalSteps}"
+            s.step > 0 -> " · step ${s.step}"
+            else -> ""
+        }
+        val percentText = s.percent?.let { " · ${it.toInt()}%" } ?: ""
+        val labelText = s.stepLabel?.let { " · $it" } ?: ""
+        val promptSuffix = s.pendingPrompt?.let { " — ${it}" } ?: ""
+        title.text = "$prefix $taskText$stepText$percentText$labelText$promptSuffix"
+
+        v.background = GradientDrawable().apply {
+            setColor(when (s.state) {
+                "waiting" -> 0xCCA0660A.toInt() // amber
+                "error" -> 0xCCB33636.toInt() // red
+                "done" -> 0xCC2D8A3A.toInt() // green
+                "cancelled" -> 0xCC555555.toInt() // grey
+                else -> 0xCC1C1C1C.toInt() // dark default
+            })
+        }
+
+        pause.text = if (s.state == "waiting") "▶" else "❚❚"
+        // Disable Pause when nothing is running.
+        pause.alpha = if (s.state in setOf("idle", "done", "cancelled", "error")) 0.35f else 1f
+    }
+
+    private fun buildView(): FrameLayout {
+        val container = FrameLayout(context).apply {
+            setPadding(dp(8), 0, dp(8), 0)
+        }
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+        }
+        val title = TextView(context).apply {
+            tag = "title"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val pause = TextView(context).apply {
+            tag = "pause"
+            text = "❚❚"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+            isClickable = true
+            setOnClickListener { onPauseClick?.invoke() }
+        }
+        val cancel = TextView(context).apply {
+            tag = "cancel"
+            text = "✕"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+            isClickable = true
+            setOnClickListener { onCancelClick?.invoke() }
+        }
+        row.addView(title)
+        row.addView(pause)
+        row.addView(cancel)
+        container.addView(row)
+        return container
+    }
+
+    private fun dp(v: Int): Int =
+        (v * context.resources.displayMetrics.density).toInt()
+
+    companion object {
+        private const val TAG = "TP_HUD_OVERLAY"
+    }
+}

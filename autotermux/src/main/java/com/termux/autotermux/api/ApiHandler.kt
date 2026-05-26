@@ -568,6 +568,123 @@ class ApiHandler(
         }
     }
 
+    // Background keepalive — starts a foreground service tied to an active
+    // tp-android run so OEM battery managers won't kill the process mid-flow.
+    // The same notification carries Pause / Cancel action buttons.
+    fun backgroundStart(params: JSONObject): ApiResponse = backgroundUpdate(params)
+
+    fun backgroundUpdate(params: JSONObject): ApiResponse {
+        val runId = params.optStringOrNull("run_id") ?: params.optStringOrNull("runId")
+        com.termux.autotermux.service.AutoTermuxBackgroundService.startOrUpdate(
+            applicationContext,
+            runId,
+            params.optStringOrNull("task"),
+            params.optInt("step", 0),
+            params.optInt("total_steps", params.optInt("totalSteps", 0)),
+            params.optStringOrNull("step_label") ?: params.optStringOrNull("stepLabel"),
+            params.optString("state", "running"),
+            params.optStringOrNull("pending_prompt") ?: params.optStringOrNull("pendingPrompt"),
+            if (params.has("percent")) params.optDouble("percent").toFloat() else null,
+        )
+        return ApiResponse.RawObject(JSONObject().apply {
+            put("running", true)
+            put("run_id", runId ?: JSONObject.NULL)
+        })
+    }
+
+    fun backgroundStop(): ApiResponse {
+        com.termux.autotermux.service.AutoTermuxBackgroundService.stop(applicationContext)
+        return ApiResponse.Success("Background service stopped")
+    }
+
+    // Termux floating-window hide/show (signature-protected actions handled by
+    // TermuxService's onStartCommand). Used by screenshot/ui-dump flows that
+    // want the target app's UI alone.
+    fun floatingHide(): ApiResponse = floatingDispatch("com.termux.HIDE_FLOATING")
+    fun floatingShow(): ApiResponse = floatingDispatch("com.termux.SHOW_FLOATING")
+
+    private fun floatingDispatch(action: String): ApiResponse {
+        return try {
+            // Goes through TermuxFloatingControlReceiver — see MainActivity.sendFloatingControl
+            // for the same trampoline.
+            val intent = Intent(action)
+                .setClassName("com.termux", "com.termux.app.TermuxFloatingControlReceiver")
+            applicationContext.sendBroadcast(intent)
+            ApiResponse.Success("dispatched $action")
+        } catch (t: Throwable) {
+            Log.w(TAG, "floating dispatch $action failed: ${t.message}")
+            ApiResponse.Error("Failed to dispatch $action: ${t.message}")
+        }
+    }
+
+    // HUD (status overlay shown while a tp-android agent run is active) ------
+    fun hudShow(): ApiResponse {
+        val svc = AutoTermuxAccessibilityService.getInstance()
+            ?: return ApiResponse.Error(ACCESSIBILITY_SERVICE_NOT_AVAILABLE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(applicationContext)) {
+            return ApiResponse.Error("OVERLAY_BLOCKED: Display-over-other-apps permission denied for AutoTermux. Open Settings → Apps → AutoTermux → Display over other apps.")
+        }
+        svc.getHudOverlay().show()
+        return ApiResponse.Success("HUD shown")
+    }
+
+    fun hudHide(): ApiResponse {
+        val svc = AutoTermuxAccessibilityService.getInstance()
+            ?: return ApiResponse.Error(ACCESSIBILITY_SERVICE_NOT_AVAILABLE)
+        svc.getHudOverlay().hide()
+        return ApiResponse.Success("HUD hidden")
+    }
+
+    fun hudUpdate(params: JSONObject): ApiResponse {
+        val svc = AutoTermuxAccessibilityService.getInstance()
+            ?: return ApiResponse.Error(ACCESSIBILITY_SERVICE_NOT_AVAILABLE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(applicationContext)) {
+            return ApiResponse.Error("OVERLAY_BLOCKED: Display-over-other-apps permission denied for AutoTermux. Open Settings → Apps → AutoTermux → Display over other apps.")
+        }
+        val hud = svc.getHudOverlay()
+        val newState = com.termux.autotermux.ui.overlay.HudOverlay.State(
+            runId = params.optStringOrNull("run_id") ?: params.optStringOrNull("runId"),
+            task = params.optStringOrNull("task"),
+            step = params.optInt("step", 0),
+            totalSteps = params.optInt("total_steps", params.optInt("totalSteps", 0)),
+            stepLabel = params.optStringOrNull("step_label") ?: params.optStringOrNull("stepLabel"),
+            percent = if (params.has("percent")) params.optDouble("percent").toFloat() else null,
+            state = params.optString("state", "running"),
+            pendingPrompt = params.optStringOrNull("pending_prompt") ?: params.optStringOrNull("pendingPrompt"),
+        )
+        hud.update(newState)
+        // Auto-show on first update so callers don't need to remember.
+        if (!hud.isShowing()) hud.show()
+        return ApiResponse.RawObject(JSONObject().apply {
+            put("showing", true)
+            put("state", newState.state)
+            put("run_id", newState.runId ?: JSONObject.NULL)
+        })
+    }
+
+    fun hudState(): ApiResponse {
+        val svc = AutoTermuxAccessibilityService.getInstance()
+            ?: return ApiResponse.Error(ACCESSIBILITY_SERVICE_NOT_AVAILABLE)
+        val hud = svc.getHudOverlay()
+        val s = hud.snapshot()
+        return ApiResponse.RawObject(JSONObject().apply {
+            put("showing", hud.isShowing())
+            put("run_id", s.runId ?: JSONObject.NULL)
+            put("task", s.task ?: JSONObject.NULL)
+            put("step", s.step)
+            put("total_steps", s.totalSteps)
+            put("step_label", s.stepLabel ?: JSONObject.NULL)
+            put("percent", s.percent?.toDouble() ?: JSONObject.NULL)
+            put("state", s.state)
+            put("pending_prompt", s.pendingPrompt ?: JSONObject.NULL)
+        })
+    }
+
+    private fun JSONObject.optStringOrNull(key: String): String? {
+        val raw = if (has(key)) optString(key, "") else return null
+        return raw.takeIf { it.isNotEmpty() && it != "null" }
+    }
+
     fun setSocketPort(port: Int): ApiResponse {
         return if (stateRepo.updateSocketServerPort(port)) {
             ApiResponse.Success("Socket server port updated to $port")

@@ -1,11 +1,17 @@
 package com.termux.autotermux.ui
 
+import android.Manifest
+import android.app.AppOpsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
-import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -13,6 +19,7 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -24,45 +31,67 @@ import com.termux.autotermux.input.AutoTermuxKeyboardIME
 import com.termux.autotermux.service.AutoTermuxAccessibilityService
 import com.termux.autotermux.service.LocalAutomationService
 
+/**
+ * Main entry-point UI for AutoTermux.
+ *
+ * Layout: header with Armed switch on the right, then three cards:
+ *   1. Permissions — every special-access + runtime perm the app actually uses.
+ *      Each row probes its own state on resume and offers a one-tap deep link
+ *      to the right Settings page. The aggregate `X/Y granted` counter at the
+ *      top of the card is what a user should glance at first.
+ *   2. Services — HTTP API toggle, bridge identity.
+ *   3. Activity — audit log RecyclerView.
+ */
 class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
 
     private lateinit var configManager: ConfigManager
-    private val auditListener = AuditLogListener {
-        runOnUiThread { refreshAuditLog() }
-    }
+    private val auditListener = AuditLogListener { runOnUiThread { refreshAuditLog() } }
 
     private lateinit var summaryView: TextView
-    private lateinit var armedStatusPanel: View
-    private lateinit var accessibilityStatusPanel: View
-    private lateinit var keyboardStatusPanel: View
-    private lateinit var localApiStatusPanel: View
-    private lateinit var bridgeStatusPanel: View
-    private lateinit var armedIcon: ImageView
-    private lateinit var accessibilityIcon: ImageView
-    private lateinit var keyboardIcon: ImageView
-    private lateinit var localApiIcon: ImageView
+    private lateinit var armedSwitch: SwitchCompat
+    private lateinit var armedStateLabel: TextView
+    private lateinit var permissionsSummaryView: TextView
+
+    // Permission rows (inflated via <include>)
+    private lateinit var rowAccessibility: PermissionRow
+    private lateinit var rowOverlay: PermissionRow
+    private lateinit var rowNotifListener: PermissionRow
+    private lateinit var rowStorage: PermissionRow
+    private lateinit var rowKeyboardEnable: PermissionRow
+    private lateinit var rowKeyboardSelect: PermissionRow
+    private lateinit var rowRuntime: PermissionRow
+
+    // Bridge identity (informational; tp-android always talks over the bridge)
     private lateinit var bridgeIcon: ImageView
-    private lateinit var armedStatusView: TextView
-    private lateinit var accessibilityStatusView: TextView
-    private lateinit var keyboardEnableStatusView: TextView
-    private lateinit var keyboardSelectStatusView: TextView
-    private lateinit var httpStatusView: TextView
     private lateinit var bridgeStatusView: TextView
-    private lateinit var armedActionButton: Button
-    private lateinit var openAccessibilityButton: Button
-    private lateinit var keyboardEnableButton: Button
-    private lateinit var keyboardSelectButton: Button
-    private lateinit var toggleHttpButton: Button
+
+    // Activity log
     private lateinit var activityLogList: RecyclerView
     private lateinit var activityCountView: TextView
     private lateinit var activityClearButton: Button
     private lateinit var activityEmptyView: TextView
     private lateinit var auditAdapter: AuditLogAdapter
 
+    // Runtime permissions that AutoTermux actually requests at use-time.
+    // Keeping these together so the row summary stays accurate.
+    private val runtimePermissions = listOf(
+        Manifest.permission.READ_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.CALL_PHONE,
+        Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.BODY_SENSORS,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
         configManager = ConfigManager.getInstance(applicationContext)
         bindViews()
         bindActions()
@@ -72,13 +101,32 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
     override fun onResume() {
         super.onResume()
         AuditLog.getInstance(this).addListener(auditListener)
-        refreshStatus()
-        refreshAuditLog()
+        refreshAll()
+        // Termux's floating-terminal bubble would otherwise sit over our top-right
+        // (covering the Armed switch and any banners). Hide it while AutoTermux's
+        // main UI is up; restore on pause so the user's normal workflow continues
+        // when they leave. This uses the signature-protected action we already
+        // wired into TermuxService.onStartCommand.
+        sendFloatingControl("com.termux.HIDE_FLOATING")
     }
 
     override fun onPause() {
         AuditLog.getInstance(this).removeListener(auditListener)
+        sendFloatingControl("com.termux.SHOW_FLOATING")
         super.onPause()
+    }
+
+    private fun sendFloatingControl(action: String) {
+        try {
+            // Routes through TermuxFloatingControlReceiver in :app (signature-
+            // protected with com.termux.permission.RUN_COMMAND, which we hold)
+            // so we don't need TermuxService itself to be exported.
+            val intent = Intent(action)
+                .setClassName("com.termux", "com.termux.app.TermuxFloatingControlReceiver")
+            sendBroadcast(intent)
+        } catch (_: Throwable) {
+            // Termux may not be installed; ignore silently.
+        }
     }
 
     override fun onDestroy() {
@@ -86,29 +134,36 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
         super.onDestroy()
     }
 
+    override fun onArmedChanged(armed: Boolean) {
+        runOnUiThread {
+            armedSwitch.setOnCheckedChangeListener(null)
+            armedSwitch.isChecked = armed
+            armedSwitch.setOnCheckedChangeListener { _, checked ->
+                configManager.setArmedWithNotification(checked)
+            }
+            refreshSummary()
+        }
+    }
+
+    // ---- view binding ------------------------------------------------------
+
     private fun bindViews() {
         summaryView = findViewById(R.id.status_summary)
-        armedStatusPanel = findViewById(R.id.armed_status_panel)
-        accessibilityStatusPanel = findViewById(R.id.accessibility_status_panel)
-        keyboardStatusPanel = findViewById(R.id.keyboard_status_panel)
-        localApiStatusPanel = findViewById(R.id.local_api_status_panel)
-        bridgeStatusPanel = findViewById(R.id.bridge_status_panel)
-        armedIcon = findViewById(R.id.armed_icon)
-        accessibilityIcon = findViewById(R.id.accessibility_icon)
-        keyboardIcon = findViewById(R.id.keyboard_icon)
-        localApiIcon = findViewById(R.id.local_api_icon)
+        armedSwitch = findViewById(R.id.armed_switch)
+        armedStateLabel = findViewById(R.id.armed_state_label)
+        permissionsSummaryView = findViewById(R.id.permissions_summary)
+
+        rowAccessibility = PermissionRow(findViewById(R.id.perm_accessibility))
+        rowOverlay = PermissionRow(findViewById(R.id.perm_overlay))
+        rowNotifListener = PermissionRow(findViewById(R.id.perm_notif_listener))
+        rowStorage = PermissionRow(findViewById(R.id.perm_storage))
+        rowKeyboardEnable = PermissionRow(findViewById(R.id.perm_keyboard_enable))
+        rowKeyboardSelect = PermissionRow(findViewById(R.id.perm_keyboard_select))
+        rowRuntime = PermissionRow(findViewById(R.id.perm_runtime))
+
         bridgeIcon = findViewById(R.id.bridge_icon)
-        armedStatusView = findViewById(R.id.armed_status)
-        accessibilityStatusView = findViewById(R.id.accessibility_status)
-        keyboardEnableStatusView = findViewById(R.id.keyboard_enable_status)
-        keyboardSelectStatusView = findViewById(R.id.keyboard_select_status)
-        httpStatusView = findViewById(R.id.http_status)
         bridgeStatusView = findViewById(R.id.bridge_status)
-        armedActionButton = findViewById(R.id.armed_action)
-        openAccessibilityButton = findViewById(R.id.open_accessibility_settings)
-        keyboardEnableButton = findViewById(R.id.keyboard_enable_action)
-        keyboardSelectButton = findViewById(R.id.keyboard_select_action)
-        toggleHttpButton = findViewById(R.id.toggle_http_server)
+
         activityLogList = findViewById(R.id.activity_log_list)
         activityCountView = findViewById(R.id.activity_count)
         activityClearButton = findViewById(R.id.activity_clear)
@@ -116,18 +171,11 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
         auditAdapter = AuditLogAdapter()
         activityLogList.layoutManager = LinearLayoutManager(this)
         activityLogList.adapter = auditAdapter
-        localApiStatusPanel.visibility = View.GONE
     }
 
     private fun bindActions() {
-        armedActionButton.setOnClickListener {
-            configManager.setArmedWithNotification(!configManager.armed)
-        }
-        openAccessibilityButton.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        toggleHttpButton.setOnClickListener {
-            setHttpServerEnabled(!configManager.socketServerEnabled)
+        armedSwitch.setOnCheckedChangeListener { _, checked ->
+            configManager.setArmedWithNotification(checked)
         }
         activityClearButton.setOnClickListener {
             AuditLog.getInstance(this).clear()
@@ -135,181 +183,199 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
         }
     }
 
-    private fun refreshStatus() {
-        val accessibilityBound = AutoTermuxAccessibilityService.getInstance() != null
-        val accessibilityEnabledInSettings = isAccessibilityEnabledInSettings()
-        val accessibilityStatus = when {
-            accessibilityBound -> AccessibilityStatus.READY
-            accessibilityEnabledInSettings -> AccessibilityStatus.STANDBY
-            else -> AccessibilityStatus.REQUIRED
-        }
-        val keyboardEnabled = AutoTermuxKeyboardIME.isEnabled(this)
-        val keyboardSelected = AutoTermuxKeyboardIME.isSelected(this)
-        val httpEnabled = configManager.socketServerEnabled
-        val port = configManager.socketServerPort
-        val socketStatus = AutoTermuxAccessibilityService.getInstance()?.getSocketServerStatus()
-            ?: LocalAutomationService.getInstance()?.getSocketServerStatus()
-            ?: if (httpEnabled) "Starting or waiting for service" else "Disabled"
+    // ---- refresh ----------------------------------------------------------
 
-        summaryView.text = when (accessibilityStatus) {
-            AccessibilityStatus.READY -> "Ready for local Termux control"
-            AccessibilityStatus.STANDBY -> "Accessibility enabled (waiting for first event to rebind)"
-            AccessibilityStatus.REQUIRED -> "Enable Accessibility for full device control"
-        }
-        applyAccessibilityStatus(accessibilityStatus)
-        applyKeyboardStatus(keyboardEnabled, keyboardSelected)
-        applyLocalApiStatus(httpEnabled, port, socketStatus)
-        bridgeStatusView.text = "com.termux.autotermux"
-        applyIcon(bridgeIcon, R.color.text_gray_light)
-        bridgeStatusPanel.setBackgroundResource(R.drawable.autotermux_status_row_bg)
-        applyArmedStatus(configManager.armed)
-        if (!configManager.armed) {
-            summaryView.text = "DISARMED - automation paused, audit log running"
-            summaryView.setTextColor(color(R.color.autotermux_warning))
-        }
+    private fun refreshAll() {
+        refreshSummary()
+        refreshPermissions()
+        refreshServices()
+        refreshAuditLog()
     }
 
-    override fun onArmedChanged(armed: Boolean) {
-        runOnUiThread { refreshStatus() }
-    }
-
-    private enum class AccessibilityStatus { READY, STANDBY, REQUIRED }
-
-    private fun isAccessibilityEnabledInSettings(): Boolean {
-        val expected = android.content.ComponentName(
-            this,
-            AutoTermuxAccessibilityService::class.java,
-        ).flattenToString()
-        val enabled = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-        ).orEmpty()
-        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
-    }
-
-    private fun applyAccessibilityStatus(status: AccessibilityStatus) {
-        val statusColor: Int
-        val statusText: String
-        when (status) {
-            AccessibilityStatus.READY -> {
-                accessibilityStatusPanel.setBackgroundResource(R.drawable.autotermux_permission_ready_bg)
-                statusText = "Ready"
-                statusColor = R.color.autotermux_primary_light
-                applySecondaryButton(openAccessibilityButton, "Settings")
-                summaryView.setTextColor(color(R.color.text_gray_light))
-            }
-            AccessibilityStatus.STANDBY -> {
-                // OEMs (vivo/MIUI etc.) periodically unbind accessibility services
-                // to save battery even though the toggle remains on in Settings.
-                // Treat this as a soft-ready state instead of "Permission required".
-                accessibilityStatusPanel.setBackgroundResource(R.drawable.autotermux_permission_ready_bg)
-                statusText = "Standby (rebinds on next event)"
-                statusColor = R.color.autotermux_primary_light
-                applySecondaryButton(openAccessibilityButton, "Settings")
-                summaryView.setTextColor(color(R.color.text_gray_light))
-            }
-            AccessibilityStatus.REQUIRED -> {
-                accessibilityStatusPanel.setBackgroundResource(R.drawable.autotermux_permission_required_bg)
-                statusText = "Permission required"
-                statusColor = R.color.autotermux_warning
-                applyWarningButton(openAccessibilityButton, "Grant")
-                summaryView.setTextColor(color(R.color.autotermux_warning))
-            }
+    private fun refreshSummary() {
+        val armed = configManager.armed
+        armedSwitch.setOnCheckedChangeListener(null)
+        armedSwitch.isChecked = armed
+        armedSwitch.setOnCheckedChangeListener { _, checked ->
+            configManager.setArmedWithNotification(checked)
         }
-        accessibilityStatusView.text = statusText
-        applyIcon(accessibilityIcon, statusColor)
-        accessibilityStatusView.setTextColor(color(statusColor))
-        accessibilityStatusView.setTypeface(
-            null,
-            if (status == AccessibilityStatus.REQUIRED) Typeface.BOLD else Typeface.NORMAL,
-        )
-    }
-
-    private fun applyKeyboardStatus(keyboardEnabled: Boolean, keyboardSelected: Boolean) {
-        keyboardStatusPanel.setBackgroundResource(
-            if (keyboardSelected) R.drawable.autotermux_permission_ready_bg
-            else R.drawable.autotermux_permission_required_bg,
-        )
-        applyIcon(
-            keyboardIcon,
-            if (keyboardSelected) R.color.autotermux_primary_light else R.color.autotermux_warning,
+        armedStateLabel.text = if (armed) "ARMED" else "DISARMED"
+        armedStateLabel.setTextColor(
+            color(if (armed) R.color.autotermux_primary_light else R.color.autotermux_warning),
         )
 
-        keyboardEnableStatusView.text = if (keyboardEnabled) "Enabled" else "Not enabled"
-        keyboardEnableStatusView.setTextColor(
-            color(if (keyboardEnabled) R.color.autotermux_primary_light else R.color.autotermux_warning),
-        )
-        keyboardEnableStatusView.setTypeface(null, if (keyboardEnabled) Typeface.NORMAL else Typeface.BOLD)
-        applySecondaryButton(keyboardEnableButton, if (keyboardEnabled) "Settings" else "Enable")
-        keyboardEnableButton.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        val accessibilityOk = AutoTermuxAccessibilityService.getInstance() != null
+            || isAccessibilityEnabledInSettings()
+        summaryView.text = when {
+            !armed -> "DISARMED — automation paused, audit log running"
+            accessibilityOk -> "Ready for local Termux control"
+            else -> "Enable Accessibility for full device control"
         }
-
-        keyboardSelectStatusView.text = when {
-            keyboardSelected -> "Selected"
-            keyboardEnabled -> "Not selected"
-            else -> "Enable first"
-        }
-        keyboardSelectStatusView.setTextColor(
+        summaryView.setTextColor(
             color(
                 when {
-                    keyboardSelected -> R.color.autotermux_primary_light
-                    keyboardEnabled -> R.color.autotermux_warning
-                    else -> R.color.text_gray_light
+                    !armed -> R.color.autotermux_warning
+                    accessibilityOk -> R.color.text_gray_light
+                    else -> R.color.autotermux_warning
                 },
             ),
         )
-        keyboardSelectStatusView.setTypeface(
-            null,
-            if (keyboardEnabled && !keyboardSelected) Typeface.BOLD else Typeface.NORMAL,
-        )
+    }
 
-        if (keyboardEnabled) {
-            applyWarningButton(keyboardSelectButton, if (keyboardSelected) "Change" else "Select")
-            keyboardSelectButton.isEnabled = true
-            keyboardSelectButton.alpha = 1.0f
-            keyboardSelectButton.setOnClickListener {
+    private fun refreshPermissions() {
+        // 1. Accessibility
+        val a11yBound = AutoTermuxAccessibilityService.getInstance() != null
+        val a11yEnabled = isAccessibilityEnabledInSettings()
+        val a11yState = when {
+            a11yBound -> RowState.OK
+            a11yEnabled -> RowState.OK_STANDBY
+            else -> RowState.MISSING
+        }
+        rowAccessibility.render(
+            icon = R.drawable.ic_autotermux_accessibility_24,
+            label = "Accessibility",
+            status = when (a11yState) {
+                RowState.OK -> "Ready · UI inspection, gestures"
+                RowState.OK_STANDBY -> "Standby · rebinds on next event"
+                RowState.MISSING -> "Required — UI control disabled"
+                else -> "—"
+            },
+            state = a11yState,
+            actionLabel = if (a11yState == RowState.MISSING) "Grant" else "Settings",
+        ) { openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+
+        // 2. Overlay (SYSTEM_ALERT_WINDOW)
+        val overlayOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+        rowOverlay.render(
+            icon = R.drawable.ic_autotermux_overlay_24,
+            label = "Display overlay",
+            status = if (overlayOk) "Granted · HUD status bar, intervene bubble" else "Required — HUD won't render",
+            state = if (overlayOk) RowState.OK else RowState.MISSING,
+            actionLabel = if (overlayOk) "Settings" else "Grant",
+        ) {
+            openSettings(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                    .setData(Uri.parse("package:$packageName")),
+            )
+        }
+
+        // 3. Notification listener
+        val listenerOk = isNotificationListenerEnabled()
+        rowNotifListener.render(
+            icon = R.drawable.ic_autotermux_notification_24,
+            label = "Notification listener",
+            status = if (listenerOk) "Active · sees notifications, triggers fire" else "Optional — notification APIs disabled",
+            state = if (listenerOk) RowState.OK else RowState.OPTIONAL_MISSING,
+            actionLabel = if (listenerOk) "Settings" else "Grant",
+        ) { openSettings(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+
+        // 4. All files (MANAGE_EXTERNAL_STORAGE)
+        val storageOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true
+        }
+        rowStorage.render(
+            icon = R.drawable.ic_autotermux_storage_24,
+            label = "All files access",
+            status = if (storageOk) "Granted · screenshot cache, transfer files" else "Required — large file transfers will fail",
+            state = if (storageOk) RowState.OK else RowState.MISSING,
+            actionLabel = if (storageOk) "Settings" else "Grant",
+        ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                openSettings(
+                    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        .setData(Uri.parse("package:$packageName")),
+                )
+            }
+        }
+
+        // (Battery-whitelist row was removed: PowerManager.isIgnoringBatteryOptimizations
+        //  is meaningless on vivo/MIUI/Honor — the OEM's private "high-power"
+        //  controls are what actually matter and the standard API can't read
+        //  them. Process survival is now handled by AutoTermuxBackgroundService,
+        //  a foreground service tied to active tp-android runs.)
+
+        // 5. Keyboard IME — enable
+        val keyboardEnabled = AutoTermuxKeyboardIME.isEnabled(this)
+        val keyboardSelected = AutoTermuxKeyboardIME.isSelected(this)
+        rowKeyboardEnable.render(
+            icon = R.drawable.ic_autotermux_keyboard_24,
+            label = "Keyboard IME · enabled",
+            status = if (keyboardEnabled) "Enabled" else "Optional — text injection needs this",
+            state = if (keyboardEnabled) RowState.OK else RowState.OPTIONAL_MISSING,
+            actionLabel = if (keyboardEnabled) "Settings" else "Enable",
+        ) { openSettings(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+
+        // 7. Keyboard IME — selected as current
+        rowKeyboardSelect.render(
+            icon = R.drawable.ic_autotermux_keyboard_24,
+            label = "Keyboard IME · selected",
+            status = when {
+                keyboardSelected -> "Current input method"
+                keyboardEnabled -> "Not selected"
+                else -> "Enable first"
+            },
+            state = when {
+                keyboardSelected -> RowState.OK
+                keyboardEnabled -> RowState.OPTIONAL_MISSING
+                else -> RowState.DISABLED
+            },
+            actionLabel = if (keyboardSelected) "Change" else "Select",
+        ) {
+            if (keyboardEnabled) {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.showInputMethodPicker()
             }
-        } else {
-            applyDisabledButton(keyboardSelectButton, "Select")
-            keyboardSelectButton.setOnClickListener(null)
         }
+
+        // 8. Runtime perms aggregate
+        val runtimeGranted = countGrantedRuntimePerms()
+        val total = runtimePermissions.size
+        val allRuntime = runtimeGranted == total
+        rowRuntime.render(
+            icon = R.drawable.ic_autotermux_runtime_24,
+            label = "Runtime perms",
+            status = "$runtimeGranted/$total granted · SMS, contacts, camera, mic, location…",
+            state = when {
+                runtimeGranted == total -> RowState.OK
+                runtimeGranted == 0 -> RowState.OPTIONAL_MISSING
+                else -> RowState.PARTIAL
+            },
+            actionLabel = if (allRuntime) "Settings" else "Manage",
+        ) {
+            openSettings(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.parse("package:$packageName")),
+            )
+        }
+
+        // Summary counter (7 rows after removing battery)
+        val checks = listOf(
+            a11yState == RowState.OK || a11yState == RowState.OK_STANDBY,
+            overlayOk,
+            listenerOk,
+            storageOk,
+            keyboardEnabled,
+            keyboardSelected,
+            allRuntime,
+        )
+        val grantedCount = checks.count { it }
+        permissionsSummaryView.text = "$grantedCount/${checks.size} granted"
+        permissionsSummaryView.setTextColor(
+            color(if (grantedCount == checks.size) R.color.autotermux_primary_light else R.color.text_gray_light),
+        )
     }
 
-    private fun applyLocalApiStatus(httpEnabled: Boolean, port: Int, socketStatus: String) {
-        if (httpEnabled) {
-            httpStatusView.text = "127.0.0.1:$port - $socketStatus"
-            localApiStatusPanel.setBackgroundResource(R.drawable.autotermux_permission_ready_bg)
-            httpStatusView.setTextColor(color(R.color.autotermux_primary_light))
-            applyIcon(localApiIcon, R.color.autotermux_primary_light)
-            applySecondaryButton(toggleHttpButton, "Stop")
-        } else {
-            httpStatusView.text = "Off - Termux bridge active"
-            localApiStatusPanel.setBackgroundResource(R.drawable.autotermux_status_row_bg)
-            httpStatusView.setTextColor(color(R.color.text_white))
-            applyIcon(localApiIcon, R.color.text_gray_light)
-            applyPrimaryButton(toggleHttpButton, "Start")
-        }
-    }
-
-    private fun applyArmedStatus(armed: Boolean) {
-        if (armed) {
-            armedStatusPanel.setBackgroundResource(R.drawable.autotermux_permission_ready_bg)
-            armedStatusView.text = "Armed"
-            armedStatusView.setTextColor(color(R.color.autotermux_primary_light))
-            armedStatusView.setTypeface(null, Typeface.NORMAL)
-            applyIcon(armedIcon, R.color.autotermux_primary_light)
-            applyWarningButton(armedActionButton, "Disarm")
-        } else {
-            armedStatusPanel.setBackgroundResource(R.drawable.autotermux_permission_required_bg)
-            armedStatusView.text = "Disarmed"
-            armedStatusView.setTextColor(color(R.color.autotermux_warning))
-            armedStatusView.setTypeface(null, Typeface.BOLD)
-            applyIcon(armedIcon, R.color.autotermux_warning)
-            applyPrimaryButton(armedActionButton, "Arm")
-        }
+    private fun refreshServices() {
+        // tp-android only talks to us over the bridge — no HTTP toggle on the
+        // home screen. The bridge identity is shown for diagnostics.
+        bridgeStatusView.text = packageName
+        applyIcon(bridgeIcon, R.color.text_gray_light)
     }
 
     private fun refreshAuditLog() {
@@ -320,27 +386,51 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
         activityEmptyView.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    private fun setHttpServerEnabled(enabled: Boolean) {
-        configManager.noA11yMode = enabled && AutoTermuxAccessibilityService.getInstance() == null
-        configManager.setSocketServerEnabledWithNotification(enabled)
-        if (enabled && configManager.noA11yMode) {
-            val intent = Intent(this, LocalAutomationService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        } else if (!enabled && configManager.noA11yMode) {
-            stopService(Intent(this, LocalAutomationService::class.java))
-            configManager.noA11yMode = false
-        }
-        refreshStatus()
+    // ---- probes -----------------------------------------------------------
+
+    private fun isAccessibilityEnabledInSettings(): Boolean {
+        val expected = ComponentName(this, AutoTermuxAccessibilityService::class.java).flattenToString()
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
     }
 
-    private fun color(resourceId: Int): Int = ContextCompat.getColor(this, resourceId)
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners").orEmpty()
+        return flat.split(':').any { it.contains(packageName) }
+    }
 
-    private fun colorStateList(resourceId: Int): ColorStateList =
-        ColorStateList.valueOf(color(resourceId))
+    private fun countGrantedRuntimePerms(): Int {
+        var n = 0
+        for (perm in runtimePermissions) {
+            if (ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED) {
+                n++
+            }
+        }
+        return n
+    }
+
+    private fun openSettings(intent: Intent) {
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (_: Throwable) {
+            // Fall back to the app's own details page so the user can navigate manually.
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:$packageName"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            } catch (_: Throwable) {
+                // best-effort
+            }
+        }
+    }
+
+    // ---- visual helpers ---------------------------------------------------
+
+    private fun color(resourceId: Int): Int = ContextCompat.getColor(this, resourceId)
+    private fun colorStateList(resourceId: Int): ColorStateList = ColorStateList.valueOf(color(resourceId))
 
     private fun applyIcon(icon: ImageView, colorResourceId: Int) {
         icon.imageTintList = colorStateList(colorResourceId)
@@ -376,5 +466,81 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
         button.alpha = 0.45f
         button.backgroundTintList = colorStateList(R.color.background_tertiary)
         button.setTextColor(color(R.color.white))
+    }
+
+    // ---- inner types ------------------------------------------------------
+
+    private enum class RowState {
+        OK, OK_STANDBY, PARTIAL, OPTIONAL_MISSING, MISSING, DISABLED, UNKNOWN
+    }
+
+    /**
+     * Bind helper for a single permission row in the layout.
+     * Each row exposes an icon, a label, a one-line status, and a primary button.
+     * State affects the background tint and button style only — not the layout.
+     */
+    private inner class PermissionRow(val root: View) {
+        private val iconView: ImageView = root.findViewById(R.id.row_icon)
+        private val labelView: TextView = root.findViewById(R.id.row_label)
+        private val statusView: TextView = root.findViewById(R.id.row_status)
+        private val actionButton: Button = root.findViewById(R.id.row_action)
+
+        fun render(
+            icon: Int,
+            label: String,
+            status: String,
+            state: RowState,
+            actionLabel: String,
+            onAction: () -> Unit,
+        ) {
+            iconView.setImageResource(icon)
+            labelView.text = label
+            statusView.text = status
+            when (state) {
+                RowState.OK -> {
+                    root.setBackgroundResource(R.drawable.autotermux_permission_ready_bg)
+                    applyIcon(iconView, R.color.autotermux_primary_light)
+                    statusView.setTextColor(color(R.color.autotermux_primary_light))
+                    applySecondaryButton(actionButton, actionLabel)
+                }
+                RowState.OK_STANDBY -> {
+                    root.setBackgroundResource(R.drawable.autotermux_permission_ready_bg)
+                    applyIcon(iconView, R.color.autotermux_primary_light)
+                    statusView.setTextColor(color(R.color.autotermux_primary_light))
+                    applySecondaryButton(actionButton, actionLabel)
+                }
+                RowState.PARTIAL -> {
+                    root.setBackgroundResource(R.drawable.autotermux_status_row_bg)
+                    applyIcon(iconView, R.color.text_white)
+                    statusView.setTextColor(color(R.color.text_gray_light))
+                    applySecondaryButton(actionButton, actionLabel)
+                }
+                RowState.OPTIONAL_MISSING -> {
+                    root.setBackgroundResource(R.drawable.autotermux_status_row_bg)
+                    applyIcon(iconView, R.color.text_gray_light)
+                    statusView.setTextColor(color(R.color.text_gray_light))
+                    applySecondaryButton(actionButton, actionLabel)
+                }
+                RowState.MISSING -> {
+                    root.setBackgroundResource(R.drawable.autotermux_permission_required_bg)
+                    applyIcon(iconView, R.color.autotermux_warning)
+                    statusView.setTextColor(color(R.color.autotermux_warning))
+                    applyWarningButton(actionButton, actionLabel)
+                }
+                RowState.DISABLED -> {
+                    root.setBackgroundResource(R.drawable.autotermux_status_row_bg)
+                    applyIcon(iconView, R.color.text_gray_light)
+                    statusView.setTextColor(color(R.color.text_gray_light))
+                    applyDisabledButton(actionButton, actionLabel)
+                }
+                RowState.UNKNOWN -> {
+                    root.setBackgroundResource(R.drawable.autotermux_status_row_bg)
+                    applyIcon(iconView, R.color.text_gray_light)
+                    statusView.setTextColor(color(R.color.text_gray_light))
+                    applySecondaryButton(actionButton, actionLabel)
+                }
+            }
+            actionButton.setOnClickListener { onAction() }
+        }
     }
 }

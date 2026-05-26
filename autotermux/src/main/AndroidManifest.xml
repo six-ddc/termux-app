@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+    <!-- Required so Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS can pop
+         the system dialog from the home screen. Without this declared the
+         system silently rejects the intent. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -81,6 +85,18 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Lifecycle-bound keepalive — started only while a tp-android run is
+             active. Sticky notification carries Pause / Cancel actions. -->
+        <service
+            android:name=".service.AutoTermuxBackgroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".service.BackgroundActionReceiver"
+            android:exported="false" />
 
         <service
             android:name=".service.NotificationAccessService"

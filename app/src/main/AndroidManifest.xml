@@ -222,6 +222,18 @@
             android:name=".shared.activities.ReportActivity$ReportActivityBroadcastReceiver"
             android:exported="false" />
 
+        <!-- Signature-protected trampoline so AutoTermux (same signing key) can
+             ask Termux to hide / restore its floating-terminal bubble without
+             needing TermuxService itself to be exported. -->
+        <receiver
+            android:name=".app.TermuxFloatingControlReceiver"
+            android:exported="true"
+            android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND">
+            <intent-filter>
+                <action android:name="com.termux.HIDE_FLOATING" />
+                <action android:name="com.termux.SHOW_FLOATING" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".app.TermuxService"

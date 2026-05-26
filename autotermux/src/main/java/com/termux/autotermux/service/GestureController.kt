@@ -22,6 +22,7 @@ object GestureController {
         val service = AutoTermuxAccessibilityService.getInstance() ?: return false
 
         return try {
+            AgentGestureTagger.recordAgentTap(x, y)
             val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
             val stroke = GestureDescription.StrokeDescription(path, 0, TAP_DURATION_MS)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
@@ -48,6 +49,10 @@ object GestureController {
         val service = AutoTermuxAccessibilityService.getInstance() ?: return false
 
         return try {
+            // Tag both start and end so users tapping near the swipe path
+            // aren't falsely classified as user touches.
+            AgentGestureTagger.recordAgentTap(startX, startY)
+            AgentGestureTagger.recordAgentTap(endX, endY)
             val path = Path().apply {
                 moveTo(startX.toFloat(), startY.toFloat())
                 lineTo(endX.toFloat(), endY.toFloat())

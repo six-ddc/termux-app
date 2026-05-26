@@ -38,6 +38,7 @@ tp-android ping --pretty         # round-trip latency
 tp-android permissions status --pretty   # which runtime / special perms still need to be granted
 tp-android state connection --pretty     # internal HTTP/WS server state (informational only)
 tp-android mode status --pretty          # a11y vs no-a11y mode, server enabled flags
+tp-android ui diagnose --pretty          # screenshot path + current app + windows + visible text snippets
 ```
 
 If `tp-android doctor` fails with `AccessibilityService not available`, ask the user to enable AutoTermux's accessibility service in Settings, then retry. If commands return `Could not parse bridge broadcast output: ... result=0`, AutoTermux's process was probably killed by the OEM (vivo/MIUI/etc.); ask the user to launch AutoTermux to the foreground or whitelist it from battery optimization, then retry.
@@ -48,9 +49,12 @@ Prefer selectors over coordinate taps. Coordinates are brittle across screen siz
 
 ```sh
 tp-android ui dump --pretty
+tp-android ui dump --package com.example --pretty       # dump a visible target package even if another window has focus
 tp-android ui dump --no-filter --pretty                # include invisible/disabled nodes
 tp-android ui tree --pretty
 tp-android ui phone-state --pretty                     # currentApp / packageName / activityName / keyboardVisible
+tp-android ui windows --pretty                         # all visible accessibility windows, z-order, focus, bounds
+tp-android ui texts --package com.example --pretty     # compact visible text/contentDescription list
 tp-android ui find --text-contains "Continue" --limit 5 --pretty
 tp-android ui focused --pretty
 tp-android ui dump --cache --pretty                    # caches under /sdcard/Download/.termuxplus/tp-android-cache, prints path
@@ -62,7 +66,9 @@ Click via selector when possible, fall back to taps only when no selector is ava
 ```sh
 tp-android ui click --text "OK"
 tp-android ui click --text-contains "Allow"
+tp-android ui click --text "Example" --expect-package com.example --verify-timeout 8
 tp-android ui wait --text-contains "Done" --wait-timeout 15            # block until visible
+tp-android ui wait --package com.example --text-contains "Done" --wait-timeout 15
 tp-android ui wait --text-contains "Loading" --gone --wait-timeout 30  # block until disappears
 tp-android ui action scroll-forward --class-name RecyclerView
 tp-android ui scroll-until --scrollable --target-text-contains "Done" --max-scrolls 8
@@ -75,6 +81,16 @@ Screenshot (saves to anywhere you can write — `~`, `/sdcard/...`):
 tp-android ui screenshot -o ~/screen.png
 tp-android ui screenshot -o /sdcard/Download/screen.png
 ```
+
+If a Termux/Codex floating window is over the target app, treat `app current` and plain `ui dump` as focus-oriented diagnostics, not proof of what is visually dominant. First run `tp-android ui windows --pretty` or `tp-android ui diagnose --package <target> --pretty`, then use package-scoped commands:
+
+```sh
+tp-android ui texts --package com.xingin.xhs --pretty
+tp-android ui dump --package com.xingin.xhs --cache --pretty
+tp-android ui action scroll-forward --package com.xingin.xhs --scrollable
+```
+
+Use `tp-android overlay set-visible false` only for AutoTermux's own overlay. It does not hide Termux's floating terminal window; package-scoped UI commands and screenshots are the safer first pass when that window is present.
 
 ## Input
 
@@ -102,6 +118,7 @@ tp-android app current --pretty
 tp-android app current --package-only --raw
 tp-android app info com.android.settings --pretty
 tp-android app launch com.android.settings
+tp-android app launch-interactive com.android.settings --pretty
 tp-android app wait com.android.settings --wait-timeout 10 --pretty
 tp-android app open-url "https://example.com" --pretty
 tp-android app intent --action android.intent.action.VIEW --data "geo:0,0?q=coffee" --pretty

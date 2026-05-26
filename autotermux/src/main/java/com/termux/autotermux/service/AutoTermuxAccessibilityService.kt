@@ -46,6 +46,7 @@ import com.termux.autotermux.model.ElementNode
 import com.termux.autotermux.model.PhoneState
 import com.termux.autotermux.triggers.TriggerRuntime
 import androidx.core.app.NotificationCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -741,19 +742,19 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
 
     fun isAutoOffsetEnabled(): Boolean = configManager.autoOffsetEnabled
 
-    fun getVisibleElements(): MutableList<ElementNode> {
-        return getVisibleElementsInternal()
+    fun getVisibleElements(packageName: String? = null): MutableList<ElementNode> {
+        return getVisibleElementsInternal(packageName?.trim()?.takeIf { it.isNotEmpty() })
     }
 
-    private fun getVisibleElementsInternal(): MutableList<ElementNode> {
+    private fun getVisibleElementsInternal(packageNameFilter: String? = null): MutableList<ElementNode> {
         val elements = mutableListOf<ElementNode>()
         val indexCounter = IndexCounter(1)
         val screenBoundsSnapshot = refreshScreenBounds()
 
-        val rootCandidates = collectRootCandidates()
+        val rootCandidates = collectRootCandidates(packageNameFilter)
         if (rootCandidates.isEmpty()) {
             synchronized(visibleElements) {
-                if (shouldReuseVisibleElementsSnapshot(
+                if (packageNameFilter == null && shouldReuseVisibleElementsSnapshot(
                         cachedElementCount = visibleElements.size,
                         snapshotTimeMs = visibleElementsSnapshotTimeMs,
                         nowMs = SystemClock.elapsedRealtime(),
@@ -784,34 +785,43 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         }
 
         synchronized(visibleElements) {
-            clearVisibleElementSnapshot()
-            visibleElements.addAll(elements)
-            visibleElementsSnapshotTimeMs = SystemClock.elapsedRealtime()
-            visibleElementsSnapshotPackageName = currentPackageName
-            visibleElementsSnapshotActivityName = currentActivityName
-            visibleElementsSnapshotScreenWidth = screenBoundsSnapshot.width()
-            visibleElementsSnapshotScreenHeight = screenBoundsSnapshot.height()
+            if (packageNameFilter == null) {
+                clearVisibleElementSnapshot()
+                visibleElements.addAll(elements)
+                visibleElementsSnapshotTimeMs = SystemClock.elapsedRealtime()
+                visibleElementsSnapshotPackageName = currentPackageName
+                visibleElementsSnapshotActivityName = currentActivityName
+                visibleElementsSnapshotScreenWidth = screenBoundsSnapshot.width()
+                visibleElementsSnapshotScreenHeight = screenBoundsSnapshot.height()
+            }
         }
 
         return elements
     }
 
-    private fun collectRootCandidates(): List<Pair<AccessibilityNodeInfo, Int>> {
-        val activeRoot = try {
-            rootInActiveWindow
-        } catch (e: RuntimeException) {
-            Log.e(TAG, "Unable to read active accessibility root: ${e.message}", e)
-            null
-        }
-        activeRoot?.let { return listOf(it to 0) }
-
+    private fun collectRootCandidates(packageNameFilter: String? = null): List<Pair<AccessibilityNodeInfo, Int>> {
         val windows = try {
             windows
         } catch (e: RuntimeException) {
             Log.e(TAG, "Unable to read accessibility windows: ${e.message}", e)
             null
-        } ?: return emptyList()
+        }
         val out = mutableListOf<Pair<AccessibilityNodeInfo, Int>>()
+        if (windows == null) {
+            val activeRoot = try {
+                rootInActiveWindow
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "Unable to read active accessibility root: ${e.message}", e)
+                null
+            }
+            if (activeRoot != null && rootMatchesPackage(activeRoot, packageNameFilter)) {
+                out.add(activeRoot to 0)
+            } else {
+                activeRoot?.recycle()
+            }
+            return out
+        }
+
         try {
             windows.sortedWith(
                 compareBy<AccessibilityWindowInfo> { fallbackWindowTypePriority(it) }
@@ -830,13 +840,84 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
                         null
                     }
                     if (root != null) {
-                        out.add(root to window.layer)
+                        if (rootMatchesPackage(root, packageNameFilter)) {
+                            out.add(root to window.layer)
+                        } else {
+                            root.recycle()
+                        }
                     }
                 }
         } finally {
             windows.forEach { it.recycle() }
         }
         return out
+    }
+
+    private fun rootMatchesPackage(
+        root: AccessibilityNodeInfo,
+        packageNameFilter: String?,
+    ): Boolean {
+        return packageNameFilter == null || root.packageName?.toString() == packageNameFilter
+    }
+
+    fun getVisibleWindowsJson(): JSONArray {
+        val windows = try {
+            windows
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Unable to read accessibility windows: ${e.message}", e)
+            null
+        } ?: return JSONArray()
+
+        val arr = JSONArray()
+        try {
+            windows.sortedByDescending { it.layer }.forEachIndexed { index, window ->
+                val bounds = Rect()
+                try {
+                    window.getBoundsInScreen(bounds)
+                } catch (e: RuntimeException) {
+                    Log.e(TAG, "Unable to read accessibility window bounds: ${e.message}", e)
+                }
+
+                val root = try {
+                    window.root
+                } catch (e: RuntimeException) {
+                    Log.e(
+                        TAG,
+                        "Unable to read accessibility window root layer=${window.layer}: ${e.message}",
+                        e,
+                    )
+                    null
+                }
+
+                try {
+                    arr.put(JSONObject().apply {
+                        put("zIndex", index)
+                        put("id", window.id)
+                        put("type", window.type)
+                        put("typeName", accessibilityWindowTypeName(window.type))
+                        put("layer", window.layer)
+                        put("isActive", window.isActive)
+                        put("isFocused", window.isFocused)
+                        put("title", window.title?.toString() ?: JSONObject.NULL)
+                        put("packageName", root?.packageName?.toString() ?: JSONObject.NULL)
+                        put("className", root?.className?.toString() ?: JSONObject.NULL)
+                        put("bounds", JSONObject().apply {
+                            put("left", bounds.left)
+                            put("top", bounds.top)
+                            put("right", bounds.right)
+                            put("bottom", bounds.bottom)
+                            put("width", bounds.width())
+                            put("height", bounds.height())
+                        })
+                    })
+                } finally {
+                    root?.recycle()
+                }
+            }
+        } finally {
+            windows.forEach { it.recycle() }
+        }
+        return arr
     }
 
     private fun isUserFacingWindow(window: AccessibilityWindowInfo): Boolean {
@@ -849,6 +930,17 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
             AccessibilityWindowInfo.TYPE_APPLICATION -> 0
             AccessibilityWindowInfo.TYPE_SYSTEM -> 1
             else -> 2
+        }
+    }
+
+    private fun accessibilityWindowTypeName(type: Int): String {
+        return when (type) {
+            AccessibilityWindowInfo.TYPE_APPLICATION -> "APPLICATION"
+            AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "INPUT_METHOD"
+            AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
+            AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "ACCESSIBILITY_OVERLAY"
+            AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER -> "SPLIT_SCREEN_DIVIDER"
+            else -> "UNKNOWN_$type"
         }
     }
 

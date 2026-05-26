@@ -7,6 +7,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.termux.autotermux.service.AutoTermuxAccessibilityService
 import com.termux.autotermux.model.ElementNode
 import com.termux.autotermux.model.PhoneState
+import org.json.JSONArray
 import org.json.JSONObject
 
 class StateRepository(private val service: AutoTermuxAccessibilityService?) {
@@ -17,11 +18,17 @@ class StateRepository(private val service: AutoTermuxAccessibilityService?) {
     val hasAccessibilityService: Boolean
         get() = service != null
 
-    fun getVisibleElements(): List<ElementNode> = service?.getVisibleElements() ?: emptyList()
+    fun getVisibleElements(packageName: String? = null): List<ElementNode> =
+        service?.getVisibleElements(packageName) ?: emptyList()
 
-    fun getFullTree(filter: Boolean): JSONObject? {
+    fun getFullTree(filter: Boolean, packageName: String? = null): JSONObject? {
         val svc = service ?: return null
-        val root = getActiveRoot(svc) ?: pickFallbackRoot(svc) ?: return null
+        val normalizedPackage = packageName?.trim()?.takeIf { it.isNotEmpty() }
+        val root = if (normalizedPackage != null) {
+            pickRootForPackage(svc, normalizedPackage)
+        } else {
+            getActiveRoot(svc) ?: pickFallbackRoot(svc)
+        } ?: return null
         val bounds = if (filter) svc.getScreenBounds() else null
         return AccessibilityTreeBuilder.buildFullAccessibilityTreeJson(root, bounds)
     }
@@ -68,6 +75,67 @@ class StateRepository(private val service: AutoTermuxAccessibilityService?) {
         }
     }
 
+    private fun pickRootForPackage(
+        svc: AutoTermuxAccessibilityService,
+        packageName: String,
+    ): AccessibilityNodeInfo? {
+        val windows = try {
+            svc.windows
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Unable to read accessibility windows: ${e.message}", e)
+            null
+        }
+
+        if (windows == null) {
+            val activeRoot = getActiveRoot(svc)
+            return if (activeRoot?.packageName?.toString() == packageName) {
+                activeRoot
+            } else {
+                activeRoot?.let { recycleNodeQuietly(it) }
+                null
+            }
+        }
+
+        val unmatchedRoots = mutableListOf<AccessibilityNodeInfo>()
+        try {
+            windows.sortedWith(
+                compareBy<AccessibilityWindowInfo> { fallbackWindowTypePriority(it) }
+                    .thenByDescending { it.layer }
+            )
+                .asSequence()
+                .filter { isUserFacingWindow(it) }
+                .forEach { window ->
+                    val root = try {
+                        window.root
+                    } catch (e: RuntimeException) {
+                        Log.e(
+                            TAG,
+                            "Unable to read accessibility window root layer=${window.layer}: ${e.message}",
+                            e,
+                        )
+                        null
+                    } ?: return@forEach
+
+                    if (root.packageName?.toString() == packageName) {
+                        unmatchedRoots.forEach { recycleNodeQuietly(it) }
+                        return root
+                    }
+                    unmatchedRoots.add(root)
+                }
+        } finally {
+            windows.forEach { it.recycle() }
+        }
+        unmatchedRoots.forEach { recycleNodeQuietly(it) }
+        return null
+    }
+
+    private fun recycleNodeQuietly(node: AccessibilityNodeInfo) {
+        try {
+            node.recycle()
+        } catch (_: RuntimeException) {
+        }
+    }
+
     private fun isUserFacingWindow(window: AccessibilityWindowInfo): Boolean {
         return window.type == AccessibilityWindowInfo.TYPE_APPLICATION ||
                 window.type == AccessibilityWindowInfo.TYPE_SYSTEM
@@ -90,6 +158,8 @@ class StateRepository(private val service: AutoTermuxAccessibilityService?) {
             isEditable = false,
             activityName = null,
         )
+
+    fun getVisibleWindows(): JSONArray = service?.getVisibleWindowsJson() ?: JSONArray()
 
     fun getDeviceContext(): JSONObject = service?.getDeviceContext() ?: JSONObject()
 

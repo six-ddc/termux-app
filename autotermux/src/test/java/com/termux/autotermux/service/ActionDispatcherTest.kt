@@ -13,23 +13,23 @@ class ActionDispatcherTest {
     @Test
     fun dispatchStateRoutesSimpleAndFullStateSeparately() {
         val apiHandler = mockk<ApiHandler>()
-        every { apiHandler.getState() } returns ApiResponse.Success("state")
-        every { apiHandler.getStateFull(true) } returns ApiResponse.Success("state_full")
+        every { apiHandler.getState(null) } returns ApiResponse.Success("state")
+        every { apiHandler.getStateFull(true, null) } returns ApiResponse.Success("state_full")
 
         val dispatcher = ActionDispatcher(apiHandler)
 
         assertEquals(ApiResponse.Success("state"), dispatcher.dispatch("state", JSONObject()))
         assertEquals(ApiResponse.Success("state_full"), dispatcher.dispatch("state_full", JSONObject()))
-        verify(exactly = 1) { apiHandler.getState() }
-        verify(exactly = 1) { apiHandler.getStateFull(true) }
+        verify(exactly = 1) { apiHandler.getState(null) }
+        verify(exactly = 1) { apiHandler.getStateFull(true, null) }
     }
 
     @Test
     fun dispatchCachedLargeJsonRoutesToCacheMethods() {
         val apiHandler = mockk<ApiHandler>()
         val cached = ApiResponse.RawObject(JSONObject().put("path", "/sdcard/cache/state.json"))
-        every { apiHandler.cacheState(full = true, filter = false) } returns cached
-        every { apiHandler.cacheTree(full = true, filter = true) } returns cached
+        every { apiHandler.cacheState(full = true, filter = false, packageName = null) } returns cached
+        every { apiHandler.cacheTree(full = true, filter = true, packageName = null) } returns cached
         every { apiHandler.cachePhoneState() } returns cached
         every { apiHandler.cachePackages() } returns cached
 
@@ -42,10 +42,56 @@ class ActionDispatcherTest {
         assertEquals(cached, dispatcher.dispatch("a11y_tree_full/cache", JSONObject()))
         assertEquals(cached, dispatcher.dispatch("phone_state/cache", JSONObject()))
         assertEquals(cached, dispatcher.dispatch("packages/cache", JSONObject()))
-        verify(exactly = 1) { apiHandler.cacheState(full = true, filter = false) }
-        verify(exactly = 1) { apiHandler.cacheTree(full = true, filter = true) }
+        verify(exactly = 1) { apiHandler.cacheState(full = true, filter = false, packageName = null) }
+        verify(exactly = 1) { apiHandler.cacheTree(full = true, filter = true, packageName = null) }
         verify(exactly = 1) { apiHandler.cachePhoneState() }
         verify(exactly = 1) { apiHandler.cachePackages() }
+    }
+
+    @Test
+    fun dispatchUiPackageScopedStateAndTree() {
+        val apiHandler = mockk<ApiHandler>()
+        val response = ApiResponse.Success("scoped")
+        every { apiHandler.getStateFull(true, "com.example") } returns response
+        every { apiHandler.getTreeFull(false, "com.example") } returns response
+
+        val dispatcher = ActionDispatcher(apiHandler)
+
+        assertEquals(
+            response,
+            dispatcher.dispatch("state_full", JSONObject().put("packageName", "com.example")),
+        )
+        assertEquals(
+            response,
+            dispatcher.dispatch(
+                "ui/tree/full",
+                JSONObject().put("filter", false).put("package", "com.example"),
+            ),
+        )
+        verify(exactly = 1) { apiHandler.getStateFull(true, "com.example") }
+        verify(exactly = 1) { apiHandler.getTreeFull(false, "com.example") }
+    }
+
+    @Test
+    fun dispatchUiDiagnosticsRoutesToApiHandler() {
+        val apiHandler = mockk<ApiHandler>()
+        val params = JSONObject().put("packageName", "com.example")
+        val response = ApiResponse.RawObject(JSONObject().put("windows", true))
+        every { apiHandler.getWindows() } returns response
+        every { apiHandler.getVisibleTexts(params) } returns response
+        every { apiHandler.cacheVisibleTexts(params) } returns response
+        every { apiHandler.getDiagnostics(params) } returns response
+
+        val dispatcher = ActionDispatcher(apiHandler)
+
+        assertEquals(response, dispatcher.dispatch("ui/windows", JSONObject()))
+        assertEquals(response, dispatcher.dispatch("ui/texts", params))
+        assertEquals(response, dispatcher.dispatch("ui/texts/cache", params))
+        assertEquals(response, dispatcher.dispatch("ui/diagnose", params))
+        verify(exactly = 1) { apiHandler.getWindows() }
+        verify(exactly = 1) { apiHandler.getVisibleTexts(params) }
+        verify(exactly = 1) { apiHandler.cacheVisibleTexts(params) }
+        verify(exactly = 1) { apiHandler.getDiagnostics(params) }
     }
 
     @Test

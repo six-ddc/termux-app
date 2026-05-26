@@ -26,6 +26,7 @@ import com.termux.autotermux.core.AccessibilityTraversalGuard
 import com.termux.autotermux.core.StateRepository
 import com.termux.autotermux.config.ConfigManager
 import com.termux.autotermux.input.AutoTermuxKeyboardIME
+import com.termux.autotermux.ui.overlay.HudOverlay
 import com.termux.autotermux.ui.overlay.OverlayManager
 import android.os.Build
 import android.os.Handler
@@ -195,6 +196,7 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
     }
 
     private lateinit var overlayManager: OverlayManager
+    private lateinit var hudOverlay: HudOverlay
     private val screenBounds = Rect()
     private lateinit var configManager: ConfigManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -228,6 +230,21 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
     override fun onCreate() {
         super.onCreate()
         overlayManager = OverlayManager(this)
+        hudOverlay = HudOverlay(this).also { hud ->
+            // Click handlers — see UX plan L4 §cancel. For Phase 1 we just record
+            // the intent in AutoTermux memory + a shared-storage marker so the
+            // running tp-android process (in Termux) picks it up at its next
+            // status checkpoint. The marker file is the same transfer cache dir
+            // both processes already use, so no extra perms are required.
+            hud.onPauseClick = {
+                Log.i(TAG, "HUD pause clicked (run=${hud.snapshot().runId})")
+                HudControlSignal.writePause(this, hud.snapshot().runId)
+            }
+            hud.onCancelClick = {
+                Log.i(TAG, "HUD cancel clicked (run=${hud.snapshot().runId})")
+                HudControlSignal.writeCancel(this, hud.snapshot().runId)
+            }
+        }
         refreshScreenBounds()
 
         // Initialize ConfigManager
@@ -299,6 +316,17 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!configManager.armed) return
+
+        // User-touch detection: any click that doesn't correlate to a recent
+        // Agent-injected gesture means the human took over. We drop a marker
+        // in shared storage which tp-android consumes at its next checkpoint.
+        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            try {
+                AgentGestureTagger.onAccessibilityClick(event)
+            } catch (t: Throwable) {
+                Log.w(TAG, "AgentGestureTagger error: ${t.message}")
+            }
+        }
 
         val eventPackage = event?.packageName?.toString() ?: ""
         val eventClassName = event?.className?.toString() ?: ""
@@ -653,6 +681,8 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
     fun getOverlayOffset(): Int = configManager.overlayOffset
 
     fun getCurrentAppliedOffset(): Int = overlayManager.getPositionOffsetY()
+
+    fun getHudOverlay(): HudOverlay = hudOverlay
 
     fun getScreenBounds(): Rect = refreshScreenBounds()
 

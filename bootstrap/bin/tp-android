@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 
-TP_ANDROID_VERSION = "0.5.0"
+TP_ANDROID_VERSION = "0.7.0"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 DEFAULT_AUTHORITY = "com.termux.autotermux"
 BRIDGE_RECEIVER_CLASS = "com.termux.autotermux.service.TermuxAutomationBridgeReceiver"
@@ -71,6 +71,36 @@ GLOBAL_ACTIONS = {
     "split-screen": 7,
     "lock-screen": 8,
     "screenshot": 9,
+}
+
+
+# Structured error codes — every CliError SHOULD attach one. The map below also
+# defines the default `hint` field surfaced to callers/agents, so an agent that
+# just reads {code, hint} can take a deterministic next step without parsing the
+# human-language `message`. See docs/automation-agent-ux-plan.md §6.4.
+ERROR_CODES: dict[str, dict[str, Any]] = {
+    "CLI_ERROR":                  {"hint": "See message field; this is a generic fallback.",                                              "recoverable": False},
+    "INTERRUPTED":                {"hint": "User pressed Ctrl-C.",                                                                        "recoverable": False},
+    "AUTOTERMUX_KILLED":          {"hint": "Launch AutoTermux to foreground and whitelist it in OEM battery settings, then retry.",       "recoverable": True},
+    "TERMUX_NOT_FOREGROUND":      {"hint": "Termux process was killed in background. Run: tp-android keepalive ensure --restart",         "recoverable": True},
+    "A11Y_DISABLED":              {"hint": "Enable AutoTermux accessibility service in Settings, then retry. Helper: tp-android setup",   "recoverable": True},
+    "A11Y_TIMEOUT":               {"hint": "Accessibility service is alive but unresponsive; toggle it off/on in Settings.",              "recoverable": True},
+    "NOTIF_LISTENER_DISABLED":    {"hint": "Enable AutoTermux notification listener in Settings. Helper: tp-android setup",               "recoverable": True},
+    "PERMISSION_MISSING":         {"hint": "Runtime permission missing. Run: tp-android permissions status --pretty",                     "recoverable": True},
+    "OVERLAY_BLOCKED":            {"hint": "SYSTEM_ALERT_WINDOW (Display over other apps) denied for AutoTermux.",                        "recoverable": True},
+    "SCREENSHOT_CONSENT_DENIED":  {"hint": "MediaProjection consent cancelled. The next attempt will re-prompt.",                         "recoverable": True},
+    "TARGET_NOT_FOUND":           {"hint": "Selector matched nothing. Run: tp-android ui digest (or ui dump) to inspect current screen.", "recoverable": True},
+    "TARGET_NOT_CLICKABLE":       {"hint": "Element found but not clickable. Inspect its `actions` field.",                               "recoverable": True},
+    "SELECTOR_AMBIGUOUS":         {"hint": "Multiple matches when one was expected. Tighten with --resource-id, --package, or --bounds.", "recoverable": True},
+    "USER_CANCELLED":             {"hint": "User pressed Cancel on the HUD.",                                                              "recoverable": False},
+    "USER_INTERRUPTED":           {"hint": "User touched the screen mid-flow. Check tp-android status intervene response.",               "recoverable": True},
+    "INPUT_TIMEOUT":              {"hint": "Wait expired. Increase --wait-timeout or verify pre-conditions.",                              "recoverable": True},
+    "BINDER_OVERFLOW":            {"hint": "Payload exceeded ~1MB Binder cap. Re-run with --cache or tighten --limit.",                   "recoverable": True},
+    "OEM_BATTERY_KILL":           {"hint": "Repeated result=0 indicates OEM killed AutoTermux. Whitelist it in battery settings.",        "recoverable": True},
+    "TERMUX_PROP_MISSING":        {"hint": "Add allow-external-apps=true to ~/.termux/termux.properties and run termux-reload-settings.", "recoverable": True},
+    "BRIDGE_PARSE_FAILED":        {"hint": "Could not parse AutoTermux response. Run: tp-android doctor --pretty",                        "recoverable": True},
+    "BRIDGE_RETURNED_ERROR":      {"hint": "AutoTermux returned a structured error; see message/details.",                                "recoverable": True},
+    "COMPANION_NOT_INSTALLED":    {"hint": "AutoTermux companion APK is not installed. Run: tp-android install-companion",                "recoverable": True},
 }
 
 TERMUX_API_COMMANDS = [
@@ -145,7 +175,28 @@ TERMUX_API_PARSE_EMPTY_COMMANDS = {
 
 
 class CliError(Exception):
-    pass
+    """Structured CLI error.
+
+    `code` is a stable identifier from ERROR_CODES; agents/scripts branch on it.
+    `hint` overrides the default hint registered for that code (optional).
+    `recoverable` overrides the default recoverable flag (optional).
+    `details` carries arbitrary structured context (e.g. selector that failed).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "CLI_ERROR",
+        hint: str | None = None,
+        recoverable: bool | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.hint = hint
+        self.recoverable = recoverable
+        self.details = details
 
 
 def load_config() -> dict[str, Any]:
@@ -316,16 +367,39 @@ def bridge_component(config: dict[str, Any]) -> str:
 def parse_bridge_broadcast(output: str) -> Any:
     match = re.search(r'data="([^"]+)"', output) or re.search(r"data=([^\s,]+)", output)
     if not match:
-        raise CliError(f"Could not parse bridge broadcast output: {output}")
+        # `result=0` with no `data=` payload typically means the receiver was
+        # killed (OEM battery manager) before it could reply.
+        if "result=0" in output:
+            raise CliError(
+                f"Bridge broadcast returned result=0 with no data; AutoTermux was likely killed: {output}",
+                code="OEM_BATTERY_KILL",
+            )
+        raise CliError(
+            f"Could not parse bridge broadcast output: {output}",
+            code="BRIDGE_PARSE_FAILED",
+        )
     encoded = match.group(1)
     padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
     try:
         raw = base64.urlsafe_b64decode(padded.encode()).decode()
         parsed = json.loads(raw)
     except Exception as exc:
-        raise CliError(f"Invalid bridge response: {exc}") from exc
+        raise CliError(f"Invalid bridge response: {exc}", code="BRIDGE_PARSE_FAILED") from exc
     if isinstance(parsed, dict) and parsed.get("status") == "error":
-        raise CliError(parsed.get("error") or parsed.get("message") or "Bridge command failed")
+        err_message = parsed.get("error") or parsed.get("message") or "Bridge command failed"
+        # Promote a few well-known server-side error strings to typed codes
+        # so agents can branch on them without parsing English.
+        err_code = "BRIDGE_RETURNED_ERROR"
+        lowered = str(err_message).lower()
+        if "accessibility" in lowered and ("not" in lowered or "unavail" in lowered or "disable" in lowered):
+            err_code = "A11Y_DISABLED"
+        elif "permission" in lowered and "denied" in lowered:
+            err_code = "PERMISSION_MISSING"
+        elif "binder" in lowered or "transaction" in lowered and "large" in lowered:
+            err_code = "BINDER_OVERFLOW"
+        elif "consent" in lowered and ("denied" in lowered or "cancel" in lowered):
+            err_code = "SCREENSHOT_CONSENT_DENIED"
+        raise CliError(err_message, code=err_code, details=parsed if isinstance(parsed, dict) else None)
     if isinstance(parsed, dict) and "result" in parsed:
         return parsed["result"]
     return parsed
@@ -764,16 +838,847 @@ def emit_success(
     print_json(payload, compact=(output_format == "json"))
 
 
-def emit_error(message: str, args: argparse.Namespace | None = None, *, code: str = "CLI_ERROR") -> None:
+def emit_error(
+    message: str,
+    args: argparse.Namespace | None = None,
+    *,
+    code: str = "CLI_ERROR",
+    hint: str | None = None,
+    recoverable: bool | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    spec = ERROR_CODES.get(code, ERROR_CODES["CLI_ERROR"])
+    effective_hint = hint if hint is not None else spec.get("hint")
+    effective_recoverable = recoverable if recoverable is not None else spec.get("recoverable", False)
+    error_obj: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "recoverable": bool(effective_recoverable),
+    }
+    if effective_hint:
+        error_obj["hint"] = effective_hint
+    if details:
+        error_obj["details"] = details
     payload = {
         "ok": False,
         "schema_version": "tp-android.v1",
-        "error": {
-            "code": code,
-            "message": message,
-        },
+        "error": error_obj,
     }
     print_json(payload, compact=(active_output_format(args) != "pretty"), file=sys.stderr)
+
+
+# ============================================================================
+# Status protocol (L4 in docs/automation-agent-ux-plan.md)
+# ----------------------------------------------------------------------------
+# A "run" is one logical Agent task. We persist its lifecycle to disk so that
+# (a) the HUD overlay process can read state without an IPC handshake, and
+# (b) the user can introspect / cancel runs from another shell.
+#
+# Layout under $HOME/.termuxplus/runs/ :
+#   current                       # plain text file: latest run_id
+#   <run_id>/run.json             # full run state (atomically rewritten)
+#   <run_id>/interaction-<id>.req # pending interaction request
+#   <run_id>/interaction-<id>.res # response written by HUD / terminal fallback
+#
+# All writes go through _status_write_json which writes to a temp file and
+# renames into place, so partial writes are never observable.
+# ============================================================================
+
+STATUS_SCHEMA_VERSION = "tp-android.status.v1"
+
+STATUS_HUD_PID_FILE = Path(
+    os.environ.get("TP_HUD_PID_FILE")
+    or (Path(os.environ.get("HOME", "/data/data/com.termux/files/home")) / ".termuxplus" / "hud.pid")
+)
+
+
+def _status_root() -> Path:
+    base = Path(os.environ.get("TP_RUN_DIR") or (Path(os.environ.get("HOME", "/data/data/com.termux/files/home")) / ".termuxplus" / "runs"))
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _status_run_dir(run_id: str) -> Path:
+    path = _status_root() / run_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _status_current_file() -> Path:
+    return _status_root() / "current"
+
+
+def _status_now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _status_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _status_read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
+def _status_new_run_id() -> str:
+    return "r_" + uuid.uuid4().hex[:16]
+
+
+def _status_resolve_run_id(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    env_id = os.environ.get("TP_RUN_ID")
+    if env_id:
+        return env_id
+    cur = _status_current_file()
+    if cur.exists():
+        text = cur.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    return None
+
+
+def _status_set_current(run_id: str | None) -> None:
+    cur = _status_current_file()
+    if run_id is None:
+        try:
+            cur.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    cur.write_text(run_id, encoding="utf-8")
+
+
+def _status_load_run(run_id: str) -> dict[str, Any]:
+    data = _status_read_json(_status_run_dir(run_id) / "run.json")
+    if not isinstance(data, dict):
+        raise CliError(f"Run not found: {run_id}", code="CLI_ERROR")
+    return data
+
+
+def _status_save_run(run: dict[str, Any]) -> None:
+    run["updated_at"] = _status_now_ms()
+    _status_write_json(_status_run_dir(run["run_id"]) / "run.json", run)
+
+
+def _status_append_event(run: dict[str, Any], kind: str, **payload: Any) -> dict[str, Any]:
+    event = {"at": _status_now_ms(), "kind": kind, **payload}
+    events = run.setdefault("events", [])
+    events.append(event)
+    # Keep memory bounded; HUD only needs a tail.
+    if len(events) > 500:
+        del events[: len(events) - 500]
+    return event
+
+
+def _status_get_run_id_or_error(explicit: str | None) -> str:
+    run_id = _status_resolve_run_id(explicit)
+    if not run_id:
+        raise CliError(
+            "No active run. Start one with: tp-android status start --task '...'",
+            code="CLI_ERROR",
+        )
+    return run_id
+
+
+STATUS_NOTIFICATION_CHANNEL = "tp-android-status"
+
+# Shared-storage directory where AutoTermux's HUD writes pause/cancel markers
+# when the user taps the corresponding button. Both packages can reach this
+# path. See HudControlSignal.kt for the writer side.
+HUD_SIGNAL_DIR = Path("/storage/emulated/0/Download/.termuxplus/tp-android-cache/hud-signals")
+
+
+def _hud_signal_consume(run_id: str) -> str | None:
+    """Return ("pause"|"cancel"|"user-touch") if the HUD/a11y has signalled for this run."""
+    if not run_id:
+        return None
+    for kind in ("cancel", "pause", "user-touch"):
+        target = HUD_SIGNAL_DIR / f"{run_id}.{kind}"
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError:
+                pass
+            return kind
+        fallback = HUD_SIGNAL_DIR / f"current.{kind}"
+        if fallback.exists():
+            try:
+                fallback.unlink()
+            except OSError:
+                pass
+            return kind
+    return None
+
+
+AGENT_MODE_STATE_PATH = Path(
+    os.environ.get("TP_AGENT_MODE_STATE")
+    or (Path(os.environ.get("HOME", "/data/data/com.termux/files/home")) / ".termuxplus" / "agent-mode.json")
+)
+
+
+def _agent_mode_read() -> dict[str, Any] | None:
+    try:
+        return json.loads(AGENT_MODE_STATE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _agent_mode_write(state: dict[str, Any] | None) -> None:
+    if state is None:
+        try:
+            AGENT_MODE_STATE_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    AGENT_MODE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_MODE_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
+def command_agent_mode_start(args: argparse.Namespace) -> int:
+    state = {
+        "active": True,
+        "on_user_touch": args.on_user_touch,
+        "on_app_switch": args.on_app_switch,
+        "started_at": _status_now_ms(),
+    }
+    _agent_mode_write(state)
+    emit_success(args, state, command="agent-mode.start")
+    return 0
+
+
+def command_agent_mode_stop(args: argparse.Namespace) -> int:
+    _agent_mode_write(None)
+    emit_success(args, {"active": False}, command="agent-mode.stop")
+    return 0
+
+
+def command_agent_mode_status(args: argparse.Namespace) -> int:
+    state = _agent_mode_read() or {"active": False}
+    emit_success(args, state, command="agent-mode.status")
+    return 0
+
+
+def _hud_push_state(args: argparse.Namespace, run: dict[str, Any]) -> None:
+    """Best-effort: mirror current run state to AutoTermux's HUD overlay.
+
+    Only fires when the run was started with --hud / --notify (the same flag
+    enables sticky notification too), or when $TP_STATUS_HUD=1. Failures are
+    swallowed because the HUD is decorative — losing it must not break the run.
+    """
+    if not (
+        run.get("hud") or run.get("notify")
+        or os.environ.get("TP_STATUS_HUD") in {"1", "true", "yes", "on"}
+    ):
+        return
+    step = run.get("current_step") or {}
+    payload: dict[str, Any] = {
+        "run_id": run.get("run_id"),
+        "task": run.get("task"),
+        "state": run.get("state") or "running",
+        "step": step.get("index", 0) if isinstance(step, dict) else 0,
+        "total_steps": run.get("total_steps") or 0,
+        "step_label": step.get("label") if isinstance(step, dict) else None,
+    }
+    if isinstance(step, dict):
+        progress = step.get("progress")
+        if isinstance(progress, dict) and progress.get("percent") is not None:
+            payload["percent"] = progress["percent"]
+    pending = run.get("pending_interaction")
+    if isinstance(pending, dict):
+        inner = pending.get("payload") or {}
+        payload["pending_prompt"] = inner.get("reason") or inner.get("prompt")
+    try:
+        bridge_call(load_runtime_config(args), "hud/update", payload)
+    except CliError:
+        pass
+
+
+def _hud_hide_quiet(args: argparse.Namespace) -> None:
+    try:
+        bridge_call(load_runtime_config(args), "hud/hide")
+    except CliError:
+        pass
+
+
+def _status_notification_id_for(run_id: str) -> int:
+    # Stable positive 31-bit int derived from run_id, so updates replace and
+    # different runs don't clobber each other.
+    digest = hashlib.sha1(run_id.encode("utf-8")).digest()
+    return (int.from_bytes(digest[:4], "big") & 0x7FFFFFFF) or 1
+
+
+def _status_notification_should_publish(run: dict[str, Any]) -> bool:
+    if os.environ.get("TP_STATUS_NOTIFY") in {"1", "true", "yes", "on"}:
+        return True
+    return bool(run.get("notify"))
+
+
+def _status_notification_publish(args: argparse.Namespace, run: dict[str, Any]) -> None:
+    """Push the run state to AutoTermux's foreground keepalive service.
+
+    That service holds the sticky notification (with Pause/Cancel actions) and
+    keeps our companion process alive against OEM battery kills. It's started
+    on first call and stopped explicitly via `_status_notification_remove`.
+    """
+    if not _status_notification_should_publish(run):
+        return
+    run_id = run.get("run_id")
+    if not isinstance(run_id, str):
+        return
+    step = run.get("current_step") if isinstance(run.get("current_step"), dict) else {}
+    pending = run.get("pending_interaction") if isinstance(run.get("pending_interaction"), dict) else {}
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "task": run.get("task"),
+        "state": run.get("state") or "running",
+        "step": step.get("index", 0) if isinstance(step, dict) else 0,
+        "total_steps": run.get("total_steps") or 0,
+        "step_label": step.get("label") if isinstance(step, dict) else None,
+    }
+    if isinstance(step, dict):
+        progress = step.get("progress")
+        if isinstance(progress, dict) and progress.get("percent") is not None:
+            payload["percent"] = progress["percent"]
+    if isinstance(pending, dict):
+        inner = pending.get("payload") or {}
+        if isinstance(inner, dict):
+            payload["pending_prompt"] = inner.get("reason") or inner.get("prompt")
+    try:
+        bridge_call(load_runtime_config(args), "keepalive/update", payload)
+    except CliError:
+        # Notification posting is best-effort — losing it should never fail
+        # the status protocol itself.
+        pass
+
+
+def _status_notification_remove(args: argparse.Namespace, run_id: str) -> None:
+    try:
+        bridge_call(load_runtime_config(args), "keepalive/stop")
+    except CliError:
+        pass
+
+
+def _status_hud_active() -> bool:
+    """Return True if a HUD process registered a pid file and the pid is alive.
+
+    When False, the interactive status commands fall back to terminal stdin.
+    """
+    try:
+        pid_text = STATUS_HUD_PID_FILE.read_text(encoding="utf-8").strip()
+        pid = int(pid_text)
+    except (FileNotFoundError, ValueError, OSError):
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _status_request_interaction(
+    run: dict[str, Any],
+    kind: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+    args: argparse.Namespace | None = None,
+) -> dict[str, Any]:
+    """Solicit user input for a run.
+
+    Resolution order:
+      1. If AutoTermux's bridge is reachable and `--no-dialog` isn't set, render
+         the prompt with the existing DialogBridgeActivity — that's a modal
+         system dialog over whatever the user is currently looking at. This is
+         the "HUD intervention" path.
+      2. Otherwise, if stdin is a TTY, fall back to a terminal prompt. This is
+         the dev/SSH path.
+      3. Otherwise, time out immediately.
+
+    Either way we persist the request and the response to the run directory so
+    `status tail` and the on-disk history reflect the interaction.
+    """
+
+    interaction_id = uuid.uuid4().hex[:12]
+    req = {
+        "interaction_id": interaction_id,
+        "run_id": run["run_id"],
+        "kind": kind,
+        "payload": payload,
+        "requested_at": _status_now_ms(),
+        "expires_at": _status_now_ms() + int(timeout_seconds * 1000),
+    }
+    run_dir = _status_run_dir(run["run_id"])
+    req_path = run_dir / f"interaction-{interaction_id}.req"
+    res_path = run_dir / f"interaction-{interaction_id}.res"
+
+    _status_write_json(req_path, req)
+    run["pending_interaction"] = {
+        "interaction_id": interaction_id,
+        "kind": kind,
+        "payload": payload,
+        "expires_at": req["expires_at"],
+    }
+    _status_append_event(run, "interaction_request", interaction_id=interaction_id, interaction_kind=kind, payload=payload)
+    _status_save_run(run)
+
+    response: dict[str, Any] | None = None
+    used_channel = "none"
+
+    if args is not None and not getattr(args, "no_dialog", False):
+        response = _status_dialog_channel(args, kind, payload, timeout_seconds)
+        if response is not None:
+            used_channel = "dialog"
+
+    if response is None:
+        response = _status_terminal_fallback(kind, payload, timeout_seconds)
+        if response is not None:
+            used_channel = "terminal"
+
+    if response is not None:
+        _status_write_json(res_path, response)
+
+    run = _status_load_run(run["run_id"])
+    run.pop("pending_interaction", None)
+    if response is None:
+        _status_append_event(run, "interaction_timeout", interaction_id=interaction_id, channel=used_channel)
+        _status_save_run(run)
+        return {"timeout": True, "interaction_id": interaction_id, "channel": used_channel}
+    _status_append_event(
+        run,
+        "interaction_response",
+        interaction_id=interaction_id,
+        response=response,
+        channel=used_channel,
+    )
+    _status_save_run(run)
+    return {**response, "interaction_id": interaction_id, "channel": used_channel}
+
+
+def _status_dialog_channel(
+    args: argparse.Namespace,
+    kind: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    """Render the interaction as a modal Android dialog via DialogBridgeActivity.
+
+    Returns the normalized response dict, or None if the dialog channel is
+    unavailable (bridge down, AutoTermux missing, OEM kill, etc.) so the caller
+    can fall back to the terminal channel.
+    """
+    timeout_ms = int(max(1.0, timeout_seconds) * 1000)
+    try:
+        if kind == "intervene":
+            choices = list(payload.get("choices") or [])
+            if not choices:
+                choices = ["continue", "cancel"]
+            dialog_payload = {
+                "widget": "radio",
+                "title": "Agent needs you",
+                "hint": payload.get("reason") or "Pick an option",
+                "values": ",".join(choices),
+                "timeoutMs": timeout_ms,
+            }
+            result = termux_api_call(args, "dialog", dialog_payload)
+            if not isinstance(result, dict):
+                return None
+            if result.get("code", 0) != 0:
+                return {"choice": "__cancel__"}
+            text = result.get("text") if isinstance(result.get("text"), str) else None
+            if not text and result.get("index") is not None:
+                idx = int(result["index"])
+                if 0 <= idx < len(choices):
+                    text = choices[idx]
+            return {"choice": text} if text else None
+        if kind == "ask_input":
+            widget_payload = {
+                "widget": "text",
+                "title": "Agent needs input",
+                "hint": payload.get("prompt") or "Enter a value",
+                "timeoutMs": timeout_ms,
+            }
+            if payload.get("kind") == "password":
+                widget_payload["password"] = True
+            if payload.get("kind") == "number":
+                widget_payload["numeric"] = True
+            result = termux_api_call(args, "dialog", widget_payload)
+            if not isinstance(result, dict):
+                return None
+            if result.get("code", 0) != 0:
+                return {"value": ""}
+            return {"value": result.get("text") if isinstance(result.get("text"), str) else ""}
+        if kind == "confirm":
+            widget_payload = {
+                "widget": "confirm",
+                "title": "Agent confirmation",
+                "hint": payload.get("prompt") or "Confirm action",
+                "timeoutMs": timeout_ms,
+            }
+            result = termux_api_call(args, "dialog", widget_payload)
+            if not isinstance(result, dict):
+                return None
+            return {"confirmed": result.get("code", 0) == 0 and result.get("text", "").lower() in {"yes", "ok", "true", ""}}
+        return None
+    except CliError:
+        return None
+
+
+def _status_terminal_fallback(kind: str, payload: dict[str, Any], timeout_seconds: float) -> dict[str, Any] | None:
+    """Read interaction response from the user's TTY when no HUD is running.
+
+    Returns None on timeout/EOF. Prompts are written to stderr so stdout stays
+    a clean JSON channel for callers that pipe.
+    """
+
+    if not sys.stdin.isatty():
+        # No TTY and no HUD — we cannot collect a response.
+        return None
+
+    prompt = payload.get("prompt") or payload.get("reason") or "Agent needs input"
+    if kind == "intervene":
+        choices: list[str] = list(payload.get("choices") or [])
+        if not choices:
+            choices = ["continue", "cancel"]
+        sys.stderr.write(f"\n[tp-android status intervene] {prompt}\n")
+        for idx, label in enumerate(choices, start=1):
+            sys.stderr.write(f"  [{idx}] {label}\n")
+        sys.stderr.write(f"  (timeout in {timeout_seconds:.0f}s, blank to cancel)\n> ")
+        sys.stderr.flush()
+        try:
+            raw = sys.stdin.readline().strip()
+        except KeyboardInterrupt:
+            return {"choice": "__interrupt__"}
+        if not raw:
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(choices):
+            return {"choice": choices[int(raw) - 1]}
+        if raw in choices:
+            return {"choice": raw}
+        return {"choice": raw}
+    if kind == "ask_input":
+        sys.stderr.write(f"\n[tp-android status ask-input] {prompt}\n> ")
+        sys.stderr.flush()
+        try:
+            raw = sys.stdin.readline()
+        except KeyboardInterrupt:
+            return None
+        if not raw:
+            return None
+        return {"value": raw.rstrip("\n")}
+    if kind == "confirm":
+        sys.stderr.write(f"\n[tp-android status confirm] {prompt} [y/N]: ")
+        sys.stderr.flush()
+        try:
+            raw = sys.stdin.readline().strip().lower()
+        except KeyboardInterrupt:
+            return {"confirmed": False}
+        if raw in {"y", "yes", "1", "true"}:
+            return {"confirmed": True}
+        if not raw:
+            return {"confirmed": False}
+        return {"confirmed": False}
+    return None
+
+
+def command_status_start(args: argparse.Namespace) -> int:
+    run_id = args.id or _status_new_run_id()
+    now = _status_now_ms()
+    run = {
+        "schema_version": STATUS_SCHEMA_VERSION,
+        "run_id": run_id,
+        "task": args.task,
+        "total_steps": args.total_steps,
+        "state": "running",
+        "current_step": None,
+        "pending_interaction": None,
+        "started_at": now,
+        "updated_at": now,
+        "ended_at": None,
+        "summary": None,
+        "error": None,
+        "notify": bool(args.notify),
+        "hud": bool(args.hud or args.notify),
+        "events": [],
+    }
+    _status_append_event(run, "start", task=args.task, total_steps=args.total_steps)
+    _status_save_run(run)
+    _status_set_current(run_id)
+    _status_notification_publish(args, run)
+    _hud_push_state(args, run)
+    emit_success(args, {"run_id": run_id, "started_at": now}, command="status.start")
+    return 0
+
+
+def command_status_finish(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    run["state"] = args.state
+    run["summary"] = args.summary
+    run["ended_at"] = _status_now_ms()
+    _status_append_event(run, "finish", state=args.state, summary=args.summary)
+    _status_save_run(run)
+    # Clear current pointer only if it points at this run
+    cur = _status_resolve_run_id(None)
+    if cur == run_id:
+        _status_set_current(None)
+    # Update or remove the sticky notification depending on outcome.
+    if args.state == "success" and not args.keep_notification:
+        _status_notification_remove(args, run_id)
+    else:
+        _status_notification_publish(args, run)
+    _hud_push_state(args, run)
+    _hud_hide_quiet(args)
+    emit_success(args, {"run_id": run_id, "state": args.state, "ended_at": run["ended_at"]}, command="status.finish")
+    return 0
+
+
+def command_status_step(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    step = {
+        "index": args.step,
+        "label": args.label,
+        "state": args.state,
+        "detail": args.detail,
+        "updated_at": _status_now_ms(),
+    }
+    if args.state == "running" or run.get("current_step") is None or run.get("current_step", {}).get("index") != args.step:
+        step["started_at"] = _status_now_ms()
+    else:
+        existing = run.get("current_step", {})
+        step["started_at"] = existing.get("started_at", _status_now_ms())
+    run["current_step"] = step
+    _status_append_event(run, "step", **step)
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    _hud_push_state(args, run)
+    _maybe_apply_hud_signal(args, run_id, run)
+    emit_success(args, {"run_id": run_id, "step": step}, command="status.step")
+    return 0
+
+
+def _maybe_apply_hud_signal(args: argparse.Namespace, run_id: str, run: dict[str, Any]) -> None:
+    """Honor pause/cancel/user-touch markers if present, applying agent-mode policy."""
+    signal = _hud_signal_consume(run_id)
+    if not signal:
+        return
+    if signal == "cancel":
+        run["state"] = "cancelled"
+        run["ended_at"] = _status_now_ms()
+        _status_append_event(run, "cancel", source="hud")
+        _status_save_run(run)
+        _status_notification_remove(args, run_id)
+        _hud_hide_quiet(args)
+        return
+    if signal == "pause":
+        _status_append_event(run, "pause_request", source="hud")
+        _status_save_run(run)
+        return
+    if signal == "user-touch":
+        policy = (_agent_mode_read() or {}).get("on_user_touch", "log")
+        _status_append_event(run, "user_touch", policy=policy)
+        if policy == "abort":
+            run["state"] = "cancelled"
+            run["ended_at"] = _status_now_ms()
+            _status_append_event(run, "cancel", source="user-touch")
+            _status_save_run(run)
+            _hud_hide_quiet(args)
+            return
+        if policy == "pause":
+            # Ask the user what to do via the same intervene channel.
+            run["state"] = "waiting"
+            _status_save_run(run)
+            response = _status_request_interaction(
+                run,
+                "intervene",
+                {"reason": "User touched the screen — continue or stop?", "choices": ["continue", "abort"]},
+                30.0,
+                args=args,
+            )
+            choice = response.get("choice") if isinstance(response, dict) else None
+            run = _status_load_run(run["run_id"])
+            if choice == "abort" or response.get("timeout"):
+                run["state"] = "cancelled"
+                run["ended_at"] = _status_now_ms()
+                _status_append_event(run, "cancel", source="user-touch-policy")
+            else:
+                run["state"] = "running"
+            _status_save_run(run)
+            return
+        # default "log": just keep going
+        _status_save_run(run)
+
+
+def command_status_progress(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    progress = {
+        "percent": max(0.0, min(100.0, float(args.percent))),
+        "detail": args.detail,
+        "at": _status_now_ms(),
+    }
+    if isinstance(run.get("current_step"), dict):
+        run["current_step"]["progress"] = progress
+    _status_append_event(run, "progress", **progress)
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    _hud_push_state(args, run)
+    _maybe_apply_hud_signal(args, run_id, run)
+    emit_success(args, {"run_id": run_id, "progress": progress}, command="status.progress")
+    return 0
+
+
+def command_status_intervene(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    choices = [c.strip() for c in (args.choices or "").split(",") if c.strip()]
+    payload = {"reason": args.reason, "choices": choices, "tts": args.tts}
+    run["state"] = "waiting"
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    _hud_push_state(args, run)
+    response = _status_request_interaction(run, "intervene", payload, args.wait_timeout, args=args)
+    run = _status_load_run(run_id)
+    if response.get("timeout"):
+        run["state"] = "running"
+        _status_save_run(run)
+        _status_notification_publish(args, run)
+        emit_success(args, response, command="status.intervene")
+        return 0
+    run["state"] = "running"
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    emit_success(args, response, command="status.intervene")
+    return 0
+
+
+def command_status_ask_input(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    payload = {"prompt": args.prompt, "kind": args.kind, "tts": args.tts}
+    run["state"] = "waiting"
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    response = _status_request_interaction(run, "ask_input", payload, args.wait_timeout, args=args)
+    run = _status_load_run(run_id)
+    run["state"] = "running"
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    emit_success(args, response, command="status.ask-input")
+    return 0
+
+
+def command_status_confirm(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    payload = {"prompt": args.prompt, "tts": args.tts}
+    run["state"] = "waiting"
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    response = _status_request_interaction(run, "confirm", payload, args.wait_timeout, args=args)
+    run = _status_load_run(run_id)
+    run["state"] = "running"
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    emit_success(args, response, command="status.confirm")
+    return 0
+
+
+def command_status_error(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    spec = ERROR_CODES.get(args.code, ERROR_CODES["CLI_ERROR"])
+    recoverable = args.recoverable if args.recoverable is not None else bool(spec.get("recoverable", False))
+    hint = args.hint or spec.get("hint")
+    err = {
+        "code": args.code,
+        "message": args.message,
+        "hint": hint,
+        "recoverable": recoverable,
+        "at": _status_now_ms(),
+    }
+    run["error"] = err
+    if not recoverable:
+        run["state"] = "error"
+        run["ended_at"] = _status_now_ms()
+    _status_append_event(run, "error", **err)
+    _status_save_run(run)
+    _status_notification_publish(args, run)
+    _hud_push_state(args, run)
+    emit_success(args, {"run_id": run_id, "error": err}, command="status.error")
+    return 0
+
+
+def command_status_cancel(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    run = _status_load_run(run_id)
+    run["state"] = "cancelled"
+    run["ended_at"] = _status_now_ms()
+    _status_append_event(run, "cancel", source=args.source)
+    _status_save_run(run)
+    cur = _status_resolve_run_id(None)
+    if cur == run_id:
+        _status_set_current(None)
+    _status_notification_remove(args, run_id)
+    _hud_hide_quiet(args)
+    emit_success(args, {"run_id": run_id, "state": "cancelled"}, command="status.cancel")
+    return 0
+
+
+def command_status_current(args: argparse.Namespace) -> int:
+    run_id = _status_resolve_run_id(args.id)
+    if not run_id:
+        emit_success(args, None, command="status.current")
+        return 0
+    run = _status_load_run(run_id)
+    emit_success(args, run, command="status.current")
+    return 0
+
+
+def command_status_history(args: argparse.Namespace) -> int:
+    root = _status_root()
+    runs = []
+    for entry in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+        if not entry.is_dir():
+            continue
+        run = _status_read_json(entry / "run.json")
+        if isinstance(run, dict):
+            runs.append({
+                "run_id": run.get("run_id"),
+                "task": run.get("task"),
+                "state": run.get("state"),
+                "started_at": run.get("started_at"),
+                "ended_at": run.get("ended_at"),
+            })
+        if len(runs) >= args.limit:
+            break
+    emit_success(args, {"runs": runs}, command="status.history")
+    return 0
+
+
+def command_status_tail(args: argparse.Namespace) -> int:
+    run_id = _status_get_run_id_or_error(args.id)
+    seen = 0
+    while True:
+        run = _status_load_run(run_id)
+        events = run.get("events") or []
+        if len(events) > seen:
+            for ev in events[seen:]:
+                print_json(ev, compact=True)
+            seen = len(events)
+        if not args.follow:
+            return 0
+        if run.get("state") in {"done", "cancelled", "error"}:
+            return 0
+        time.sleep(args.interval)
 
 
 def redact_config(config: dict[str, Any], *, show_token: bool = False) -> dict[str, Any]:
@@ -1004,6 +1909,1219 @@ def command_ping(args: argparse.Namespace) -> int:
     return 0
 
 
+# ============================================================================
+# keepalive — check the 4 processes the agent depends on, optionally try to
+# revive them. Intended to be called at the start of every long-running run
+# and (with --watch) as a background watchdog. See L0 in the UX plan.
+# ============================================================================
+
+KEEPALIVE_AUTOTERMUX_LAUNCH_INTENT = "android.intent.action.MAIN"
+
+
+def _keepalive_probe_termux() -> dict[str, Any]:
+    # If this script is running at all, the Termux process is alive. The check
+    # that actually matters is whether `$PREFIX` / TERMUX_VERSION are set,
+    # which guards against being invoked from `adb shell run-as` (which is
+    # NOT the same context — see CLAUDE.md "run-as ≠ Termux").
+    termux_version = os.environ.get("TERMUX_VERSION")
+    prefix = os.environ.get("PREFIX", "")
+    is_termux = bool(termux_version) and prefix.startswith("/data/data/com.termux/files/usr")
+    return {
+        "name": "termux",
+        "ok": is_termux,
+        "version": termux_version,
+        "prefix": prefix or None,
+        "hint": None if is_termux else (
+            "Not running in Termux app context. tp-android only works inside the Termux app "
+            "(not adb shell, not run-as)."
+        ),
+    }
+
+
+def _keepalive_probe_bridge(args: argparse.Namespace) -> dict[str, Any]:
+    config = load_runtime_config(args)
+    started = time.monotonic()
+    try:
+        result = bridge_call(config, "ping")
+        elapsed_ms = round((time.monotonic() - started) * 1000.0, 1)
+        return {"name": "autotermux_bridge", "ok": True, "latency_ms": elapsed_ms, "result": result}
+    except CliError as exc:
+        return {"name": "autotermux_bridge", "ok": False, "code": exc.code, "message": str(exc), "hint": exc.hint}
+
+
+def _keepalive_probe_a11y(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        state = portal_get("/state_full", args)
+        ready = isinstance(state, dict) and "a11y_tree" in state
+        return {
+            "name": "accessibility_service",
+            "ok": ready,
+            "hint": None if ready else ERROR_CODES["A11Y_DISABLED"]["hint"],
+        }
+    except CliError as exc:
+        return {
+            "name": "accessibility_service",
+            "ok": False,
+            "code": exc.code,
+            "message": str(exc),
+            "hint": exc.hint or ERROR_CODES["A11Y_DISABLED"]["hint"],
+        }
+
+
+def _keepalive_probe_notification_listener(args: argparse.Namespace) -> dict[str, Any]:
+    # Fold this into the existing permissions check. We do not fail keepalive
+    # when notification listener is off because many automations don't need it.
+    try:
+        perms = termux_api_call(args, "permissions-status", {})
+    except CliError as exc:
+        return {"name": "notification_listener", "ok": None, "message": f"unable to probe: {exc}"}
+    if not isinstance(perms, dict):
+        return {"name": "notification_listener", "ok": None, "message": "unexpected permissions payload"}
+    enabled = None
+    for key in ("notificationListener", "notification_listener", "notification-listener"):
+        if key in perms:
+            value = perms[key]
+            if isinstance(value, bool):
+                enabled = value
+                break
+            if isinstance(value, dict) and "enabled" in value:
+                enabled = bool(value["enabled"])
+                break
+    return {
+        "name": "notification_listener",
+        "ok": enabled if enabled is not None else None,
+        "hint": None if enabled else ERROR_CODES["NOTIF_LISTENER_DISABLED"]["hint"],
+    }
+
+
+def _keepalive_try_restart_autotermux(args: argparse.Namespace) -> dict[str, Any]:
+    """Best-effort nudge: ask Android to launch AutoTermux's main activity.
+
+    Won't help if the user has the OEM battery manager actively killing the
+    package — that's a manual whitelist step we cannot bypass.
+    """
+    try:
+        run_system_am([
+            "start",
+            "--user", config_android_user(load_runtime_config(args)),
+            "-a", KEEPALIVE_AUTOTERMUX_LAUNCH_INTENT,
+            "-n", f"{AUTOTERMUX_PACKAGE}/{AUTOTERMUX_PACKAGE}.ui.MainActivity",
+        ])
+        return {"action": "autotermux_launch", "ok": True}
+    except CliError as exc:
+        return {"action": "autotermux_launch", "ok": False, "error": str(exc)}
+
+
+def command_keepalive_ensure(args: argparse.Namespace) -> int:
+    components = [_keepalive_probe_termux()]
+    components.append(_keepalive_probe_bridge(args))
+
+    # Bridge has to be up before the others make sense.
+    bridge_ok = components[-1]["ok"]
+    if bridge_ok:
+        components.append(_keepalive_probe_a11y(args))
+        components.append(_keepalive_probe_notification_listener(args))
+    else:
+        components.append({"name": "accessibility_service", "ok": None, "message": "skipped — bridge down"})
+        components.append({"name": "notification_listener", "ok": None, "message": "skipped — bridge down"})
+
+    actions: list[dict[str, Any]] = []
+    if args.restart and not bridge_ok:
+        actions.append(_keepalive_try_restart_autotermux(args))
+        # Re-probe bridge briefly after nudge
+        for _ in range(int(max(1, args.restart_wait))):
+            time.sleep(1)
+            new_bridge = _keepalive_probe_bridge(args)
+            components[1] = new_bridge
+            if new_bridge["ok"]:
+                components[2] = _keepalive_probe_a11y(args)
+                components[3] = _keepalive_probe_notification_listener(args)
+                bridge_ok = True
+                break
+
+    critical_ok = all(
+        c["ok"] is True
+        for c in components
+        if c["name"] in {"termux", "autotermux_bridge", "accessibility_service"}
+    )
+
+    result: dict[str, Any] = {"ok": critical_ok, "components": components}
+    if actions:
+        result["actions"] = actions
+
+    emit_success(args, result, command="keepalive.ensure", meta={"ok": critical_ok})
+    return 0 if critical_ok else 1
+
+
+# ============================================================================
+# setup — first-time guided onboarding. Walks through the 7 things a fresh
+# install needs (companion, a11y, notification listener, overlay, app-perm,
+# termux properties, OEM battery whitelist), opening the right Settings page
+# for each and polling for it to flip to OK.
+# ============================================================================
+
+SETUP_STEPS = [
+    "termux",
+    "companion",
+    "accessibility",
+    "notification_listener",
+    "overlay",
+    "runtime_permissions",
+    "termux_properties",
+    "battery_whitelist",
+]
+
+# Settings intents used by the wizard. Many of these need `am start -a <action>`
+# rather than `am start -n <component>`, which is why we keep them as actions.
+_SETTINGS_ACTIONS: dict[str, dict[str, Any]] = {
+    "accessibility": {
+        "action": "android.settings.ACCESSIBILITY_SETTINGS",
+    },
+    "notification_listener": {
+        "action": "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS",
+    },
+    "overlay": {
+        "action": "android.settings.action.MANAGE_OVERLAY_PERMISSION",
+        "data": f"package:{AUTOTERMUX_PACKAGE}",
+    },
+    "app_details_autotermux": {
+        "action": "android.settings.APPLICATION_DETAILS_SETTINGS",
+        "data": f"package:{AUTOTERMUX_PACKAGE}",
+    },
+    "battery_optimization_autotermux": {
+        "action": "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "data": f"package:{AUTOTERMUX_PACKAGE}",
+    },
+}
+
+
+def _setup_open_settings(args: argparse.Namespace, key: str) -> None:
+    spec = _SETTINGS_ACTIONS.get(key)
+    if not spec:
+        return
+    cmd = [
+        "start",
+        "--user", config_android_user(load_runtime_config(args)),
+        "-a", spec["action"],
+    ]
+    if "data" in spec:
+        cmd.extend(["-d", spec["data"]])
+    cmd.extend(["--activity-clear-task", "--activity-new-task"])
+    try:
+        run_system_am(cmd)
+    except CliError:
+        # The settings intent may not be available on every OEM; the wizard
+        # still tells the user where to look manually.
+        pass
+
+
+def _setup_termux_properties_path() -> Path:
+    home = os.environ.get("HOME", "/data/data/com.termux/files/home")
+    return Path(home) / ".termux" / "termux.properties"
+
+
+def _setup_termux_properties_state() -> dict[str, Any]:
+    path = _setup_termux_properties_path()
+    if not path.exists():
+        return {"exists": False, "allow_external_apps": False, "path": str(path)}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"exists": True, "error": str(exc), "path": str(path)}
+    allow = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if stripped.lower().startswith("allow-external-apps") and "=" in stripped:
+            value = stripped.split("=", 1)[1].strip().lower()
+            allow = value in {"true", "1", "yes", "on"}
+            break
+    return {"exists": True, "allow_external_apps": allow, "path": str(path)}
+
+
+def _setup_fix_termux_properties(args: argparse.Namespace) -> dict[str, Any]:
+    path = _setup_termux_properties_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    new_lines = []
+    found = False
+    for line in existing.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            new_lines.append(line)
+            continue
+        if stripped.lower().startswith("allow-external-apps"):
+            new_lines.append("allow-external-apps=true")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append("allow-external-apps=true")
+    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    # Reload Termux settings if the binary is on PATH.
+    reload_output = None
+    reload_bin = Path("/data/data/com.termux/files/usr/bin/termux-reload-settings")
+    if reload_bin.exists():
+        try:
+            completed = subprocess.run([str(reload_bin)], capture_output=True, text=True, check=False)
+            reload_output = (completed.stdout or "") + (completed.stderr or "")
+        except OSError as exc:
+            reload_output = f"reload failed: {exc}"
+    return {"path": str(path), "allow_external_apps": True, "reload_output": reload_output}
+
+
+def _setup_companion_installed(args: argparse.Namespace) -> bool:
+    # Cheapest check: ask the bridge for ping. If it answers we know the
+    # package is installed AND the receiver is alive.
+    try:
+        bridge_call(load_runtime_config(args), "ping")
+        return True
+    except CliError:
+        pass
+    # Fallback: `pm path <pkg>` returns 0 only when installed.
+    pm_bin = Path("/system/bin/pm")
+    if pm_bin.exists():
+        try:
+            completed = subprocess.run([str(pm_bin), "path", AUTOTERMUX_PACKAGE], capture_output=True, text=True, check=False)
+            return completed.returncode == 0 and bool(completed.stdout.strip())
+        except OSError:
+            return False
+    return False
+
+
+def _setup_runtime_permissions_state(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        perms = termux_api_call(args, "permissions-status", {})
+    except CliError as exc:
+        return {"available": False, "error": str(exc)}
+    if not isinstance(perms, dict):
+        return {"available": False, "error": "unexpected permissions payload"}
+    return {"available": True, "raw": perms}
+
+
+def _setup_oem_brand() -> str:
+    getprop = Path("/system/bin/getprop")
+    if not getprop.exists():
+        return ""
+    try:
+        completed = subprocess.run([str(getprop), "ro.product.brand"], capture_output=True, text=True, check=False)
+        return (completed.stdout or "").strip().lower()
+    except OSError:
+        return ""
+
+
+def _setup_probe(args: argparse.Namespace, step: str) -> dict[str, Any]:
+    if step == "termux":
+        return _keepalive_probe_termux()
+    if step == "companion":
+        installed = _setup_companion_installed(args)
+        return {
+            "name": "companion",
+            "ok": installed,
+            "hint": None if installed else "Run: tp-android install-companion",
+        }
+    if step == "accessibility":
+        probe = _keepalive_probe_a11y(args)
+        return {"name": "accessibility", "ok": bool(probe.get("ok")), "hint": probe.get("hint")}
+    if step == "notification_listener":
+        probe = _keepalive_probe_notification_listener(args)
+        return {"name": "notification_listener", "ok": probe.get("ok") is True, "hint": probe.get("hint")}
+    if step == "overlay":
+        # Ask the companion: hud/show fails with OVERLAY_BLOCKED when
+        # Settings.canDrawOverlays() is false. Cheap, definitive, no UI side-effects
+        # (we immediately hide if it succeeded).
+        try:
+            bridge_call(load_runtime_config(args), "hud/show")
+            try:
+                bridge_call(load_runtime_config(args), "hud/hide")
+            except CliError:
+                pass
+            return {"name": "overlay", "ok": True, "hint": None}
+        except CliError as exc:
+            if exc.code in {"PERMISSION_MISSING", "OVERLAY_BLOCKED"} or "OVERLAY_BLOCKED" in str(exc):
+                return {"name": "overlay", "ok": False, "hint": "Settings → Apps → AutoTermux → Display over other apps"}
+            # Bridge down or unrelated error — keep ambiguous.
+            return {"name": "overlay", "ok": None, "hint": f"Could not probe: {exc}"}
+    if step == "runtime_permissions":
+        state = _setup_runtime_permissions_state(args)
+        if not state.get("available"):
+            return {"name": "runtime_permissions", "ok": None, "hint": state.get("error")}
+        raw = state.get("raw", {})
+        # Roll up whichever permission keys exist into a single ok-flag.
+        critical = ["sms", "contacts", "callLog", "phone", "storage"]
+        missing = []
+        for key in critical:
+            value = raw.get(key) if isinstance(raw, dict) else None
+            if isinstance(value, dict):
+                value = value.get("granted")
+            if value is False:
+                missing.append(key)
+        return {
+            "name": "runtime_permissions",
+            "ok": not missing,
+            "missing": missing,
+            "hint": None if not missing else f"Grant: {', '.join(missing)} (Settings → Apps → AutoTermux → Permissions)",
+        }
+    if step == "termux_properties":
+        state = _setup_termux_properties_state()
+        ok = bool(state.get("allow_external_apps"))
+        return {
+            "name": "termux_properties",
+            "ok": ok,
+            "hint": None if ok else f"Add allow-external-apps=true to {state.get('path')}",
+            "path": state.get("path"),
+        }
+    if step == "battery_whitelist":
+        brand = _setup_oem_brand()
+        # We cannot probe whitelist status reliably without a system permission;
+        # we return ok=None and rely on the user to confirm after we open the
+        # battery-optimization settings page.
+        return {
+            "name": "battery_whitelist",
+            "ok": None,
+            "brand": brand or None,
+            "hint": "Confirm both Termux and AutoTermux are exempt from battery optimization on this OEM",
+        }
+    return {"name": step, "ok": None, "hint": f"Unknown step: {step}"}
+
+
+def _setup_print(msg: str) -> None:
+    sys.stderr.write(msg)
+    sys.stderr.flush()
+
+
+def _setup_run_step(args: argparse.Namespace, step: str) -> dict[str, Any]:
+    initial = _setup_probe(args, step)
+    if initial.get("ok") is True:
+        if not args.headless:
+            _setup_print(f"  ✓ {step}: ok\n")
+        return {"step": step, "state": "ok", "probe": initial}
+
+    if args.check:
+        probe_ok = initial.get("ok")
+        if probe_ok is None:
+            check_state = "unknown"
+            symbol = "?"
+        else:
+            check_state = "not_ready"
+            symbol = "✗"
+        if not args.headless:
+            _setup_print(f"  {symbol} {step}: {check_state} — {initial.get('hint') or 'see plan'}\n")
+        return {"step": step, "state": check_state, "probe": initial}
+
+    # Try to nudge in-place fixes first.
+    nudged: dict[str, Any] | None = None
+    if step == "companion":
+        # Inline broadcast (don't recurse into command_install_companion which
+        # would emit its own envelope on stdout and pollute our final report).
+        try:
+            run_system_am([
+                "broadcast",
+                "--user", config_android_user(load_runtime_config(args)),
+                "--receiver-foreground",
+                "-a", AUTOTERMUX_INSTALL_ACTION,
+                "-n", AUTOTERMUX_INSTALL_RECEIVER,
+            ])
+            nudged = {"action": "install-companion"}
+        except CliError as exc:
+            nudged = {"action": "install-companion", "ok": False, "error": str(exc)}
+    elif step == "termux_properties":
+        nudged = {"action": "edit-termux.properties", "result": _setup_fix_termux_properties(args)}
+    elif step == "accessibility":
+        _setup_open_settings(args, "accessibility")
+        nudged = {"action": "open-settings:accessibility"}
+    elif step == "notification_listener":
+        _setup_open_settings(args, "notification_listener")
+        nudged = {"action": "open-settings:notification_listener"}
+    elif step == "overlay":
+        _setup_open_settings(args, "overlay")
+        nudged = {"action": "open-settings:overlay"}
+    elif step == "runtime_permissions":
+        _setup_open_settings(args, "app_details_autotermux")
+        nudged = {"action": "open-settings:app_details"}
+    elif step == "battery_whitelist":
+        _setup_open_settings(args, "battery_optimization_autotermux")
+        nudged = {"action": "open-settings:battery_optimization"}
+
+    if not args.headless:
+        _setup_print(f"  … {step}: {initial.get('hint') or 'needs your attention'}\n")
+        if nudged and "open-settings" in (nudged.get("action") or ""):
+            _setup_print("     opened the relevant Settings page. Tap the toggle, then return here.\n")
+
+    # Poll until OK or timeout — non-block-able steps (overlay / battery /
+    # runtime perms when we can't probe) require an explicit confirmation.
+    deadline = time.monotonic() + args.poll_timeout
+    final = initial
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        final = _setup_probe(args, step)
+        if final.get("ok") is True:
+            break
+        if final.get("ok") is None and not args.headless and sys.stdin.isatty() and step in {"overlay", "runtime_permissions", "battery_whitelist"}:
+            _setup_print(f"     press ENTER once you've confirmed {step}, or type 'skip' to continue: ")
+            try:
+                line = sys.stdin.readline().strip().lower()
+            except KeyboardInterrupt:
+                return {"step": step, "state": "interrupted", "probe": final, "nudge": nudged}
+            if line == "skip":
+                return {"step": step, "state": "skipped", "probe": final, "nudge": nudged}
+            # treat blank line as "I did it, re-probe"
+            final = _setup_probe(args, step)
+            if final.get("ok") is not False:
+                break
+
+    state = "ok" if final.get("ok") is True else ("skipped" if final.get("ok") is None else "not_ready")
+    return {"step": step, "state": state, "probe": final, "nudge": nudged}
+
+
+def command_setup(args: argparse.Namespace) -> int:
+    if args.resume and args.resume not in SETUP_STEPS:
+        raise CliError(
+            f"Unknown --resume step: {args.resume}. Valid: {', '.join(SETUP_STEPS)}",
+            code="CLI_ERROR",
+        )
+
+    steps_to_run = SETUP_STEPS
+    if args.resume:
+        idx = SETUP_STEPS.index(args.resume)
+        steps_to_run = SETUP_STEPS[idx:]
+
+    if not args.headless:
+        _setup_print(f"\ntp-android setup — checking {len(steps_to_run)} prerequisites\n")
+
+    results = []
+    all_ok = True
+    OK_STATES = {"ok", "skipped", "unknown"}
+    for step in steps_to_run:
+        result = _setup_run_step(args, step)
+        results.append(result)
+        if result["state"] not in OK_STATES:
+            all_ok = False
+            if not args.continue_on_error:
+                break
+
+    if not args.headless:
+        _setup_print("\n")
+
+    emit_success(
+        args,
+        {
+            "ok": all_ok,
+            "steps": results,
+            "resume_hint": (
+                None
+                if all_ok
+                else f"tp-android setup --resume {next((r['step'] for r in results if r['state'] not in {'ok', 'skipped'}), '')}".strip()
+            ),
+        },
+        command="setup",
+        meta={"ok": all_ok},
+    )
+    return 0 if all_ok else 1
+
+
+# ============================================================================
+# batch — run a JSONL stream of tp-android commands in a single Python process
+# so we pay the import / startup cost once. Each line is `{"op":"sub.command",
+# "args":{...}}` and is dispatched through the same argparse tree as the CLI.
+# Templates (`{{var}}`) are expanded against --vars before execution.
+# ============================================================================
+
+def _batch_render(value: Any, vars_map: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        out = value
+        for k, v in vars_map.items():
+            out = out.replace("{{" + k + "}}", v)
+        return out
+    if isinstance(value, list):
+        return [_batch_render(v, vars_map) for v in value]
+    if isinstance(value, dict):
+        return {k: _batch_render(v, vars_map) for k, v in value.items()}
+    return value
+
+
+def _batch_op_to_argv(op: str, op_args: dict[str, Any]) -> list[str]:
+    """Translate {op:"ui.click", args:{text:"x"}} → ["ui", "click", "--text", "x"]."""
+    argv = op.split(".")
+    for key, value in (op_args or {}).items():
+        if value is None or value is False:
+            continue
+        flag = "--" + key.replace("_", "-")
+        if value is True:
+            argv.append(flag)
+            continue
+        if isinstance(value, list):
+            for item in value:
+                argv.extend([flag, str(item)])
+        else:
+            argv.extend([flag, str(value)])
+    return argv
+
+
+# ============================================================================
+# daemon — keep a Python process resident, dispatch argv over a Unix socket.
+# Cuts per-call latency from ~300ms (Python startup) to <10ms (socket RTT).
+# When TP_DAEMON_SOCK exists, the regular CLI auto-forwards there in main().
+# ============================================================================
+
+DEFAULT_DAEMON_SOCKET = Path(
+    os.environ.get("TP_DAEMON_SOCK")
+    or (Path(os.environ.get("HOME", "/data/data/com.termux/files/home")) / ".termuxplus" / "tp.sock")
+)
+
+
+def _daemon_recv_message(conn: socket.socket) -> dict[str, Any] | None:
+    """Read a length-prefixed JSON message; returns None on closed connection."""
+    header = b""
+    while len(header) < 4:
+        chunk = conn.recv(4 - len(header))
+        if not chunk:
+            return None
+        header += chunk
+    size = struct.unpack(">I", header)[0]
+    if size > 16 * 1024 * 1024:
+        raise ValueError(f"daemon message too large: {size}")
+    body = b""
+    while len(body) < size:
+        chunk = conn.recv(size - len(body))
+        if not chunk:
+            return None
+        body += chunk
+    return json.loads(body.decode("utf-8"))
+
+
+def _daemon_send_message(conn: socket.socket, payload: dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    conn.sendall(struct.pack(">I", len(body)) + body)
+
+
+def _daemon_dispatch_in_process(argv: list[str]) -> dict[str, Any]:
+    """Run a single argv list through the parser inside this process."""
+    import io
+    parser = build_parser()
+    stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
+    saved_out, saved_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = stdout_buf, stderr_buf
+    exit_code = 0
+    try:
+        sub_args = parser.parse_args(argv)
+        configure_runtime(sub_args)
+        exit_code = sub_args.func(sub_args)
+    except SystemExit as exc:
+        exit_code = int(exc.code) if isinstance(exc.code, int) else 1
+    except CliError as exc:
+        emit_error(str(exc), None, code=exc.code, hint=exc.hint, recoverable=exc.recoverable, details=exc.details)
+        exit_code = 1
+    except Exception as exc:
+        emit_error(f"daemon dispatch error: {exc}", None, code="CLI_ERROR")
+        exit_code = 1
+    finally:
+        sys.stdout, sys.stderr = saved_out, saved_err
+    return {
+        "exit_code": exit_code,
+        "stdout": stdout_buf.getvalue(),
+        "stderr": stderr_buf.getvalue(),
+    }
+
+
+def _daemon_run_server(socket_path: Path, *, silent: bool = False) -> int:
+    if socket_path.exists():
+        # Stale socket? Check if anyone listens.
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(0.5)
+        try:
+            probe.connect(str(socket_path))
+            probe.close()
+            raise CliError(f"daemon already running at {socket_path}", code="CLI_ERROR")
+        except OSError:
+            try:
+                socket_path.unlink()
+            except OSError:
+                pass
+
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(socket_path))
+    os.chmod(str(socket_path), 0o600)
+    srv.listen(8)
+
+    pid_file = socket_path.with_suffix(socket_path.suffix + ".pid")
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+
+    if not silent:
+        sys.stderr.write(f"tp-android daemon listening at {socket_path} (pid={os.getpid()})\n")
+        sys.stderr.flush()
+
+    stop_requested = False
+    while not stop_requested:
+        try:
+            conn, _addr = srv.accept()
+        except KeyboardInterrupt:
+            break
+        try:
+            msg = _daemon_recv_message(conn)
+            if msg is None:
+                conn.close()
+                continue
+            if msg.get("op") == "shutdown":
+                _daemon_send_message(conn, {"ok": True, "shutting_down": True})
+                conn.close()
+                stop_requested = True
+                break
+            if msg.get("op") == "ping":
+                _daemon_send_message(conn, {"ok": True, "pid": os.getpid()})
+                conn.close()
+                continue
+            argv = msg.get("argv") or []
+            env = msg.get("env") or {}
+            saved_env = {k: os.environ.get(k) for k in env.keys()}
+            for k, v in env.items():
+                os.environ[k] = str(v)
+            try:
+                result = _daemon_dispatch_in_process(list(argv))
+            finally:
+                for k, v in saved_env.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+            _daemon_send_message(conn, result)
+        except Exception as exc:
+            try:
+                _daemon_send_message(conn, {"exit_code": 1, "stderr": f"daemon error: {exc}\n", "stdout": ""})
+            except OSError:
+                pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    try:
+        srv.close()
+    finally:
+        try:
+            socket_path.unlink()
+        except OSError:
+            pass
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+    return 0
+
+
+def _daemon_send(socket_path: Path, message: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    sock.connect(str(socket_path))
+    try:
+        _daemon_send_message(sock, message)
+        response = _daemon_recv_message(sock)
+        if response is None:
+            raise CliError("daemon closed connection without responding", code="BRIDGE_PARSE_FAILED")
+        return response
+    finally:
+        sock.close()
+
+
+def command_daemon_start(args: argparse.Namespace) -> int:
+    socket_path = Path(args.socket) if args.socket else DEFAULT_DAEMON_SOCKET
+    if args.foreground:
+        return _daemon_run_server(socket_path)
+    pid = os.fork()
+    if pid == 0:
+        # Child: fully detach. Must close stderr too — otherwise the parent
+        # shell's `cmd 2>&1 | tee log` pipeline keeps the read side open
+        # waiting for the child's stderr to close, hanging indefinitely.
+        os.setsid()
+        devnull_in = os.open(os.devnull, os.O_RDONLY)
+        devnull_out = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_in, 0)
+        os.dup2(devnull_out, 1)
+        os.dup2(devnull_out, 2)
+        sys.stdin = os.fdopen(0, "r")
+        sys.stdout = os.fdopen(1, "w")
+        sys.stderr = os.fdopen(2, "w")
+        try:
+            _daemon_run_server(socket_path, silent=True)
+        except Exception:
+            pass
+        os._exit(0)
+    # Parent: wait briefly for socket file to appear before emitting envelope
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not socket_path.exists():
+        time.sleep(0.1)
+    emit_success(
+        args,
+        {"socket": str(socket_path), "pid": pid, "started": socket_path.exists()},
+        command="daemon.start",
+    )
+    return 0
+
+
+def command_daemon_stop(args: argparse.Namespace) -> int:
+    socket_path = Path(args.socket) if args.socket else DEFAULT_DAEMON_SOCKET
+    if not socket_path.exists():
+        emit_success(args, {"socket": str(socket_path), "status": "not_running"}, command="daemon.stop")
+        return 0
+    try:
+        result = _daemon_send(socket_path, {"op": "shutdown"})
+    except (OSError, CliError) as exc:
+        # Stale socket — clean up
+        try:
+            socket_path.unlink()
+        except OSError:
+            pass
+        emit_success(args, {"socket": str(socket_path), "status": "stale_cleaned", "error": str(exc)}, command="daemon.stop")
+        return 0
+    emit_success(args, {"socket": str(socket_path), "status": "stopped", "result": result}, command="daemon.stop")
+    return 0
+
+
+def command_daemon_status(args: argparse.Namespace) -> int:
+    socket_path = Path(args.socket) if args.socket else DEFAULT_DAEMON_SOCKET
+    if not socket_path.exists():
+        emit_success(args, {"socket": str(socket_path), "running": False}, command="daemon.status")
+        return 0
+    try:
+        result = _daemon_send(socket_path, {"op": "ping"}, timeout=2.0)
+        emit_success(args, {"socket": str(socket_path), "running": True, "pong": result}, command="daemon.status")
+        return 0
+    except (OSError, CliError) as exc:
+        emit_success(args, {"socket": str(socket_path), "running": False, "error": str(exc)}, command="daemon.status")
+        return 1
+
+
+def _maybe_forward_to_daemon(argv: list[str]) -> int | None:
+    """Auto-forward to a running daemon. Returns exit code if forwarded, else None.
+
+    Skipped for argv that touch the daemon itself, and for batch (which already
+    runs everything in a single process).
+    """
+    if not argv:
+        return None
+    if os.environ.get("TP_NO_DAEMON") in {"1", "true", "yes", "on"}:
+        return None
+    first = argv[0]
+    if first in {"daemon", "batch"}:
+        return None
+    if "--no-daemon" in argv:
+        return None
+    socket_env = os.environ.get("TP_DAEMON_SOCK")
+    socket_path = Path(socket_env) if socket_env else DEFAULT_DAEMON_SOCKET
+    if not socket_path.exists():
+        return None
+    try:
+        result = _daemon_send(
+            socket_path,
+            {"argv": argv, "env": {k: v for k, v in os.environ.items() if k.startswith("TP_") or k in {"HOME", "PREFIX"}}},
+        )
+    except (OSError, CliError):
+        return None
+    sys.stdout.write(result.get("stdout") or "")
+    sys.stderr.write(result.get("stderr") or "")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    return int(result.get("exit_code") or 0)
+
+
+def command_batch(args: argparse.Namespace) -> int:
+    vars_map: dict[str, str] = {}
+    for kv in args.vars or []:
+        if "=" not in kv:
+            raise CliError(f"--vars must be KEY=VALUE, got {kv!r}", code="CLI_ERROR")
+        k, v = kv.split("=", 1)
+        vars_map[k] = v
+
+    source: Any
+    if args.script and args.script != "-":
+        source = open(args.script, "r", encoding="utf-8")
+    else:
+        source = sys.stdin
+
+    parser = build_parser()
+    results: list[dict[str, Any]] = []
+    exit_code = 0
+
+    try:
+        for line_no, raw_line in enumerate(source, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                op_obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                payload = {"line": line_no, "ok": False, "error": f"JSON parse: {exc}"}
+                results.append(payload)
+                if args.on_error == "abort":
+                    exit_code = 1
+                    break
+                if args.on_error == "stop":
+                    exit_code = 1
+                    break
+                continue
+
+            if not isinstance(op_obj, dict) or "op" not in op_obj:
+                results.append({"line": line_no, "ok": False, "error": "expected {op: ..., args: {...}}"})
+                if args.on_error in {"stop", "abort"}:
+                    exit_code = 1
+                    break
+                continue
+
+            op = op_obj["op"]
+            op_args = _batch_render(op_obj.get("args") or {}, vars_map)
+            argv = _batch_op_to_argv(op, op_args)
+
+            # Capture stdout/stderr per op so the outer JSONL stream stays clean.
+            import io
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            saved_stdout, saved_stderr = sys.stdout, sys.stderr
+            sys.stdout = stdout_buf
+            sys.stderr = stderr_buf
+            op_exit = 0
+            try:
+                sub_args = parser.parse_args(argv)
+                configure_runtime(sub_args)
+                op_exit = sub_args.func(sub_args)
+            except SystemExit as se:
+                op_exit = int(se.code) if isinstance(se.code, int) else 1
+            except CliError as exc:
+                emit_error(str(exc), sub_args if 'sub_args' in dir() else None,
+                          code=exc.code, hint=exc.hint, recoverable=exc.recoverable, details=exc.details)
+                op_exit = 1
+            except Exception as exc:
+                emit_error(f"batch op {op} unexpected: {exc}", None, code="CLI_ERROR")
+                op_exit = 1
+            finally:
+                sys.stdout = saved_stdout
+                sys.stderr = saved_stderr
+
+            envelope_stdout = stdout_buf.getvalue().strip()
+            envelope_stderr = stderr_buf.getvalue().strip()
+            parsed_envelope: Any = None
+            for blob in (envelope_stdout, envelope_stderr):
+                if not blob:
+                    continue
+                try:
+                    parsed_envelope = json.loads(blob.splitlines()[0])
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+            results.append({
+                "line": line_no,
+                "op": op,
+                "ok": op_exit == 0,
+                "exit_code": op_exit,
+                "envelope": parsed_envelope,
+                "stdout": envelope_stdout if parsed_envelope is None else None,
+                "stderr": envelope_stderr if parsed_envelope is None else None,
+            })
+
+            # Stream results immediately so observers can follow progress.
+            print_json(results[-1], compact=True)
+
+            if op_exit != 0:
+                if args.on_error == "abort":
+                    exit_code = op_exit
+                    break
+                if args.on_error == "stop":
+                    exit_code = op_exit
+                    break
+                # continue: keep going
+    finally:
+        if source is not sys.stdin:
+            source.close()
+
+    summary = {
+        "ok": exit_code == 0,
+        "ran": len(results),
+        "failed": sum(1 for r in results if not r.get("ok")),
+        "on_error": args.on_error,
+    }
+    emit_success(args, summary, command="batch", meta={"ok": summary["ok"]})
+    return exit_code
+
+
+# ============================================================================
+# exec-script — a tiny declarative DSL on top of the CLI. Each step is one of
+# {find_click, click_idx, wait, type, key, scroll, intervene, sleep, done}.
+# Designed so an LLM can emit a sequence as a single artifact instead of N
+# separate shell invocations. Steps execute in-process (so we get the daemon
+# speed-up for free if the daemon is running).
+# ============================================================================
+
+EXEC_SCRIPT_KINDS = {"find_click", "click_idx", "wait", "type", "key", "scroll", "intervene", "ask_input", "confirm", "sleep", "screenshot", "done"}
+
+
+def _exec_script_load(path: str) -> list[dict[str, Any]]:
+    if path == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(path).read_text(encoding="utf-8")
+    raw = raw.strip()
+    if not raw:
+        return []
+    # Try YAML first if pyyaml is installed, else JSON.
+    try:
+        import yaml  # type: ignore
+        parsed = yaml.safe_load(raw)
+    except ImportError:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                f"exec-script needs YAML or JSON. JSON parse failed: {exc}",
+                code="CLI_ERROR",
+                hint="pip install pyyaml for YAML support, or pass a JSON array",
+            ) from exc
+    except Exception as exc:
+        raise CliError(f"exec-script parse failed: {exc}", code="CLI_ERROR") from exc
+
+    if not isinstance(parsed, list):
+        raise CliError("exec-script must be a list of step objects", code="CLI_ERROR")
+    return parsed
+
+
+def _exec_step_to_argv(step: dict[str, Any]) -> list[str]:
+    kind = step.get("kind") or step.get("op")
+    if kind not in EXEC_SCRIPT_KINDS:
+        raise CliError(f"Unknown exec-script step kind: {kind!r}; expected one of {sorted(EXEC_SCRIPT_KINDS)}", code="CLI_ERROR")
+
+    if kind == "find_click":
+        argv = ["ui", "click"]
+        for key in ("text", "text-contains", "desc", "desc-contains", "resource-id", "class-name"):
+            v = step.get(key) or step.get(key.replace("-", "_"))
+            if v is not None:
+                argv.extend([f"--{key}", str(v)])
+        if step.get("package"):
+            argv.extend(["--package", step["package"]])
+        if step.get("expect_text") or step.get("expect-text"):
+            argv.extend(["--expect-text", str(step.get("expect_text") or step.get("expect-text"))])
+        if step.get("verify_timeout") or step.get("verify-timeout"):
+            argv.extend(["--verify-timeout", str(step.get("verify_timeout") or step.get("verify-timeout"))])
+        return argv
+    if kind == "click_idx":
+        return ["ui", "click", "--idx", str(step["idx"])]
+    if kind == "wait":
+        argv = ["ui", "wait"]
+        for key in ("text", "text-contains", "package"):
+            v = step.get(key) or step.get(key.replace("-", "_"))
+            if v is not None:
+                argv.extend([f"--{key}", str(v)])
+        if step.get("gone"):
+            argv.append("--gone")
+        if step.get("change"):
+            argv.append("--change")
+        if step.get("tree_changed") or step.get("tree-changed"):
+            argv.append("--tree-changed")
+        if step.get("keyboard"):
+            argv.extend(["--keyboard", str(step["keyboard"])])
+        if step.get("timeout"):
+            argv.extend(["--wait-timeout", str(step["timeout"])])
+        return argv
+    if kind == "type":
+        argv = ["input", "text"]
+        if step.get("clear"):
+            argv.append("--clear")
+        argv.append(str(step.get("text", "")))
+        return argv
+    if kind == "key":
+        return ["input", "key", str(step["name"])]
+    if kind == "scroll":
+        argv = ["ui", "action", "scroll-forward" if step.get("direction", "forward") == "forward" else "scroll-backward"]
+        if step.get("package"):
+            argv.extend(["--package", step["package"]])
+        if step.get("scrollable"):
+            argv.append("--scrollable")
+        return argv
+    if kind == "intervene":
+        argv = ["status", "intervene", "--reason", str(step.get("reason", "needs human"))]
+        if step.get("choices"):
+            choices = step["choices"]
+            if isinstance(choices, list):
+                choices = ",".join(str(c) for c in choices)
+            argv.extend(["--choices", str(choices)])
+        if step.get("timeout"):
+            argv.extend(["--wait-timeout", str(step["timeout"])])
+        return argv
+    if kind == "ask_input":
+        argv = ["status", "ask-input", "--prompt", str(step.get("prompt", "input?"))]
+        if step.get("kind_input"):
+            argv.extend(["--kind", str(step["kind_input"])])
+        if step.get("timeout"):
+            argv.extend(["--wait-timeout", str(step["timeout"])])
+        return argv
+    if kind == "confirm":
+        argv = ["status", "confirm", "--prompt", str(step.get("prompt", "confirm?"))]
+        if step.get("timeout"):
+            argv.extend(["--wait-timeout", str(step["timeout"])])
+        return argv
+    if kind == "sleep":
+        # Implemented inline (no subcommand to dispatch).
+        time.sleep(float(step.get("seconds", 0.5)))
+        return []
+    if kind == "screenshot":
+        argv = ["ui", "screenshot", "-o", str(step.get("output", "/sdcard/Download/screen.png"))]
+        if step.get("annotate"):
+            argv.extend(["--annotate", str(step["annotate"])])
+        return argv
+    if kind == "done":
+        return ["status", "finish", "--state", str(step.get("state", "success"))]
+    return []
+
+
+def command_exec_script(args: argparse.Namespace) -> int:
+    steps = _exec_script_load(args.script)
+    if not steps:
+        emit_success(args, {"ran": 0, "ok": True}, command="exec-script")
+        return 0
+
+    vars_map: dict[str, str] = {}
+    for kv in args.vars or []:
+        if "=" not in kv:
+            raise CliError(f"--vars must be KEY=VALUE, got {kv!r}", code="CLI_ERROR")
+        k, v = kv.split("=", 1)
+        vars_map[k] = v
+
+    # Auto-wrap with status if --task is set
+    auto_wrap = bool(args.task)
+    run_id: str | None = None
+    if auto_wrap:
+        wrap_args = ["status", "start", "--task", args.task, "--total-steps", str(len([s for s in steps if (s.get("kind") or s.get("op")) != "sleep"]))]
+        if args.notify:
+            wrap_args.append("--notify")
+        if args.hud:
+            wrap_args.append("--hud")
+        result = _daemon_dispatch_in_process(wrap_args)
+        envelope = _exec_parse_envelope(result.get("stdout") or "")
+        if isinstance(envelope, dict) and isinstance(envelope.get("result"), dict):
+            run_id = envelope["result"].get("run_id")
+
+    ok = True
+    ran = 0
+    failed_step: dict[str, Any] | None = None
+    for index, raw_step in enumerate(steps, start=1):
+        if not isinstance(raw_step, dict):
+            continue
+        step = _batch_render(raw_step, vars_map)
+        if auto_wrap and (step.get("kind") or step.get("op")) != "done":
+            _daemon_dispatch_in_process([
+                "status", "step",
+                "--step", str(index),
+                "--label", str(step.get("label") or step.get("kind") or "step"),
+                "--state", "running",
+            ])
+        argv = _exec_step_to_argv(step)
+        if not argv:
+            ran += 1
+            continue
+        result = _daemon_dispatch_in_process(argv)
+        sys.stdout.write(result.get("stdout") or "")
+        sys.stderr.write(result.get("stderr") or "")
+        ran += 1
+        if result.get("exit_code", 0) != 0:
+            ok = False
+            failed_step = {"index": index, "step": step, "result": result}
+            if args.on_error == "stop":
+                break
+
+    if auto_wrap:
+        finish_state = "success" if ok else "error"
+        _daemon_dispatch_in_process(["status", "finish", "--state", finish_state])
+
+    emit_success(
+        args,
+        {"ok": ok, "ran": ran, "total": len(steps), "run_id": run_id, "failed_step": failed_step},
+        command="exec-script",
+        meta={"ok": ok},
+    )
+    return 0 if ok else 1
+
+
+def _exec_parse_envelope(stdout: str) -> Any:
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def command_hud_show(args: argparse.Namespace) -> int:
+    result = bridge_call(load_runtime_config(args), "hud/show")
+    emit_success(args, result, command="hud.show")
+    return 0
+
+
+def command_hud_hide(args: argparse.Namespace) -> int:
+    result = bridge_call(load_runtime_config(args), "hud/hide")
+    emit_success(args, result, command="hud.hide")
+    return 0
+
+
+def command_hud_update(args: argparse.Namespace) -> int:
+    payload: dict[str, Any] = {}
+    if args.run_id:
+        payload["run_id"] = args.run_id
+    if args.task:
+        payload["task"] = args.task
+    if args.step is not None:
+        payload["step"] = args.step
+    if args.total_steps is not None:
+        payload["total_steps"] = args.total_steps
+    if args.step_label:
+        payload["step_label"] = args.step_label
+    if args.percent is not None:
+        payload["percent"] = args.percent
+    if args.state:
+        payload["state"] = args.state
+    if args.pending_prompt:
+        payload["pending_prompt"] = args.pending_prompt
+    result = bridge_call(load_runtime_config(args), "hud/update", payload)
+    emit_success(args, result, command="hud.update")
+    return 0
+
+
+def command_hud_state(args: argparse.Namespace) -> int:
+    result = bridge_call(load_runtime_config(args), "hud/state")
+    emit_success(args, result, command="hud.state")
+    return 0
+
+
+def command_keepalive_watch(args: argparse.Namespace) -> int:
+    interval = max(5.0, float(args.interval))
+    while True:
+        components = [_keepalive_probe_termux(), _keepalive_probe_bridge(args)]
+        if components[-1]["ok"]:
+            components.append(_keepalive_probe_a11y(args))
+            components.append(_keepalive_probe_notification_listener(args))
+        critical_ok = all(
+            c["ok"] is True
+            for c in components
+            if c["name"] in {"termux", "autotermux_bridge", "accessibility_service"}
+        )
+        print_json({"ok": critical_ok, "at": _status_now_ms(), "components": components}, compact=True)
+        if not critical_ok and args.notify_run:
+            try:
+                run = _status_load_run(args.notify_run)
+                _status_append_event(
+                    run,
+                    "keepalive_degraded",
+                    components=[c for c in components if c["ok"] is not True],
+                )
+                _status_save_run(run)
+            except CliError:
+                pass
+        time.sleep(interval)
+
+
 def command_version_info(args: argparse.Namespace) -> int:
     emit_success(args, portal_get("/version", args), command=getattr(args, "command_path", "version"))
     return 0
@@ -1126,6 +3244,164 @@ def command_ui_tree(args: argparse.Namespace) -> int:
     return 0
 
 
+UI_DIGEST_CACHE_PATH = Path(
+    os.environ.get("TP_UI_DIGEST_CACHE")
+    or (Path(os.environ.get("HOME", "/data/data/com.termux/files/home")) / ".termuxplus" / "ui-digest.json")
+)
+
+
+def _ui_digest_collect(node: Any, depth: int = 0, out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Walk an a11y tree and collect interactive nodes in traversal order.
+
+    Each emitted entry: {idx, text, hint, bounds, actions, class, package, depth, resource}.
+    Only keeps nodes where the user can do something (click/long-click/scroll/edit).
+    """
+    if out is None:
+        out = []
+    if not isinstance(node, dict):
+        return out
+
+    clickable = bool(node.get("clickable") or node.get("isClickable"))
+    long_clickable = bool(node.get("longClickable") or node.get("isLongClickable"))
+    scrollable = bool(node.get("scrollable") or node.get("isScrollable"))
+    editable = bool(node.get("editable") or node.get("isEditable"))
+    focusable = bool(node.get("focusable") or node.get("isFocusable"))
+    focused = bool(node.get("focused") or node.get("isFocused"))
+
+    is_interactive = clickable or long_clickable or scrollable or editable or (focusable and focused)
+    text = (node.get("text") or "").strip() if isinstance(node.get("text"), str) else ""
+    desc = (node.get("contentDescription") or node.get("contentDesc") or "").strip() if isinstance(node.get("contentDescription") or node.get("contentDesc"), str) else ""
+    hint = (node.get("hintText") or node.get("hint") or "").strip() if isinstance(node.get("hintText") or node.get("hint"), str) else ""
+
+    # We also keep nodes with non-empty text/desc even if not interactive — they
+    # provide reading-anchor for the agent. Cap below to avoid bloat.
+    has_label = bool(text or desc or hint)
+
+    if is_interactive or (has_label and depth <= 6):
+        actions: list[str] = []
+        if clickable:
+            actions.append("click")
+        if long_clickable:
+            actions.append("long-click")
+        if scrollable:
+            actions.append("scroll")
+        if editable:
+            actions.append("set-text")
+        bounds = node.get("bounds")
+        bounds_str: str | None = None
+        if isinstance(bounds, dict):
+            try:
+                bounds_str = f"{int(bounds['left'])},{int(bounds['top'])},{int(bounds['right'])},{int(bounds['bottom'])}"
+            except (KeyError, TypeError, ValueError):
+                bounds_str = None
+        elif isinstance(bounds, str):
+            bounds_str = bounds
+
+        entry: dict[str, Any] = {
+            "idx": len(out),
+            "text": text or None,
+            "desc": desc or None,
+            "hint": hint or None,
+            "bounds": bounds_str,
+            "actions": actions,
+            "class": node.get("className") or node.get("class"),
+            "package": node.get("packageName") or node.get("package"),
+            "depth": depth,
+            "resource": node.get("resourceName") or node.get("viewIdResourceName") or node.get("resource"),
+            "focused": focused or None,
+        }
+        # Drop None fields for compactness
+        out.append({k: v for k, v in entry.items() if v not in (None, "", [], {})})
+
+    children = node.get("children") or node.get("childNodes") or []
+    if isinstance(children, list):
+        for child in children:
+            _ui_digest_collect(child, depth + 1, out)
+    return out
+
+
+def _ui_digest_write_cache(digest: dict[str, Any]) -> None:
+    UI_DIGEST_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = UI_DIGEST_CACHE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(digest, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, UI_DIGEST_CACHE_PATH)
+
+
+def _ui_digest_read_cache() -> dict[str, Any] | None:
+    try:
+        return json.loads(UI_DIGEST_CACHE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def command_ui_digest(args: argparse.Namespace) -> int:
+    payload = scoped_ui_payload(args, {"filter": True})
+    raw = portal_post("/a11y_tree_full", args, payload)
+    # Server may return tree as either dict (root node) or string (JSON-encoded).
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raise CliError("Unexpected ui digest tree shape (string not JSON)", code="BRIDGE_PARSE_FAILED")
+    if isinstance(raw, list):
+        # Some endpoints return an array of root nodes (windows)
+        nodes: list[dict[str, Any]] = []
+        for root in raw:
+            _ui_digest_collect(root, 0, nodes)
+    elif isinstance(raw, dict):
+        nodes = _ui_digest_collect(raw, 0, [])
+    else:
+        raise CliError("Unexpected ui digest tree shape", code="BRIDGE_PARSE_FAILED")
+
+    # Re-index after filtering to keep idx contiguous and stable.
+    if args.only_clickable:
+        nodes = [n for n in nodes if any(a in {"click", "long-click"} for a in n.get("actions", []))]
+    if args.max_nodes and len(nodes) > args.max_nodes:
+        nodes = nodes[: args.max_nodes]
+    for i, n in enumerate(nodes):
+        n["idx"] = i
+
+    # Pull a tiny header from phone-state so the agent doesn't need a second call.
+    try:
+        phone_state = portal_get("/phone_state", args)
+    except CliError:
+        phone_state = None
+
+    digest: dict[str, Any] = {
+        "captured_at": _status_now_ms(),
+        "package": args.package,
+        "app": phone_state if isinstance(phone_state, dict) else None,
+        "count": len(nodes),
+        "elements": nodes,
+    }
+    _ui_digest_write_cache(digest)
+    if args.output:
+        return emit_json_result_or_output(args, digest, output=args.output, command="ui.digest")
+    emit_success(args, digest, command="ui.digest")
+    return 0
+
+
+def _ui_resolve_idx_bounds(idx: int) -> tuple[int, int]:
+    """Look up the cached digest, return the center (x, y) for `idx`."""
+    cache = _ui_digest_read_cache()
+    if not isinstance(cache, dict):
+        raise CliError(
+            "No cached ui digest; run `tp-android ui digest` first",
+            code="TARGET_NOT_FOUND",
+        )
+    for node in cache.get("elements", []):
+        if node.get("idx") == idx:
+            bounds = node.get("bounds")
+            if not isinstance(bounds, str):
+                raise CliError(f"idx={idx} has no bounds", code="TARGET_NOT_CLICKABLE")
+            parts = [int(p) for p in bounds.split(",")]
+            if len(parts) != 4:
+                raise CliError(f"Bad bounds for idx={idx}: {bounds}", code="TARGET_NOT_CLICKABLE")
+            left, top, right, bottom = parts
+            return ((left + right) // 2, (top + bottom) // 2)
+    raise CliError(f"idx={idx} not in cached digest", code="TARGET_NOT_FOUND")
+
+
 def command_ui_phone_state(args: argparse.Namespace) -> int:
     if args.output or args.cache:
         return emit_cached_json_command(
@@ -1239,6 +3515,21 @@ def ui_selector_payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_ui_action(args: argparse.Namespace) -> int:
+    # `--idx N` is a fast-path that resolves a digest-cached interactive node
+    # to coordinates and issues a tap, bypassing the selector machinery. It is
+    # only valid for `ui click` (no value, no long-press) for now.
+    idx = getattr(args, "idx", None)
+    if idx is not None:
+        if args.action != "click":
+            raise CliError("--idx is only supported with ui click", code="CLI_ERROR")
+        x, y = _ui_resolve_idx_bounds(idx)
+        result = portal_post("/tap", args, {"x": x, "y": y})
+        result_payload: dict[str, Any] = {"x": x, "y": y, "idx": idx, "tap_result": result}
+        verification = verify_after_ui_action(args)
+        if verification is not None:
+            result_payload["verification"] = verification
+        emit_success(args, result_payload, command=getattr(args, "command_path", "ui.action"))
+        return 0
     payload = {
         "action": args.action,
         **ui_selector_payload(args),
@@ -1439,7 +3730,11 @@ def verify_after_ui_action(args: argparse.Namespace) -> dict[str, Any] | None:
                 "state": last_state,
                 "text_probe": last_text_probe,
             }
-            raise CliError(f"UI action verification failed after {timeout:g}s: {json.dumps(details, ensure_ascii=False, separators=(',', ':'))}")
+            raise CliError(
+                f"UI action verification failed after {timeout:g}s",
+                code="TARGET_NOT_FOUND",
+                details=details,
+            )
         time.sleep(interval)
 
 
@@ -1457,6 +3752,16 @@ def target_selector_namespace(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def command_ui_wait(args: argparse.Namespace) -> int:
+    # Three new wait conditions short-circuit the selector machinery — they
+    # poll a global signal (tree-hash / keyboard-visible / screenshot-hash)
+    # instead of looking for a node. Mutually exclusive with selector mode.
+    if getattr(args, "keyboard", None) is not None:
+        return _ui_wait_keyboard(args)
+    if getattr(args, "tree_changed", False):
+        return _ui_wait_signal(args, kind="tree")
+    if getattr(args, "change", False):
+        return _ui_wait_signal(args, kind="screen")
+
     require_ui_selector(args)
     deadline = time.monotonic() + args.timeout_seconds
     last_count = 0
@@ -1481,8 +3786,97 @@ def command_ui_wait(args: argparse.Namespace) -> int:
             return 0
         if time.monotonic() >= deadline:
             condition = "disappear" if args.gone else "appear"
-            raise CliError(f"Timed out waiting for UI selector to {condition} after {args.timeout_seconds:g}s (nodes={last_count})")
+            raise CliError(
+                f"Timed out waiting for UI selector to {condition} after {args.timeout_seconds:g}s (nodes={last_count})",
+                code="INPUT_TIMEOUT",
+                details={"condition": condition, "nodes": last_count, "timeout_seconds": args.timeout_seconds},
+            )
         time.sleep(args.interval)
+
+
+def _ui_wait_keyboard(args: argparse.Namespace) -> int:
+    want_visible = args.keyboard == "visible"
+    deadline = time.monotonic() + args.timeout_seconds
+    while True:
+        try:
+            state = portal_get("/phone_state", args)
+        except CliError:
+            state = None
+        keyboard_visible = False
+        if isinstance(state, dict):
+            for key in ("keyboardVisible", "keyboard_visible", "isKeyboardVisible"):
+                if key in state:
+                    keyboard_visible = bool(state[key])
+                    break
+        if keyboard_visible == want_visible:
+            emit_success(
+                args,
+                {"matched": True, "keyboard_visible": keyboard_visible, "expected": want_visible},
+                command=getattr(args, "command_path", "ui.wait"),
+            )
+            return 0
+        if time.monotonic() >= deadline:
+            raise CliError(
+                f"Keyboard did not become {args.keyboard} after {args.timeout_seconds:g}s",
+                code="INPUT_TIMEOUT",
+                details={"expected": args.keyboard, "observed_visible": keyboard_visible},
+            )
+        time.sleep(args.interval)
+
+
+def _ui_wait_signal(args: argparse.Namespace, *, kind: str) -> int:
+    """Poll for either the a11y tree hash or screenshot hash to change."""
+    deadline = time.monotonic() + args.timeout_seconds
+
+    def snapshot() -> str | None:
+        if kind == "tree":
+            try:
+                raw = portal_post("/a11y_tree_full", args, scoped_ui_payload(args, {"filter": True}))
+            except CliError:
+                return None
+            payload = json.dumps(raw, sort_keys=True, ensure_ascii=False) if not isinstance(raw, str) else raw
+            return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+        # screen
+        try:
+            result = portal_post("/screenshot/cache", args, {"hideOverlay": True})
+        except CliError:
+            return None
+        if not isinstance(result, dict):
+            return None
+        path = result.get("path")
+        if not isinstance(path, str):
+            return None
+        try:
+            with open(path, "rb") as fh:
+                # Hash just the first 256KB — visual change usually surfaces
+                # within the first chunks for most screens.
+                head = fh.read(256 * 1024)
+        except OSError:
+            return None
+        return hashlib.sha1(head).hexdigest()
+
+    initial = snapshot()
+    if initial is None:
+        raise CliError(
+            f"Could not capture initial {kind} snapshot for ui wait --{'tree-changed' if kind == 'tree' else 'change'}",
+            code="BRIDGE_PARSE_FAILED",
+        )
+    while True:
+        time.sleep(args.interval)
+        current = snapshot()
+        if current is not None and current != initial:
+            emit_success(
+                args,
+                {"matched": True, "kind": kind, "initial_hash": initial, "current_hash": current},
+                command=getattr(args, "command_path", "ui.wait"),
+            )
+            return 0
+        if time.monotonic() >= deadline:
+            raise CliError(
+                f"{kind} did not change after {args.timeout_seconds:g}s",
+                code="INPUT_TIMEOUT",
+                details={"kind": kind, "initial_hash": initial},
+            )
 
 
 def command_ui_scroll_until(args: argparse.Namespace) -> int:
@@ -1532,10 +3926,26 @@ def command_ui_scroll_until(args: argparse.Namespace) -> int:
             break
         last_scroll_result = portal_post("/node/action", args, scroll_payload)
         time.sleep(args.settle)
-    raise CliError(f"Timed out scrolling for UI selector after {args.max_scrolls} scrolls (nodes={last_count})")
+    raise CliError(
+        f"Timed out scrolling for UI selector after {args.max_scrolls} scrolls (nodes={last_count})",
+        code="TARGET_NOT_FOUND",
+        details={"max_scrolls": args.max_scrolls, "nodes": last_count},
+    )
 
 
 def command_screenshot(args: argparse.Namespace) -> int:
+    # When --exclude-overlays is requested we ask Termux to hide its floating
+    # terminal (signature-protected action handled by TermuxService) just
+    # before the capture, then restore it after. Best-effort: failure to hide
+    # is logged but never blocks the screenshot.
+    hid_floating = False
+    if getattr(args, "exclude_overlays", False):
+        try:
+            bridge_call(load_runtime_config(args), "termux/floating/hide")
+            hid_floating = True
+            time.sleep(0.15)  # let WindowManager actually detach
+        except CliError:
+            pass
     result = portal_post("/screenshot/cache", args, {"hideOverlay": args.hide_overlay})
     if not isinstance(result, dict) or not isinstance(result.get("path"), str):
         raise CliError("Unexpected screenshot cache response")
@@ -1543,10 +3953,335 @@ def command_screenshot(args: argparse.Namespace) -> int:
     bytes_written = copy_transfer_cache_to_output(cache_path, args.output, args)
     if args.output == "-":
         return 0
+    annotation: dict[str, Any] | None = None
+    if getattr(args, "annotate", None) and args.output != "-":
+        annotation = _screenshot_annotate(args, Path(args.output), getattr(args, "map_out", None))
+    payload: dict[str, Any] = {"path": str(Path(args.output)), "bytes": bytes_written, "cache_path": cache_path}
+    if annotation is not None:
+        payload["annotation"] = annotation
+    if hid_floating:
+        try:
+            bridge_call(load_runtime_config(args), "termux/floating/show")
+        except CliError:
+            pass
+        payload["restored_floating"] = True
+    emit_success(args, payload, command=getattr(args, "command_path", "ui.screenshot"))
+    return 0
+
+
+def _import_pillow():
+    """Lazy-import Pillow; raise a user-actionable CliError if missing."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont  # type: ignore
+    except ImportError as exc:
+        raise CliError(
+            "Pillow not installed. Run: pip install pillow",
+            code="CLI_ERROR",
+            hint="Inside Termux: pkg install python && pip install pillow",
+        ) from exc
+    return Image, ImageDraw, ImageFont
+
+
+def _screenshot_annotate(
+    args: argparse.Namespace,
+    image_path: Path,
+    map_out: str | None,
+) -> dict[str, Any]:
+    Image, ImageDraw, ImageFont = _import_pillow()
+    # Refresh the digest so we annotate the current screen, not a stale one.
+    digest_args = argparse.Namespace(
+        **{k: v for k, v in vars(args).items() if k not in {"func", "output", "annotate", "map_out"}},
+        only_clickable=(args.annotate == "clickable"),
+        max_nodes=200,
+    )
+    digest_args.output = None
+    # silence digest's emit_success
+    digest_args.output_format = "none"
+    command_ui_digest(digest_args)
+    digest = _ui_digest_read_cache() or {"elements": []}
+    elements = digest.get("elements", [])
+
+    img = Image.open(image_path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
+    except (OSError, IOError):
+        font = ImageFont.load_default()
+
+    palette = [(0, 122, 255), (255, 45, 85), (52, 199, 89), (255, 149, 0), (175, 82, 222), (255, 204, 0), (90, 200, 250), (88, 86, 214)]
+    mapping: dict[str, Any] = {}
+
+    annotated_count = 0
+    for entry in elements:
+        bounds = entry.get("bounds")
+        if not isinstance(bounds, str):
+            continue
+        try:
+            left, top, right, bottom = (int(p) for p in bounds.split(","))
+        except ValueError:
+            continue
+        idx = entry.get("idx", annotated_count)
+        color = palette[idx % len(palette)]
+        draw.rectangle([left, top, right, bottom], outline=color, width=3)
+        label = str(idx)
+        # background box for label
+        try:
+            tw, th = draw.textsize(label, font=font)
+        except AttributeError:
+            bbox = draw.textbbox((0, 0), label, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        bx, by = left, max(0, top - th - 4)
+        draw.rectangle([bx, by, bx + tw + 8, by + th + 4], fill=color)
+        draw.text((bx + 4, by + 2), label, fill=(255, 255, 255), font=font)
+        mapping[str(idx)] = {
+            "bounds": bounds,
+            "text": entry.get("text"),
+            "desc": entry.get("desc"),
+            "actions": entry.get("actions"),
+            "resource": entry.get("resource"),
+        }
+        annotated_count += 1
+    img.save(image_path)
+
+    if map_out:
+        if map_out == "-":
+            sys.stdout.write(json.dumps(mapping, ensure_ascii=False))
+            sys.stdout.write("\n")
+        else:
+            Path(map_out).parent.mkdir(parents=True, exist_ok=True)
+            Path(map_out).write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+    return {"count": annotated_count, "filter": args.annotate, "map_out": map_out, "elements": list(mapping.keys())}
+
+
+# ============================================================================
+# OCR fallback — when a11y can't expose text (heavily-obfuscated apps), fall
+# back to running an OCR binary against a fresh screenshot. We pick the binary
+# from $TP_OCR_CMD (default: tesseract). The output is parsed back into pseudo
+# nodes with bounds derived from tesseract's TSV mode.
+# ============================================================================
+
+def _ocr_run(image_path: Path, lang: str = "eng+chi_sim") -> list[dict[str, Any]]:
+    cmd_template = os.environ.get("TP_OCR_CMD", "tesseract {image} - -l {lang} tsv")
+    cmd = cmd_template.format(image=str(image_path), lang=lang)
+    try:
+        completed = subprocess.run(
+            cmd.split() if "{image}" not in cmd_template.split()[0] else cmd,
+            shell=("{image}" in cmd_template.split()[0]),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except FileNotFoundError as exc:
+        raise CliError(
+            f"OCR binary not found: {cmd}. Install tesseract or set TP_OCR_CMD.",
+            code="CLI_ERROR",
+            hint="pkg install tesseract tesseract-data-chi_sim tesseract-data-eng",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CliError("OCR command timed out after 30s", code="INPUT_TIMEOUT") from exc
+    if completed.returncode != 0:
+        raise CliError(f"OCR exit {completed.returncode}: {completed.stderr.strip()}", code="CLI_ERROR")
+    return _ocr_parse_tesseract_tsv(completed.stdout)
+
+
+def _ocr_parse_tesseract_tsv(tsv: str) -> list[dict[str, Any]]:
+    rows = []
+    lines = tsv.splitlines()
+    if not lines:
+        return rows
+    header = lines[0].split("\t")
+    try:
+        cols = {name: header.index(name) for name in ("left", "top", "width", "height", "text", "conf")}
+    except ValueError:
+        return rows
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) <= max(cols.values()):
+            continue
+        text = parts[cols["text"]].strip()
+        if not text:
+            continue
+        try:
+            left = int(parts[cols["left"]])
+            top = int(parts[cols["top"]])
+            width = int(parts[cols["width"]])
+            height = int(parts[cols["height"]])
+            conf = float(parts[cols["conf"]])
+        except ValueError:
+            continue
+        rows.append({
+            "text": text,
+            "bounds": f"{left},{top},{left + width},{top + height}",
+            "center": [left + width // 2, top + height // 2],
+            "confidence": conf,
+        })
+    return rows
+
+
+def command_ui_find_ocr(args: argparse.Namespace) -> int:
+    """Capture a fresh screenshot, run OCR, fuzzy-match against --ocr query."""
+    tmp_png = Path("/sdcard/Download/.termuxplus/tp-android-cache/ocr-{}.png".format(os.getpid()))
+    shot_args = argparse.Namespace(
+        **{k: v for k, v in vars(args).items() if k not in {"func"}},
+        output=str(tmp_png),
+        hide_overlay=True,
+        annotate=None,
+        map_out=None,
+        exclude_overlays=False,
+    )
+    # Reach into command_screenshot to avoid duplicating cache+copy logic.
+    command_screenshot(shot_args)
+    try:
+        results = _ocr_run(tmp_png, lang=args.lang or "eng+chi_sim")
+    finally:
+        try:
+            tmp_png.unlink()
+        except OSError:
+            pass
+
+    needle = (args.ocr or "").lower()
+    matches = [r for r in results if needle in r["text"].lower()] if needle else results
+    if args.limit:
+        matches = matches[: args.limit]
+    payload = {"query": args.ocr, "count": len(matches), "results": matches}
+    if args.click and matches:
+        x, y = matches[0]["center"]
+        portal_post("/tap", args, {"x": x, "y": y})
+        payload["tapped"] = {"x": x, "y": y, "text": matches[0]["text"]}
+    emit_success(args, payload, command="ui.find.ocr")
+    return 0 if (matches or not needle) else 1
+
+
+# ============================================================================
+# Vision selector — present a numbered annotated screenshot to an external
+# decision-maker (interactive user, or another LLM agent) and click the idx
+# they return. Pure CLI orchestration on top of the other primitives.
+# ============================================================================
+
+def command_ui_click_vision(args: argparse.Namespace) -> int:
+    # Step 1: produce annotated screenshot + mapping.
+    annotated_path = args.annotated_out or "/sdcard/Download/.termuxplus/tp-android-cache/vision-{}.png".format(os.getpid())
+    map_path = args.map_out or annotated_path + ".map.json"
+    shot_args = argparse.Namespace(
+        **{k: v for k, v in vars(args).items() if k not in {"func"}},
+        output=annotated_path,
+        hide_overlay=True,
+        annotate="clickable",
+        map_out=map_path,
+        exclude_overlays=args.exclude_overlays,
+    )
+    command_screenshot(shot_args)
+
+    # Step 2: ask for an idx. If --idx given, skip the prompt.
+    chosen_idx: int | None = args.idx
+    if chosen_idx is None:
+        prompt_payload = {
+            "prompt": args.prompt or f"Pick an idx for: {args.query}",
+            "kind": "number",
+            "tts": None,
+        }
+        # Use the dialog channel when bridge is up, else terminal fallback.
+        # We don't have a run to attach to; create a transient interaction.
+        response = _status_dialog_channel(args, "ask_input", prompt_payload, args.wait_timeout)
+        if response is None:
+            response = _status_terminal_fallback("ask_input", prompt_payload, args.wait_timeout)
+        if response is None:
+            raise CliError("vision selector timed out and no terminal fallback available", code="INPUT_TIMEOUT")
+        raw_value = response.get("value")
+        if not raw_value or not str(raw_value).strip():
+            raise CliError("No idx provided", code="USER_CANCELLED")
+        try:
+            chosen_idx = int(str(raw_value).strip())
+        except ValueError:
+            raise CliError(f"Vision picker did not return an integer idx: {raw_value!r}", code="CLI_ERROR")
+
+    # Step 3: click that idx via the digest cache. The digest was refreshed
+    # inside command_screenshot --annotate above.
+    x, y = _ui_resolve_idx_bounds(chosen_idx)
+    portal_post("/tap", args, {"x": x, "y": y})
     emit_success(
         args,
-        {"path": str(Path(args.output)), "bytes": bytes_written, "cache_path": cache_path},
-        command=getattr(args, "command_path", "ui.screenshot"),
+        {
+            "query": args.query,
+            "idx": chosen_idx,
+            "x": x,
+            "y": y,
+            "annotated_screenshot": annotated_path,
+            "mapping": map_path,
+        },
+        command="ui.click-vision",
+    )
+    return 0
+
+
+def command_ui_element_image(args: argparse.Namespace) -> int:
+    Image, _ImageDraw, _ImageFont = _import_pillow()
+    # Resolve bounds
+    bounds_tuple: tuple[int, int, int, int] | None = None
+    if args.bounds:
+        try:
+            parts = [int(p.strip()) for p in args.bounds.split(",")]
+            if len(parts) != 4:
+                raise ValueError
+        except ValueError:
+            raise CliError(f"--bounds must be 'L,T,R,B' integers, got {args.bounds!r}", code="CLI_ERROR")
+        bounds_tuple = (parts[0], parts[1], parts[2], parts[3])
+    elif args.idx is not None:
+        cx, cy = _ui_resolve_idx_bounds(args.idx)
+        # Look up the original bounds string from cache too so we crop the box,
+        # not just a pixel around the center.
+        cache = _ui_digest_read_cache() or {}
+        for node in cache.get("elements", []):
+            if node.get("idx") == args.idx and isinstance(node.get("bounds"), str):
+                left, top, right, bottom = [int(p) for p in node["bounds"].split(",")]
+                bounds_tuple = (left, top, right, bottom)
+                break
+    elif args.resource_id:
+        find_payload = {"resourceName": args.resource_id, "limit": 1}
+        result = portal_post("/node/find", args, find_payload)
+        if not isinstance(result, dict):
+            raise CliError("ui find returned unexpected shape", code="BRIDGE_PARSE_FAILED")
+        nodes = result.get("nodes") or result.get("results") or []
+        if not nodes:
+            raise CliError(f"No node matches resource-id={args.resource_id}", code="TARGET_NOT_FOUND")
+        bounds = nodes[0].get("bounds") if isinstance(nodes[0], dict) else None
+        if isinstance(bounds, dict):
+            bounds_tuple = (int(bounds["left"]), int(bounds["top"]), int(bounds["right"]), int(bounds["bottom"]))
+        elif isinstance(bounds, str):
+            parts = [int(p) for p in bounds.split(",")]
+            bounds_tuple = (parts[0], parts[1], parts[2], parts[3])
+    if bounds_tuple is None:
+        raise CliError("ui element-image needs --bounds, --idx, or --resource-id", code="CLI_ERROR")
+
+    # Capture screen and crop
+    shot_result = portal_post("/screenshot/cache", args, {"hideOverlay": True})
+    if not isinstance(shot_result, dict) or not isinstance(shot_result.get("path"), str):
+        raise CliError("Unexpected screenshot cache response", code="BRIDGE_PARSE_FAILED")
+    cache_path = shot_result["path"]
+    tmp_full = Path(args.output).with_suffix(".tmp.full.png")
+    tmp_full.parent.mkdir(parents=True, exist_ok=True)
+    copy_transfer_cache_to_output(cache_path, str(tmp_full), args)
+    try:
+        img = Image.open(tmp_full).convert("RGB")
+        l, t, r, b = bounds_tuple
+        l, t = max(0, l), max(0, t)
+        r, b = min(img.width, r), min(img.height, b)
+        if r <= l or b <= t:
+            raise CliError(f"Invalid bounds after clamp: {l},{t},{r},{b}", code="CLI_ERROR")
+        cropped = img.crop((l, t, r, b))
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        cropped.save(args.output)
+    finally:
+        try:
+            tmp_full.unlink()
+        except OSError:
+            pass
+
+    emit_success(
+        args,
+        {"path": args.output, "bounds": list(bounds_tuple), "source_cache_path": cache_path},
+        command="ui.element-image",
     )
     return 0
 
@@ -1569,16 +4304,16 @@ def command_swipe(args: argparse.Namespace) -> int:
             "duration": args.duration,
         },
     )
-    emit_success(
-        args,
-        {
-            "start": {"x": args.x1, "y": args.y1},
-            "end": {"x": args.x2, "y": args.y2},
-            "duration_ms": args.duration,
-            "message": result,
-        },
-        command=getattr(args, "command_path", "input.swipe"),
-    )
+    payload: dict[str, Any] = {
+        "start": {"x": args.x1, "y": args.y1},
+        "end": {"x": args.x2, "y": args.y2},
+        "duration_ms": args.duration,
+        "message": result,
+    }
+    verification = verify_after_ui_action(args)
+    if verification is not None:
+        payload["verification"] = verification
+    emit_success(args, payload, command=getattr(args, "command_path", "input.swipe"))
     return 0
 
 
@@ -1719,7 +4454,11 @@ def command_type(args: argparse.Namespace) -> int:
     text = command_text_arg(args)
     encoded = base64.b64encode(text.encode()).decode()
     result = portal_post("/keyboard/input", args, {"base64_text": encoded, "clear": args.clear})
-    emit_success(args, {"chars": len(text), "clear": args.clear, "message": result}, command=getattr(args, "command_path", "input.text"))
+    payload: dict[str, Any] = {"chars": len(text), "clear": args.clear, "message": result}
+    verification = verify_after_ui_action(args)
+    if verification is not None:
+        payload["verification"] = verification
+    emit_success(args, payload, command=getattr(args, "command_path", "input.text"))
     return 0
 
 
@@ -1985,7 +4724,15 @@ def command_app_wait(args: argparse.Namespace) -> int:
             condition = "leave foreground" if args.gone else "enter foreground"
             raise CliError(
                 f"Timed out waiting for {args.package} to {condition} after {args.timeout_seconds:g}s "
-                f"(current={package_name}/{activity_name})"
+                f"(current={package_name}/{activity_name})",
+                code="INPUT_TIMEOUT",
+                details={
+                    "target_package": args.package,
+                    "condition": condition,
+                    "timeout_seconds": args.timeout_seconds,
+                    "current_package": package_name,
+                    "current_activity": activity_name,
+                },
             )
         time.sleep(args.interval)
 
@@ -2333,7 +5080,7 @@ def command_event_stream(args: argparse.Namespace, *, wait: bool) -> int:
             pass
         sock.close()
     if wait:
-        raise CliError("Timed out waiting for matching event")
+        raise CliError("Timed out waiting for matching event", code="INPUT_TIMEOUT")
     return 0
 
 
@@ -3336,10 +6083,57 @@ def parse_termux_job_scheduler_args(argv: list[str]) -> dict[str, Any]:
     return {k: v for k, v in vars(ns).items() if v not in (None, False)}
 
 
+# IPC capacity self-adaptation:
+# - Known-heavy endpoints get cache=True auto-set if the caller didn't opt out.
+#   The result is a file path through the transfer-cache directory which the
+#   client reads directly; no Binder transaction risk.
+# - OEM providers (vivo CallLogProvider observed) ignore QUERY_ARG_LIMIT; force
+#   a defensive cap so we never blow past the ~1 MB Binder cap.
+_IPC_AUTO_CACHE_COMMANDS = {
+    "contact-list",
+    "call-log",
+    "notification-list",
+    "sms-list",
+    "sms-inbox",
+}
+_IPC_OEM_HARD_LIMITS = {
+    # command: (param-key, hard-cap)
+    "call-log": ("limit", 200),
+    "contact-list": ("limit", 500),
+}
+
+
+def _ipc_apply_safety(command: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Mutate body in place with auto-cache + hard limits for known-heavy ops."""
+    if command in _IPC_AUTO_CACHE_COMMANDS:
+        # Only auto-set if user hasn't explicitly opted out.
+        if "cache" not in body or body.get("cache") is None:
+            body["cache"] = True
+    cap = _IPC_OEM_HARD_LIMITS.get(command)
+    if cap:
+        key, hard = cap
+        current = body.get(key)
+        try:
+            current_int = int(current) if current is not None else None
+        except (TypeError, ValueError):
+            current_int = None
+        if current_int is None or current_int <= 0 or current_int > hard:
+            body[key] = hard
+    return body
+
+
 def termux_api_call(args: argparse.Namespace, command: str, payload: dict[str, Any] | None = None) -> Any:
     body = termux_api_payload(args, payload)
     body.setdefault("command", command)
-    return portal_post(f"/termux-api/{command}", args, body)
+    _ipc_apply_safety(command, body)
+    try:
+        return portal_post(f"/termux-api/{command}", args, body)
+    except CliError as exc:
+        # If we still hit a binder overflow, retry once with cache=True forced.
+        if exc.code == "BINDER_OVERFLOW" and not body.get("cache"):
+            body["cache"] = True
+            return portal_post(f"/termux-api/{command}", args, body)
+        raise
 
 
 def command_termux_api(args: argparse.Namespace) -> int:
@@ -4317,8 +7111,192 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = add_parser(subparsers, "doctor", common, help="Check AutoTermux connectivity")
     set_command(doctor, "doctor", command_doctor)
 
+    # keepalive — the four-process health check (termux / autotermux bridge /
+    # a11y service / notification listener). Run at the start of every long
+    # run; use --watch for a background watchdog. See L0 in UX plan.
+    keepalive = add_parser(subparsers, "keepalive", common, help="Check (and optionally restart) the processes the agent depends on")
+    keepalive_sub = keepalive.add_subparsers(dest="keepalive_command", required=True)
+
+    keepalive_ensure = add_parser(keepalive_sub, "ensure", common, help="One-shot health check; exits non-zero if anything critical is down")
+    keepalive_ensure.add_argument("--restart", action="store_true", help="When AutoTermux bridge is down, try to relaunch it")
+    keepalive_ensure.add_argument("--restart-wait", type=float, default=4.0, help="Seconds to wait for the bridge to come back after a restart nudge")
+    set_command(keepalive_ensure, "keepalive.ensure", command_keepalive_ensure)
+
+    keepalive_watch = add_parser(keepalive_sub, "watch", common, help="Stream JSONL health snapshots forever; one line per probe cycle")
+    keepalive_watch.add_argument("--interval", type=float, default=30.0, help="Seconds between probes (min 5)")
+    keepalive_watch.add_argument("--notify-run", default=None, help="If set, append a keepalive_degraded event to this run id when something fails")
+    set_command(keepalive_watch, "keepalive.watch", command_keepalive_watch)
+
+    # agent-mode — declare a global policy for user-interference handling.
+    # When active, the status protocol consults the policy whenever a
+    # user-touch marker arrives (written by AutoTermux's AgentGestureTagger).
+    agent_mode = add_parser(subparsers, "agent-mode", common, help="Declare a global policy for handling user interruptions")
+    agent_mode_sub = agent_mode.add_subparsers(dest="agent_mode_command", required=True)
+    am_start = add_parser(agent_mode_sub, "start", common, help="Activate agent mode")
+    am_start.add_argument("--on-user-touch", choices=("log", "pause", "abort"), default="pause")
+    am_start.add_argument("--on-app-switch", choices=("log", "pause", "abort"), default="log")
+    set_command(am_start, "agent-mode.start", command_agent_mode_start)
+    am_stop = add_parser(agent_mode_sub, "stop", common, help="Deactivate agent mode")
+    set_command(am_stop, "agent-mode.stop", command_agent_mode_stop)
+    am_status = add_parser(agent_mode_sub, "status", common, help="Show current agent-mode policy")
+    set_command(am_status, "agent-mode.status", command_agent_mode_status)
+
+    # daemon — long-running Python process serving over a Unix socket so
+    # subsequent calls amortize Python startup. See L1 in the UX plan.
+    daemon = add_parser(subparsers, "daemon", common, help="Resident worker over a Unix socket; eliminates per-call Python startup")
+    daemon_sub = daemon.add_subparsers(dest="daemon_command", required=True)
+    daemon_start = add_parser(daemon_sub, "start", common, help="Fork and listen on the socket")
+    daemon_start.add_argument("--socket", default=None, help=f"Override socket path (default: {DEFAULT_DAEMON_SOCKET})")
+    daemon_start.add_argument("--foreground", action="store_true", help="Don't fork — useful when launched from a service supervisor")
+    set_command(daemon_start, "daemon.start", command_daemon_start)
+    daemon_stop = add_parser(daemon_sub, "stop", common, help="Send shutdown to a running daemon")
+    daemon_stop.add_argument("--socket", default=None)
+    set_command(daemon_stop, "daemon.stop", command_daemon_stop)
+    daemon_status = add_parser(daemon_sub, "status", common, help="Ping the daemon to check liveness")
+    daemon_status.add_argument("--socket", default=None)
+    set_command(daemon_status, "daemon.status", command_daemon_status)
+
+    # batch — run a stream of subcommands in one Python process to amortize
+    # the ~300ms startup cost across 20+ ops.
+    batch = add_parser(subparsers, "batch", common, help="Run a JSONL script of subcommands in one Python process")
+    batch.add_argument("script", nargs="?", default="-", help="Path to JSONL script ('-' or omitted = stdin)")
+    batch.add_argument("--on-error", choices=("continue", "stop", "abort"), default="stop", help="Continue: log and proceed; Stop: log and exit; Abort: same as stop (alias)")
+    batch.add_argument("--vars", action="append", help="KEY=VALUE expanded as {{KEY}} in args; may repeat")
+    set_command(batch, "batch", command_batch)
+
+    # exec-script — higher-level scripting on top of batch. Steps name semantic
+    # actions (find_click, wait, intervene, …) instead of raw subcommands.
+    exec_script = add_parser(subparsers, "exec-script", common, help="Run a YAML/JSON list of high-level steps (find_click, wait, intervene, …)")
+    exec_script.add_argument("script", help="Path to YAML or JSON file ('-' for stdin)")
+    exec_script.add_argument("--task", default=None, help="If set, auto-wrap the script with status start/finish using this task description")
+    exec_script.add_argument("--notify", action="store_true", help="Pass --notify to the auto-status-start")
+    exec_script.add_argument("--hud", action="store_true", help="Pass --hud to the auto-status-start")
+    exec_script.add_argument("--on-error", choices=("stop", "continue"), default="stop")
+    exec_script.add_argument("--vars", action="append", help="KEY=VALUE template substitution; may repeat")
+    set_command(exec_script, "exec-script", command_exec_script)
+
+    # hud — manual control of the status overlay (status start --hud will use
+    # it automatically). Useful for diagnostics and the rare case where you
+    # want HUD without the run-lifecycle commands.
+    hud = add_parser(subparsers, "hud", common, help="Show, hide, or update the on-device status HUD overlay")
+    hud_sub = hud.add_subparsers(dest="hud_command", required=True)
+    hud_show = add_parser(hud_sub, "show", common, help="Attach the HUD overlay (idle until updated)")
+    set_command(hud_show, "hud.show", command_hud_show)
+    hud_hide = add_parser(hud_sub, "hide", common, help="Detach the HUD overlay")
+    set_command(hud_hide, "hud.hide", command_hud_hide)
+    hud_update = add_parser(hud_sub, "update", common, help="Push a state update; auto-shows the HUD")
+    hud_update.add_argument("--run-id", default=None)
+    hud_update.add_argument("--task", default=None)
+    hud_update.add_argument("--step", type=int, default=None)
+    hud_update.add_argument("--total-steps", type=int, default=None)
+    hud_update.add_argument("--step-label", default=None)
+    hud_update.add_argument("--percent", type=float, default=None)
+    hud_update.add_argument("--state", choices=("running", "waiting", "done", "cancelled", "error", "idle"), default=None)
+    hud_update.add_argument("--pending-prompt", default=None)
+    set_command(hud_update, "hud.update", command_hud_update)
+    hud_state = add_parser(hud_sub, "state", common, help="Read back the HUD's current state")
+    set_command(hud_state, "hud.state", command_hud_state)
+
+    # setup — first-time guided onboarding. Walks the 7 prerequisites a fresh
+    # install needs and opens the right Settings page for each. See L0 in plan.
+    setup = add_parser(subparsers, "setup", common, help="Guided first-time onboarding: walk the 7 prerequisites and open the right Settings pages")
+    setup.add_argument("--check", action="store_true", help="Only probe; never open Settings or modify files")
+    setup.add_argument("--headless", action="store_true", help="No interactive prompts (returns immediately on each step's first probe / nudge)")
+    setup.add_argument("--resume", default=None, choices=SETUP_STEPS, help="Start from a specific step instead of the beginning")
+    setup.add_argument("--poll-timeout", type=float, default=90.0, help="Seconds to wait for each step to flip to OK")
+    setup.add_argument("--continue-on-error", action="store_true", help="Run every step even if one fails (default: stop on first failure)")
+    set_command(setup, "setup", command_setup)
+
     version_info = add_parser(subparsers, "version", common, help="Print the AutoTermux companion version")
     set_command(version_info, "version", command_version_info)
+
+    # Agent UX status protocol — see docs/automation-agent-ux-plan.md §6.
+    # Every long-running automation should wrap with status start/step/finish
+    # and route ambiguous decisions through status intervene/ask-input/confirm.
+    status = add_parser(subparsers, "status", common, help="Agent run lifecycle and user-intervention protocol")
+    status_sub = status.add_subparsers(dest="status_command", required=True)
+
+    status_start = add_parser(status_sub, "start", common, help="Create a new run; emits run_id and stores it as current")
+    status_start.add_argument("--task", required=True, help="Human-readable task description shown in HUD")
+    status_start.add_argument("--total-steps", type=int, default=0, help="Estimated total number of steps (0 = unknown)")
+    status_start.add_argument("--id", default=None, help="Optional explicit run id; defaults to a generated r_<hex>")
+    status_start.add_argument("--notify", action="store_true", help="Publish (and live-update) a sticky Android notification for this run")
+    status_start.add_argument("--hud", action="store_true", help="Show (and live-update) the on-device status HUD overlay for this run")
+    set_command(status_start, "status.start", command_status_start)
+
+    status_finish = add_parser(status_sub, "finish", common, help="Mark the current run as finished")
+    status_finish.add_argument("--state", choices=("success", "cancelled", "error"), required=True)
+    status_finish.add_argument("--summary", default=None, help="Final one-line summary surfaced in HUD")
+    status_finish.add_argument("--id", default=None, help="Target run id (defaults to current/$TP_RUN_ID)")
+    status_finish.add_argument("--keep-notification", action="store_true", help="On success, leave the final notification visible instead of removing it")
+    set_command(status_finish, "status.finish", command_status_finish)
+
+    status_step = add_parser(status_sub, "step", common, help="Record progress to a specific step")
+    status_step.add_argument("--step", type=int, required=True)
+    status_step.add_argument("--label", required=True)
+    status_step.add_argument("--state", choices=("running", "done", "skipped", "failed"), default="running")
+    status_step.add_argument("--detail", default=None)
+    status_step.add_argument("--id", default=None)
+    set_command(status_step, "status.step", command_status_step)
+
+    status_progress = add_parser(status_sub, "progress", common, help="Fine-grained progress inside the current step")
+    status_progress.add_argument("--percent", type=float, required=True)
+    status_progress.add_argument("--detail", default=None)
+    status_progress.add_argument("--id", default=None)
+    set_command(status_progress, "status.progress", command_status_progress)
+
+    status_intervene = add_parser(status_sub, "intervene", common, help="Block until the user picks one of the supplied choices")
+    status_intervene.add_argument("--reason", required=True, help="Why the agent needs human input")
+    status_intervene.add_argument("--choices", default=None, help="Comma-separated choice labels")
+    status_intervene.add_argument("--wait-timeout", type=float, default=120.0, help="Seconds before returning {timeout:true}")
+    status_intervene.add_argument("--tts", default=None, help="Optional text-to-speech prompt for hands-free use")
+    status_intervene.add_argument("--id", default=None)
+    status_intervene.add_argument("--no-dialog", action="store_true", help="Skip the on-device modal dialog channel and read response from stdin")
+    set_command(status_intervene, "status.intervene", command_status_intervene)
+
+    status_ask = add_parser(status_sub, "ask-input", common, help="Block until the user provides a free-form input")
+    status_ask.add_argument("--prompt", required=True)
+    status_ask.add_argument("--kind", choices=("text", "password", "number"), default="text")
+    status_ask.add_argument("--wait-timeout", type=float, default=120.0)
+    status_ask.add_argument("--tts", default=None)
+    status_ask.add_argument("--id", default=None)
+    status_ask.add_argument("--no-dialog", action="store_true")
+    set_command(status_ask, "status.ask-input", command_status_ask_input)
+
+    status_confirm = add_parser(status_sub, "confirm", common, help="Block until the user answers a yes/no question")
+    status_confirm.add_argument("--prompt", required=True)
+    status_confirm.add_argument("--wait-timeout", type=float, default=60.0)
+    status_confirm.add_argument("--tts", default=None)
+    status_confirm.add_argument("--id", default=None)
+    status_confirm.add_argument("--no-dialog", action="store_true")
+    set_command(status_confirm, "status.confirm", command_status_confirm)
+
+    status_error = add_parser(status_sub, "error", common, help="Record an error against the current run")
+    status_error.add_argument("--code", required=True, help="An ERROR_CODES key (see tp-android docs)")
+    status_error.add_argument("--message", required=True)
+    status_error.add_argument("--hint", default=None, help="Override hint (defaults to ERROR_CODES[code].hint)")
+    status_error.add_argument("--recoverable", type=parse_bool, default=None, help="Override recoverability (defaults to code spec)")
+    status_error.add_argument("--id", default=None)
+    set_command(status_error, "status.error", command_status_error)
+
+    status_cancel = add_parser(status_sub, "cancel", common, help="Cancel the current run (called by HUD or user)")
+    status_cancel.add_argument("--id", default=None)
+    status_cancel.add_argument("--source", default="cli", help="Source of cancel (cli/hud/notification)")
+    set_command(status_cancel, "status.cancel", command_status_cancel)
+
+    status_current = add_parser(status_sub, "current", common, help="Print the full run state of the current (or --id) run")
+    status_current.add_argument("--id", default=None)
+    set_command(status_current, "status.current", command_status_current)
+
+    status_history = add_parser(status_sub, "history", common, help="List recent runs (newest first)")
+    status_history.add_argument("--limit", type=int, default=20)
+    set_command(status_history, "status.history", command_status_history)
+
+    status_tail = add_parser(status_sub, "tail", common, help="Stream a run's event log (JSONL)")
+    status_tail.add_argument("--id", default=None)
+    status_tail.add_argument("--follow", action="store_true", help="Keep streaming until the run ends")
+    status_tail.add_argument("--interval", type=float, default=0.5)
+    set_command(status_tail, "status.tail", command_status_tail)
 
     # NOTE: HTTP/WebSocket server management is intentionally NOT exposed on the
     # CLI. tp-android always talks over the bridge transport. AutoTermux keeps
@@ -4491,6 +7469,16 @@ def build_parser() -> argparse.ArgumentParser:
     ui_diagnose.add_argument("--hide-overlay", action=argparse.BooleanOptionalAction, default=True)
     ui_diagnose.add_argument("-o", "--output", help="Write raw JSON result to a local path, or - for raw stdout")
     set_command(ui_diagnose, "ui.diagnose", command_ui_diagnose)
+
+    # ui digest — token-friendly compact view of interactive nodes. Cached
+    # under ~/.termuxplus/ui-digest.json so `ui click --idx N` can resolve.
+    ui_digest = add_parser(ui_sub, "digest", common, help="Compact list of interactive nodes for LLM consumption (cached for --idx selectors)")
+    add_ui_scope_option(ui_digest)
+    ui_digest.add_argument("--only-clickable", action="store_true", help="Drop label-only / focusable-but-not-clickable nodes")
+    ui_digest.add_argument("--max-nodes", type=int, default=120, help="Cap on the number of nodes returned (0 = no cap)")
+    ui_digest.add_argument("-o", "--output", help="Write the digest JSON to a path instead of stdout")
+    set_command(ui_digest, "ui.digest", command_ui_digest)
+
     ui_phone_state = add_parser(ui_sub, "phone-state", common, aliases=["phone"], help="Print current phone/app/input state")
     ui_phone_state.add_argument("-o", "--output", help="Write raw JSON to a local path, or - for raw stdout")
     ui_phone_state.add_argument("--cache", action="store_true", help="Return the Android transfer-cache path instead of inline JSON")
@@ -4533,6 +7521,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_command(ui_action, "ui.action", command_ui_action)
     ui_click = add_parser(ui_sub, "click", common, help="Click an accessibility node by selector")
     ui_click.set_defaults(action="click")
+    ui_click.add_argument("--idx", type=int, help="Click the Nth element from the most recent `ui digest` (cached at ~/.termuxplus/ui-digest.json)")
     ui_click.add_argument("--index", type=int)
     ui_click.add_argument("--text")
     ui_click.add_argument("--text-contains", dest="text_contains")
@@ -4554,10 +7543,14 @@ def build_parser() -> argparse.ArgumentParser:
     ui_wait.add_argument("--class-name", dest="class_name")
     ui_wait.add_argument("--scrollable", action="store_const", const=True, default=None)
     add_ui_scope_option(ui_wait)
-    ui_wait.add_argument("--wait-timeout", dest="timeout_seconds", type=float, default=10.0)
+    ui_wait.add_argument("--wait-timeout", dest="timeout_seconds", type=float, default=15.0)
     ui_wait.add_argument("--interval", type=float, default=0.5)
     ui_wait.add_argument("--full", action=argparse.BooleanOptionalAction, default=False)
     ui_wait.add_argument("--gone", action="store_true", help="Wait until the selector is absent")
+    # Selector-less waits — these short-circuit the selector machinery
+    ui_wait.add_argument("--change", action="store_true", help="Wait until the screenshot bytes change (visual delta)")
+    ui_wait.add_argument("--tree-changed", dest="tree_changed", action="store_true", help="Wait until the a11y tree hash changes")
+    ui_wait.add_argument("--keyboard", choices=("visible", "hidden"), default=None, help="Wait until the soft keyboard reaches the requested state")
     set_command(ui_wait, "ui.wait", command_ui_wait)
     ui_scroll_until = add_parser(ui_sub, "scroll-until", common, help="Scroll a container until a target selector appears")
     ui_scroll_until.add_argument("--direction", choices=("forward", "backward"), default="forward")
@@ -4584,7 +7577,39 @@ def build_parser() -> argparse.ArgumentParser:
     ui_screenshot = add_parser(ui_sub, "screenshot", common, help="Capture a screenshot")
     ui_screenshot.add_argument("-o", "--output", required=True)
     ui_screenshot.add_argument("--hide-overlay", action=argparse.BooleanOptionalAction, default=True)
+    ui_screenshot.add_argument("--annotate", choices=("all", "clickable"), default=None, help="Draw bounding boxes + numbered labels for every (or just clickable) digest element")
+    ui_screenshot.add_argument("--map-out", default=None, help="Write the idx → bounds/text mapping JSON alongside (or '-' for stdout)")
+    ui_screenshot.add_argument("--exclude-overlays", action="store_true", help="Ask Termux to hide its floating terminal before the capture (signature-protected)")
     set_command(ui_screenshot, "ui.screenshot", command_screenshot)
+
+    # ui find-ocr — selector-by-OCR fallback for a11y-opaque apps. Requires
+    # tesseract on PATH (override binary via TP_OCR_CMD).
+    ui_find_ocr = add_parser(ui_sub, "find-ocr", common, help="Find on-screen text via OCR; tap the first match if --click")
+    ui_find_ocr.add_argument("--ocr", required=False, help="Substring to fuzzy-match (case-insensitive). Omit to dump all OCR text.")
+    ui_find_ocr.add_argument("--lang", default=None, help="OCR language packs, e.g. 'eng+chi_sim'")
+    ui_find_ocr.add_argument("--limit", type=int, default=20)
+    ui_find_ocr.add_argument("--click", action="store_true", help="Tap the center of the first match")
+    set_command(ui_find_ocr, "ui.find-ocr", command_ui_find_ocr)
+
+    # ui click-vision — annotate screen + delegate idx choice to an external
+    # decider (LLM or user via dialog), then tap.
+    ui_click_vision = add_parser(ui_sub, "click-vision", common, help="Annotate the screen, ask for an idx, and tap it")
+    ui_click_vision.add_argument("query", nargs="?", default="", help="Free-text description shown in the prompt")
+    ui_click_vision.add_argument("--idx", type=int, default=None, help="Skip the prompt and click this idx directly")
+    ui_click_vision.add_argument("--prompt", default=None, help="Override the prompt sent to the dialog/terminal")
+    ui_click_vision.add_argument("--annotated-out", default=None, help="Path for the annotated PNG")
+    ui_click_vision.add_argument("--map-out", default=None, help="Path for the idx→bounds mapping JSON")
+    ui_click_vision.add_argument("--exclude-overlays", action="store_true")
+    ui_click_vision.add_argument("--wait-timeout", type=float, default=180.0)
+    set_command(ui_click_vision, "ui.click-vision", command_ui_click_vision)
+
+    # ui element-image — crop a single element from a fresh screenshot.
+    ui_element_image = add_parser(ui_sub, "element-image", common, help="Crop one element's region out of a fresh screenshot")
+    ui_element_image.add_argument("-o", "--output", required=True, help="Output PNG path")
+    ui_element_image.add_argument("--bounds", default=None, help="L,T,R,B integer bounds in screen pixels")
+    ui_element_image.add_argument("--idx", type=int, default=None, help="Use the cached ui digest entry at this idx")
+    ui_element_image.add_argument("--resource-id", default=None, help="Find the first node with this resource id and crop its bounds")
+    set_command(ui_element_image, "ui.element-image", command_ui_element_image)
 
     input_group = add_parser(subparsers, "input", common, help="Send touch, keyboard, and global input")
     input_sub = input_group.add_subparsers(dest="input_command", required=True)
@@ -4598,6 +7623,7 @@ def build_parser() -> argparse.ArgumentParser:
     input_swipe.add_argument("x2", type=int)
     input_swipe.add_argument("y2", type=int)
     input_swipe.add_argument("--duration", "--duration-ms", dest="duration", type=int, default=300)
+    add_ui_verification_options(input_swipe)
     set_command(input_swipe, "input.swipe", command_swipe)
     input_double_tap = add_parser(input_sub, "double-tap", common, aliases=["doubletap"], help="Tap the same coordinates twice")
     input_double_tap.add_argument("x", type=int)
@@ -4627,6 +7653,7 @@ def build_parser() -> argparse.ArgumentParser:
     input_text.add_argument("text", nargs="*")
     input_text.add_argument("--stdin", action="store_true")
     input_text.add_argument("--clear", action=argparse.BooleanOptionalAction, default=False)
+    add_ui_verification_options(input_text)
     set_command(input_text, "input.text", command_type)
     input_key = add_parser(input_sub, "key", common, help="Send a key name or Android key code")
     input_key.add_argument("key")
@@ -4668,7 +7695,7 @@ def build_parser() -> argparse.ArgumentParser:
     app_launch_interactive.add_argument("--skip-direct", action="store_true", help="Skip the direct startActivity attempt")
     app_launch_interactive.add_argument("--stop-before-launch", action="store_true")
     app_launch_interactive.add_argument("--home-settle", type=float, default=0.8, help="Seconds to wait after pressing Home")
-    app_launch_interactive.add_argument("--wait-timeout", type=float, default=10.0, help="Seconds to wait for the target package")
+    app_launch_interactive.add_argument("--wait-timeout", type=float, default=15.0, help="Seconds to wait for the target package")
     app_launch_interactive.add_argument("--interval", type=float, default=0.25, help="Seconds between foreground checks")
     set_command(app_launch_interactive, "app.launch-interactive", command_launch_interactive)
     app_wait = add_parser(app_sub, "wait", common, help="Wait until an app enters or leaves the foreground")
@@ -4676,7 +7703,7 @@ def build_parser() -> argparse.ArgumentParser:
     app_wait.add_argument("--activity", help="Require exact foreground activity name")
     app_wait.add_argument("--activity-contains", help="Require foreground activity name substring")
     app_wait.add_argument("--gone", action="store_true", help="Wait until the app is no longer foreground")
-    app_wait.add_argument("--wait-timeout", dest="timeout_seconds", type=float, default=10.0)
+    app_wait.add_argument("--wait-timeout", dest="timeout_seconds", type=float, default=20.0)
     app_wait.add_argument("--interval", type=float, default=0.5)
     set_command(app_wait, "app.wait", command_app_wait)
     app_open_url = add_parser(app_sub, "open-url", common, aliases=["url", "deeplink"], help="Open a URL or Android deep link")
@@ -5384,6 +8411,11 @@ def normalize_termux_api_argv(argv: list[str] | None) -> list[str] | None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     argv = normalize_termux_api_argv(argv)
+    # Auto-forward to a running daemon (if any) before paying the parse cost.
+    if argv:
+        forwarded = _maybe_forward_to_daemon(argv)
+        if forwarded is not None:
+            return forwarded
     args = parser.parse_args(argv)
     configure_runtime(args)
     if not hasattr(args, "output_format"):
@@ -5393,7 +8425,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except CliError as exc:
-        emit_error(str(exc), args)
+        emit_error(
+            str(exc),
+            args,
+            code=exc.code,
+            hint=exc.hint,
+            recoverable=exc.recoverable,
+            details=exc.details,
+        )
         return 1
     except KeyboardInterrupt:
         emit_error("interrupted", args, code="INTERRUPTED")

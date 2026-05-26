@@ -160,8 +160,8 @@ public final class TermuxFloatingTerminalController {
             ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             : WindowManager.LayoutParams.TYPE_PHONE;
 
-        int width = expanded ? expandedWidth() : dp(58);
-        int height = expanded ? expandedHeight() : dp(58);
+        int width = expanded ? expandedWidth() : dp(44);
+        int height = expanded ? expandedHeight() : dp(44);
         int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
         if (!expanded)
@@ -195,8 +195,8 @@ public final class TermuxFloatingTerminalController {
         bubble.setGravity(Gravity.CENTER);
         bubble.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         bubble.setTextColor(Color.rgb(220, 255, 238));
-        bubble.setTextSize(15);
-        bubble.setBackground(makeRoundRect(Color.argb(230, 8, 18, 15), dp(18), Color.rgb(11, 201, 137), dp(1)));
+        bubble.setTextSize(10);
+        bubble.setBackground(makeRoundRect(Color.argb(230, 8, 18, 15), dp(14), Color.rgb(11, 201, 137), dp(1)));
         bubble.setOnTouchListener(new DragTouchListener(() -> showExpandedIfAllowed()));
 
         mRootView.addView(bubble, new FrameLayout.LayoutParams(
@@ -320,11 +320,13 @@ public final class TermuxFloatingTerminalController {
     }
 
     private int expandedWidth() {
-        return Math.max(dp(280), Math.min(screenWidth() - dp(24), dp(560)));
+        // Cap to ~70 % of screen width so it never feels like a full-screen takeover.
+        int cap = (int) (screenWidth() * 0.7f);
+        return Math.max(dp(260), Math.min(cap, dp(420)));
     }
 
     private int expandedHeight() {
-        return Math.max(dp(240), Math.min((int) (screenHeight() * 0.48f), dp(430)));
+        return Math.max(dp(220), Math.min((int) (screenHeight() * 0.42f), dp(380)));
     }
 
     private int screenWidth() {

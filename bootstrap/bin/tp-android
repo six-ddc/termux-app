@@ -1054,16 +1054,20 @@ def command_observe(args: argparse.Namespace) -> int:
     method = "state_full" if args.full else "state"
     filter_enabled = getattr(args, "filter", not getattr(args, "no_filter", False))
     output = getattr(args, "output", None)
+    payload = scoped_ui_payload(args, {"filter": filter_enabled})
     if output or getattr(args, "cache", False):
         return emit_cached_json_command(
             args,
             f"/{method}/cache",
-            {"filter": filter_enabled},
+            payload,
             output=output,
             command=getattr(args, "command_path", "ui.dump"),
             result_extra={"full": args.full, "filter": filter_enabled},
         )
 
+    if getattr(args, "package", None):
+        emit_success(args, portal_post(f"/{method}", args, payload), command=getattr(args, "command_path", "ui.dump"))
+        return 0
     path = f"/{method}"
     if not filter_enabled:
         path += "?filter=false"
@@ -1102,7 +1106,7 @@ def emit_cached_json_command(
 
 def command_ui_tree(args: argparse.Namespace) -> int:
     method = "a11y_tree_full" if args.full else "a11y_tree"
-    payload = {"filter": args.filter}
+    payload = scoped_ui_payload(args, {"filter": args.filter})
     if args.output or args.cache:
         return emit_cached_json_command(
             args,
@@ -1112,6 +1116,9 @@ def command_ui_tree(args: argparse.Namespace) -> int:
             command=getattr(args, "command_path", "ui.tree"),
             result_extra={"full": args.full, "filter": args.filter},
         )
+    if getattr(args, "package", None):
+        emit_success(args, portal_post(f"/{method}", args, payload), command=getattr(args, "command_path", "ui.tree"))
+        return 0
     path = f"/{method}"
     if args.full and not args.filter:
         path += "?filter=false"
@@ -1132,6 +1139,84 @@ def command_ui_phone_state(args: argparse.Namespace) -> int:
     return 0
 
 
+def scoped_ui_payload(args: argparse.Namespace, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = dict(payload or {})
+    package_name = getattr(args, "package", None) or getattr(args, "package_name", None)
+    if package_name:
+        out["packageName"] = package_name
+    return out
+
+
+def emit_json_result_or_output(
+    args: argparse.Namespace,
+    result: Any,
+    *,
+    output: str | None,
+    command: str,
+) -> int:
+    if output:
+        encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()
+        if output == "-":
+            sys.stdout.buffer.write(encoded)
+            sys.stdout.buffer.write(b"\n")
+            return 0
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(encoded)
+        emit_success(args, {"path": str(path), "bytes": len(encoded)}, command=command)
+        return 0
+    emit_success(args, result, command=command)
+    return 0
+
+
+def command_ui_windows(args: argparse.Namespace) -> int:
+    result = portal_post("/ui/windows", args, {})
+    return emit_json_result_or_output(
+        args,
+        result,
+        output=getattr(args, "output", None),
+        command=getattr(args, "command_path", "ui.windows"),
+    )
+
+
+def command_ui_texts(args: argparse.Namespace) -> int:
+    payload = scoped_ui_payload(args, {"limit": args.limit})
+    if getattr(args, "cache", False):
+        return emit_cached_json_command(
+            args,
+            "/ui/texts/cache",
+            payload,
+            output=getattr(args, "output", None),
+            command=getattr(args, "command_path", "ui.texts"),
+            result_extra={"package": getattr(args, "package", None), "limit": args.limit},
+        )
+    result = portal_post("/ui/texts", args, payload)
+    return emit_json_result_or_output(
+        args,
+        result,
+        output=getattr(args, "output", None),
+        command=getattr(args, "command_path", "ui.texts"),
+    )
+
+
+def command_ui_diagnose(args: argparse.Namespace) -> int:
+    payload = scoped_ui_payload(
+        args,
+        {
+            "limit": args.limit,
+            "textLimit": args.limit,
+            "hideOverlay": args.hide_overlay,
+        },
+    )
+    result = portal_post("/ui/diagnose", args, payload)
+    return emit_json_result_or_output(
+        args,
+        result,
+        output=getattr(args, "output", None),
+        command=getattr(args, "command_path", "ui.diagnose"),
+    )
+
+
 def ui_selector_payload(args: argparse.Namespace) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     for arg_name, payload_name in (
@@ -1145,6 +1230,7 @@ def ui_selector_payload(args: argparse.Namespace) -> dict[str, Any]:
         ("scrollable", "scrollable"),
         ("start", "start"),
         ("end", "end"),
+        ("package", "packageName"),
     ):
         value = getattr(args, arg_name, None)
         if value is not None:
@@ -1162,6 +1248,12 @@ def command_ui_action(args: argparse.Namespace) -> int:
     elif getattr(args, "value", None) is not None:
         payload["value"] = args.value
     result = portal_post("/node/action", args, payload)
+    verification = verify_after_ui_action(args)
+    if verification is not None:
+        if isinstance(result, dict):
+            result = {**result, "verification": verification}
+        else:
+            result = {"action_result": result, "verification": verification}
     emit_success(args, result, command=getattr(args, "command_path", "ui.action"))
     return 0
 
@@ -1202,6 +1294,12 @@ def command_ui_focused(args: argparse.Namespace) -> int:
 
 def flatten_ui_nodes(value: Any) -> list[dict[str, Any]]:
     nodes: list[dict[str, Any]] = []
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return nodes
+        return flatten_ui_nodes(decoded)
     if isinstance(value, dict):
         tree = value.get("a11y_tree", value)
         if isinstance(tree, list):
@@ -1258,6 +1356,93 @@ def require_ui_selector(args: argparse.Namespace) -> None:
     raise CliError("At least one selector is required: --index, --text, --text-contains, --desc, --desc-contains, --resource-id, --class-name, or --scrollable")
 
 
+def get_scoped_ui_state(args: argparse.Namespace, *, full: bool) -> Any:
+    payload = scoped_ui_payload(args, {"filter": getattr(args, "filter", True)})
+    if getattr(args, "package", None):
+        return portal_post("/state_full" if full else "/state", args, payload)
+    path = "/state_full" if full else "/state"
+    if full and getattr(args, "filter", True) is False:
+        path += "?filter=false"
+    return portal_get(path, args)
+
+
+def ui_node_visible_strings(node: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("text", "contentDescription", "hint", "stateDescription"):
+        value = node.get(key)
+        if value is not None:
+            text = str(value)
+            if text:
+                values.append(text)
+    return values
+
+
+def ui_state_has_text(args: argparse.Namespace, *, exact: str | None, contains: str | None) -> tuple[bool, dict[str, Any]]:
+    state = get_scoped_ui_state(args, full=False)
+    nodes = flatten_ui_nodes(state)
+    for node in nodes:
+        values = ui_node_visible_strings(node)
+        if exact is not None and any(value == exact for value in values):
+            return True, {"count": len(nodes), "node": node}
+        if contains is not None:
+            folded = contains.lower()
+            if any(folded in value.lower() for value in values):
+                return True, {"count": len(nodes), "node": node}
+    return False, {"count": len(nodes)}
+
+
+def verify_after_ui_action(args: argparse.Namespace) -> dict[str, Any] | None:
+    expected_package = getattr(args, "expect_package", None)
+    expected_activity = getattr(args, "expect_activity", None)
+    expected_text = getattr(args, "expect_text", None)
+    expected_text_contains = getattr(args, "expect_text_contains", None)
+    if not any((expected_package, expected_activity, expected_text, expected_text_contains)):
+        return None
+
+    timeout = max(0.0, getattr(args, "verify_timeout", 5.0))
+    interval = max(0.05, getattr(args, "verify_interval", 0.25))
+    deadline = time.monotonic() + timeout
+    last_state: dict[str, Any] = {}
+    last_text_probe: dict[str, Any] = {}
+
+    while True:
+        checks: dict[str, bool] = {}
+        if expected_package or expected_activity:
+            last_state = current_phone_state(args)
+            if expected_package:
+                checks["package"] = phone_state_field(last_state, "packageName", "package_name") == expected_package
+            if expected_activity:
+                checks["activity"] = phone_state_field(last_state, "activityName", "activity_name") == expected_activity
+        if expected_text or expected_text_contains:
+            matched_text, last_text_probe = ui_state_has_text(
+                args,
+                exact=expected_text,
+                contains=expected_text_contains,
+            )
+            checks["text"] = matched_text
+
+        if checks and all(checks.values()):
+            return {
+                "matched": True,
+                "checks": checks,
+                "state": last_state,
+                "text_probe": last_text_probe,
+            }
+        if time.monotonic() >= deadline:
+            details = {
+                "matched": False,
+                "checks": checks,
+                "expectedPackage": expected_package,
+                "expectedActivity": expected_activity,
+                "expectedText": expected_text,
+                "expectedTextContains": expected_text_contains,
+                "state": last_state,
+                "text_probe": last_text_probe,
+            }
+            raise CliError(f"UI action verification failed after {timeout:g}s: {json.dumps(details, ensure_ascii=False, separators=(',', ':'))}")
+        time.sleep(interval)
+
+
 def target_selector_namespace(args: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
         index=getattr(args, "target_index", None),
@@ -1276,7 +1461,7 @@ def command_ui_wait(args: argparse.Namespace) -> int:
     deadline = time.monotonic() + args.timeout_seconds
     last_count = 0
     while True:
-        state = portal_get("/state" if not args.full else "/state_full", args)
+        state = get_scoped_ui_state(args, full=args.full)
         nodes = flatten_ui_nodes(state)
         last_count = len(nodes)
         match = next((node for node in nodes if ui_node_matches(args, node)), None)
@@ -1318,13 +1503,15 @@ def command_ui_scroll_until(args: argparse.Namespace) -> int:
         value = getattr(args, arg_name, None)
         if value is not None:
             scroll_payload[payload_name] = value
+    if getattr(args, "package", None):
+        scroll_payload["packageName"] = args.package
     if not any(key in scroll_payload for key in ("index", "text", "textContains", "desc", "descContains", "resourceId", "className", "scrollable")):
         scroll_payload["scrollable"] = True
 
     last_count = 0
     last_scroll_result: Any = None
     for scrolls in range(args.max_scrolls + 1):
-        state = portal_get("/state" if not args.full else "/state_full", args)
+        state = get_scoped_ui_state(args, full=args.full)
         nodes = flatten_ui_nodes(state)
         last_count = len(nodes)
         match = next((node for node in nodes if ui_node_matches(target, node)), None)
@@ -1566,8 +1753,162 @@ def command_launch(args: argparse.Namespace) -> int:
     payload: dict[str, Any] = {"package": args.package, "stopBeforeLaunch": args.stop_before_launch}
     if args.activity:
         payload["activity"] = args.activity
-    result = portal_post("/app", args, payload)
+    try:
+        result = portal_post("/app", args, payload)
+    except CliError as exc:
+        message = str(exc)
+        if "background activity launch" in message or "foreground package" in message:
+            raise CliError(f"{message}. Try: tp-android app launch-interactive {args.package}") from exc
+        raise
     emit_success(args, {"package": args.package, "activity": args.activity, "message": result}, command=getattr(args, "command_path", "app.launch"))
+    return 0
+
+
+def wait_for_package_foreground(
+    args: argparse.Namespace,
+    package_name: str,
+    *,
+    activity: str | None = None,
+    timeout: float = 10.0,
+    interval: float = 0.25,
+) -> dict[str, Any] | None:
+    deadline = time.monotonic() + timeout
+    while True:
+        state = current_phone_state(args)
+        if phone_state_field(state, "packageName", "package_name") == package_name:
+            if not activity or phone_state_field(state, "activityName", "activity_name") == activity:
+                return state
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(max(0.05, interval))
+
+
+def launcher_label_for_package(args: argparse.Namespace, package_name: str) -> str | None:
+    try:
+        info = portal_post("/app/info", args, {"package": package_name})
+    except CliError:
+        return None
+    if isinstance(info, dict):
+        label = info.get("label")
+        if isinstance(label, str) and label.strip():
+            return label.strip()
+    return None
+
+
+def first_launcher_icon_node(args: argparse.Namespace, label: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    selectors = (
+        {"text": label},
+        {"desc": label},
+        {"textContains": label},
+        {"descContains": label},
+    )
+    for selector in selectors:
+        try:
+            result = portal_post("/node/find", args, {**selector, "limit": 10})
+        except CliError:
+            continue
+        nodes = result.get("nodes") if isinstance(result, dict) else None
+        if isinstance(nodes, list) and nodes:
+            node = next((item for item in nodes if isinstance(item, dict)), None)
+            if node is not None:
+                return node, selector
+    return None
+
+
+def node_center_xy(node: dict[str, Any]) -> tuple[int, int] | None:
+    center = node.get("center")
+    if isinstance(center, dict) and "x" in center and "y" in center:
+        return int(center["x"]), int(center["y"])
+    bounds = node.get("bounds")
+    if isinstance(bounds, dict):
+        try:
+            return (
+                int((int(bounds["left"]) + int(bounds["right"])) / 2),
+                int((int(bounds["top"]) + int(bounds["bottom"])) / 2),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+def command_launch_interactive(args: argparse.Namespace) -> int:
+    attempts: list[dict[str, Any]] = []
+    if not args.skip_direct:
+        payload: dict[str, Any] = {"package": args.package, "stopBeforeLaunch": args.stop_before_launch}
+        if args.activity:
+            payload["activity"] = args.activity
+        try:
+            direct_result = portal_post("/app", args, payload)
+            state = wait_for_package_foreground(
+                args,
+                args.package,
+                activity=args.activity,
+                timeout=args.wait_timeout,
+                interval=args.interval,
+            )
+            if state is not None:
+                emit_success(
+                    args,
+                    {
+                        "package": args.package,
+                        "activity": args.activity,
+                        "mode": "direct",
+                        "direct": direct_result,
+                        "state": state,
+                    },
+                    command=getattr(args, "command_path", "app.launch-interactive"),
+                )
+                return 0
+            attempts.append({"mode": "direct", "ok": False, "result": direct_result})
+        except CliError as exc:
+            attempts.append({"mode": "direct", "ok": False, "error": str(exc)})
+
+    label = args.label or launcher_label_for_package(args, args.package)
+    if not label:
+        raise CliError(f"Could not resolve launcher label for {args.package}; pass --label")
+
+    home_result = portal_post("/global", args, {"action": GLOBAL_ACTIONS["home"]})
+    time.sleep(max(0.0, args.home_settle))
+    icon = first_launcher_icon_node(args, label)
+    if icon is None:
+        raise CliError(f"Could not find launcher icon labeled {label!r} after going home")
+    node, selector = icon
+    center = node_center_xy(node)
+    if center is None:
+        raise CliError(f"Launcher icon {label!r} has no usable bounds")
+    tap_result = portal_post("/tap", args, {"x": center[0], "y": center[1]})
+    state = wait_for_package_foreground(
+        args,
+        args.package,
+        activity=args.activity,
+        timeout=args.wait_timeout,
+        interval=args.interval,
+    )
+    if state is None:
+        attempts.append({
+            "mode": "launcher-icon",
+            "ok": False,
+            "label": label,
+            "selector": selector,
+            "tap": {"x": center[0], "y": center[1], "result": tap_result},
+        })
+        raise CliError(f"Timed out waiting for {args.package} after launcher-icon tap: {json.dumps(attempts, ensure_ascii=False, separators=(',', ':'))}")
+
+    emit_success(
+        args,
+        {
+            "package": args.package,
+            "activity": args.activity,
+            "mode": "launcher-icon",
+            "label": label,
+            "selector": selector,
+            "tap": {"x": center[0], "y": center[1], "result": tap_result},
+            "home": home_result,
+            "state": state,
+            "attempts": attempts,
+        },
+        command=getattr(args, "command_path", "app.launch-interactive"),
+    )
     return 0
 
 
@@ -3870,6 +4211,19 @@ def set_command(parser: argparse.ArgumentParser, command_path: str, func: Any) -
     parser.set_defaults(command_path=command_path, func=func)
 
 
+def add_ui_scope_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--package", help="Limit UI inspection/action to accessibility windows from this package")
+
+
+def add_ui_verification_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--expect-package", help="After the action, require this package to become the active accessibility package")
+    parser.add_argument("--expect-activity", help="After the action, require this exact activity name")
+    parser.add_argument("--expect-text", help="After the action, require this exact visible text or content description")
+    parser.add_argument("--expect-text-contains", help="After the action, require visible text/content description containing this value")
+    parser.add_argument("--verify-timeout", type=float, default=5.0, help="Seconds to wait for verification")
+    parser.add_argument("--verify-interval", type=float, default=0.25, help="Seconds between verification probes")
+
+
 def add_json_payload_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data", help="JSON object, @file, or - for stdin")
     parser.add_argument("-p", "--param", action="append", help="Add JSON field as KEY=VALUE; may be repeated")
@@ -4111,15 +4465,32 @@ def build_parser() -> argparse.ArgumentParser:
     ui_dump = add_parser(ui_sub, "dump", common, help="Print current UI state")
     ui_dump.add_argument("--full", action=argparse.BooleanOptionalAction, default=True)
     ui_dump.add_argument("--filter", action=argparse.BooleanOptionalAction, default=True)
+    add_ui_scope_option(ui_dump)
     ui_dump.add_argument("-o", "--output", help="Write raw JSON to a local path, or - for raw stdout")
     ui_dump.add_argument("--cache", action="store_true", help="Return the Android transfer-cache path instead of inline JSON")
     set_command(ui_dump, "ui.dump", command_observe)
     ui_tree = add_parser(ui_sub, "tree", common, help="Print the accessibility tree only")
     ui_tree.add_argument("--full", action=argparse.BooleanOptionalAction, default=True)
     ui_tree.add_argument("--filter", action=argparse.BooleanOptionalAction, default=True)
+    add_ui_scope_option(ui_tree)
     ui_tree.add_argument("-o", "--output", help="Write raw JSON to a local path, or - for raw stdout")
     ui_tree.add_argument("--cache", action="store_true", help="Return the Android transfer-cache path instead of inline JSON")
     set_command(ui_tree, "ui.tree", command_ui_tree)
+    ui_windows = add_parser(ui_sub, "windows", common, aliases=["window-list"], help="List visible accessibility windows and z-order")
+    ui_windows.add_argument("-o", "--output", help="Write raw JSON result to a local path, or - for raw stdout")
+    set_command(ui_windows, "ui.windows", command_ui_windows)
+    ui_texts = add_parser(ui_sub, "texts", common, aliases=["visible-text", "visible-texts"], help="Print compact visible text/content-description nodes")
+    add_ui_scope_option(ui_texts)
+    ui_texts.add_argument("--limit", type=int, default=120, help="Maximum text nodes to return, clamped to 1..1000")
+    ui_texts.add_argument("-o", "--output", help="Write raw JSON result to a local path, or - for raw stdout")
+    ui_texts.add_argument("--cache", action="store_true", help="Return the Android transfer-cache path instead of inline JSON")
+    set_command(ui_texts, "ui.texts", command_ui_texts)
+    ui_diagnose = add_parser(ui_sub, "diagnose", common, aliases=["diagnostics"], help="Capture screenshot path, app state, windows, overlay state, and visible texts")
+    add_ui_scope_option(ui_diagnose)
+    ui_diagnose.add_argument("--limit", type=int, default=80, help="Maximum visible text nodes to include")
+    ui_diagnose.add_argument("--hide-overlay", action=argparse.BooleanOptionalAction, default=True)
+    ui_diagnose.add_argument("-o", "--output", help="Write raw JSON result to a local path, or - for raw stdout")
+    set_command(ui_diagnose, "ui.diagnose", command_ui_diagnose)
     ui_phone_state = add_parser(ui_sub, "phone-state", common, aliases=["phone"], help="Print current phone/app/input state")
     ui_phone_state.add_argument("-o", "--output", help="Write raw JSON to a local path, or - for raw stdout")
     ui_phone_state.add_argument("--cache", action="store_true", help="Return the Android transfer-cache path instead of inline JSON")
@@ -4133,6 +4504,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_find.add_argument("--resource-id", dest="resource_id", help="Exact view resource id selector")
     ui_find.add_argument("--class-name", dest="class_name", help="Class name substring selector")
     ui_find.add_argument("--scrollable", action="store_const", const=True, default=None, help="Select scrollable nodes")
+    add_ui_scope_option(ui_find)
     ui_find.add_argument("--all", action="store_true", help="Return visible nodes without requiring a selector")
     ui_find.add_argument("--limit", type=int, default=20, help="Maximum nodes to return, clamped to 1..500")
     ui_find.add_argument("-o", "--output", help="Write raw JSON result to a local path, or - for raw stdout")
@@ -4152,10 +4524,12 @@ def build_parser() -> argparse.ArgumentParser:
     ui_action.add_argument("--resource-id", dest="resource_id", help="Exact view resource id selector")
     ui_action.add_argument("--class-name", dest="class_name", help="Class name substring selector")
     ui_action.add_argument("--scrollable", action="store_const", const=True, default=None, help="Select the first scrollable node")
+    add_ui_scope_option(ui_action)
     ui_action.add_argument("--value", help="Text value for set-text")
     ui_action.add_argument("--value-stdin", action="store_true", help="Read set-text value from stdin")
     ui_action.add_argument("--start", type=int, help="Selection start for set-selection")
     ui_action.add_argument("--end", type=int, help="Selection end for set-selection")
+    add_ui_verification_options(ui_action)
     set_command(ui_action, "ui.action", command_ui_action)
     ui_click = add_parser(ui_sub, "click", common, help="Click an accessibility node by selector")
     ui_click.set_defaults(action="click")
@@ -4167,6 +4541,8 @@ def build_parser() -> argparse.ArgumentParser:
     ui_click.add_argument("--resource-id", dest="resource_id")
     ui_click.add_argument("--class-name", dest="class_name")
     ui_click.add_argument("--scrollable", action="store_const", const=True, default=None)
+    add_ui_scope_option(ui_click)
+    add_ui_verification_options(ui_click)
     set_command(ui_click, "ui.click", command_ui_action)
     ui_wait = add_parser(ui_sub, "wait", common, help="Wait until an accessibility node selector appears")
     ui_wait.add_argument("--index", type=int)
@@ -4177,6 +4553,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_wait.add_argument("--resource-id", dest="resource_id")
     ui_wait.add_argument("--class-name", dest="class_name")
     ui_wait.add_argument("--scrollable", action="store_const", const=True, default=None)
+    add_ui_scope_option(ui_wait)
     ui_wait.add_argument("--wait-timeout", dest="timeout_seconds", type=float, default=10.0)
     ui_wait.add_argument("--interval", type=float, default=0.5)
     ui_wait.add_argument("--full", action=argparse.BooleanOptionalAction, default=False)
@@ -4187,6 +4564,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_scroll_until.add_argument("--max-scrolls", type=int, default=8)
     ui_scroll_until.add_argument("--settle", type=float, default=0.35, help="Seconds to wait after each scroll")
     ui_scroll_until.add_argument("--full", action=argparse.BooleanOptionalAction, default=True)
+    add_ui_scope_option(ui_scroll_until)
     ui_scroll_until.add_argument("--index", type=int, help="Scrollable container overlay index")
     ui_scroll_until.add_argument("--text", help="Scrollable container exact text")
     ui_scroll_until.add_argument("--text-contains", dest="text_contains", help="Scrollable container text substring")
@@ -4283,6 +4661,16 @@ def build_parser() -> argparse.ArgumentParser:
     app_launch.add_argument("--activity")
     app_launch.add_argument("--stop-before-launch", action="store_true")
     set_command(app_launch, "app.launch", command_launch)
+    app_launch_interactive = add_parser(app_sub, "launch-interactive", common, aliases=["launch-ui"], help="Launch an app, falling back to Home plus launcher-icon coordinate tap")
+    app_launch_interactive.add_argument("package")
+    app_launch_interactive.add_argument("--activity")
+    app_launch_interactive.add_argument("--label", help="Launcher icon label if it cannot be resolved from package metadata")
+    app_launch_interactive.add_argument("--skip-direct", action="store_true", help="Skip the direct startActivity attempt")
+    app_launch_interactive.add_argument("--stop-before-launch", action="store_true")
+    app_launch_interactive.add_argument("--home-settle", type=float, default=0.8, help="Seconds to wait after pressing Home")
+    app_launch_interactive.add_argument("--wait-timeout", type=float, default=10.0, help="Seconds to wait for the target package")
+    app_launch_interactive.add_argument("--interval", type=float, default=0.25, help="Seconds between foreground checks")
+    set_command(app_launch_interactive, "app.launch-interactive", command_launch_interactive)
     app_wait = add_parser(app_sub, "wait", common, help="Wait until an app enters or leaves the foreground")
     app_wait.add_argument("package")
     app_wait.add_argument("--activity", help="Require exact foreground activity name")

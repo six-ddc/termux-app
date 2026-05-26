@@ -146,17 +146,17 @@ class ApiHandler(
         }
     }
 
-    fun getTree(): ApiResponse {
+    fun getTree(packageName: String? = null): ApiResponse {
         requireAccessibilityService()?.let { return it }
-        val elements = stateRepo.getVisibleElements()
+        val elements = stateRepo.getVisibleElements(packageName)
         val json = elements.map { JsonBuilders.elementNodeToJson(it) }
         return ApiResponse.Success(JSONArray(json).toString())
     }
 
-    fun getTreeFull(filter: Boolean): ApiResponse {
+    fun getTreeFull(filter: Boolean, packageName: String? = null): ApiResponse {
         requireAccessibilityService()?.let { return it }
-        val tree = stateRepo.getFullTree(filter)
-            ?: return ApiResponse.Error("No active window or root filtered out")
+        val tree = stateRepo.getFullTree(filter, packageName)
+            ?: return ApiResponse.Error(noTreeMessage(packageName))
         return ApiResponse.Success(tree.toString())
     }
 
@@ -166,23 +166,24 @@ class ApiHandler(
         return ApiResponse.Success(JsonBuilders.phoneStateToJson(state).toString())
     }
 
-    fun getState(): ApiResponse {
+    fun getState(packageName: String? = null): ApiResponse {
         requireAccessibilityService()?.let { return it }
-        val elements = stateRepo.getVisibleElements()
+        val elements = stateRepo.getVisibleElements(packageName)
         val treeJson = elements.map { JsonBuilders.elementNodeToJson(it) }
         val phoneStateJson = JsonBuilders.phoneStateToJson(stateRepo.getPhoneState())
 
         val combined = JSONObject().apply {
             put("a11y_tree", JSONArray(treeJson))
             put("phone_state", phoneStateJson)
+            packageName?.let { put("package_filter", it) }
         }
         return ApiResponse.Success(combined.toString())
     }
 
-    fun getStateFull(filter: Boolean): ApiResponse {
+    fun getStateFull(filter: Boolean, packageName: String? = null): ApiResponse {
         requireAccessibilityService()?.let { return it }
-        val tree = stateRepo.getFullTree(filter)
-            ?: return ApiResponse.Error("No active window or root filtered out")
+        val tree = stateRepo.getFullTree(filter, packageName)
+            ?: return ApiResponse.Error(noTreeMessage(packageName))
         val phoneStateJson = JsonBuilders.phoneStateToJson(stateRepo.getPhoneState())
         val deviceContext = stateRepo.getDeviceContext()
 
@@ -190,8 +191,17 @@ class ApiHandler(
             put("a11y_tree", tree)
             put("phone_state", phoneStateJson)
             put("device_context", deviceContext)
+            packageName?.let { put("package_filter", it) }
         }
         return ApiResponse.RawObject(combined)
+    }
+
+    private fun noTreeMessage(packageName: String?): String {
+        return if (packageName.isNullOrBlank()) {
+            "No active window or root filtered out"
+        } else {
+            "No visible accessibility window for package $packageName"
+        }
     }
 
     fun getVersion() = ApiResponse.Success(appVersionProvider())
@@ -622,10 +632,10 @@ class ApiHandler(
         )
     }
 
-    fun cacheTree(full: Boolean, filter: Boolean): ApiResponse {
+    fun cacheTree(full: Boolean, filter: Boolean, packageName: String? = null): ApiResponse {
         return cacheJsonResponse(
             source = if (full) "a11y_tree_full" else "a11y_tree",
-            response = if (full) getTreeFull(filter) else getTree(),
+            response = if (full) getTreeFull(filter, packageName) else getTree(packageName),
         )
     }
 
@@ -637,11 +647,67 @@ class ApiHandler(
         return cacheJsonResponse("packages", getPackages())
     }
 
-    fun cacheState(full: Boolean, filter: Boolean): ApiResponse {
+    fun cacheState(full: Boolean, filter: Boolean, packageName: String? = null): ApiResponse {
         return cacheJsonResponse(
             source = if (full) "state_full" else "state",
-            response = if (full) getStateFull(filter) else getState(),
+            response = if (full) getStateFull(filter, packageName) else getState(packageName),
         )
+    }
+
+    fun getWindows(): ApiResponse {
+        requireAccessibilityService()?.let { return it }
+        val windows = stateRepo.getVisibleWindows()
+        return ApiResponse.RawObject(JSONObject().apply {
+            put("count", windows.length())
+            put("windows", windows)
+        })
+    }
+
+    fun getVisibleTexts(params: JSONObject): ApiResponse {
+        requireAccessibilityService()?.let { return it }
+        val packageName = packageFilter(params)
+        val limit = params.optInt("limit", 120).coerceIn(1, 1000)
+        return ApiResponse.RawObject(JSONObject().apply {
+            put("packageFilter", packageName ?: JSONObject.NULL)
+            put("limit", limit)
+            put("texts", visibleTextsJson(packageName, limit))
+        })
+    }
+
+    fun cacheVisibleTexts(params: JSONObject): ApiResponse {
+        return cacheJsonResponse("ui-texts", getVisibleTexts(params))
+    }
+
+    fun getDiagnostics(params: JSONObject): ApiResponse {
+        requireAccessibilityService()?.let { return it }
+        val packageName = packageFilter(params)
+        val textLimit = params.optInt("textLimit", params.optInt("limit", 80)).coerceIn(1, 500)
+        val hideOverlay = params.optBoolean("hideOverlay", true)
+        val screenshot = cacheScreenshot(hideOverlay)
+        val screenBounds = stateRepo.getScreenBounds()
+
+        return ApiResponse.RawObject(JSONObject().apply {
+            put("phone_state", JsonBuilders.phoneStateToJson(stateRepo.getPhoneState()))
+            put("windows", stateRepo.getVisibleWindows())
+            put("overlay", JSONObject().apply {
+                put("visible", stateRepo.isOverlayVisible())
+            })
+            put("screen_bounds", JSONObject().apply {
+                put("left", screenBounds.left)
+                put("top", screenBounds.top)
+                put("right", screenBounds.right)
+                put("bottom", screenBounds.bottom)
+                put("width", screenBounds.width())
+                put("height", screenBounds.height())
+            })
+            put("packageFilter", packageName ?: JSONObject.NULL)
+            put("texts", visibleTextsJson(packageName, textLimit))
+            when (screenshot) {
+                is ApiResponse.RawObject -> put("screenshot", screenshot.json)
+                is ApiResponse.Error -> put("screenshot_error", screenshot.message)
+                else -> put("screenshot_error", "Unexpected screenshot response")
+            }
+        })
     }
 
     private fun cacheJsonResponse(source: String, response: ApiResponse): ApiResponse {
@@ -672,6 +738,52 @@ class ApiHandler(
         )
     }
 
+    private fun visibleTextsJson(packageName: String?, limit: Int): JSONArray {
+        val nodes = flattenElements(stateRepo.getVisibleElements(packageName))
+        val arr = JSONArray()
+        for (node in nodes) {
+            val text = node.nodeInfo.text?.toString()?.trim().orEmpty()
+            val desc = node.nodeInfo.contentDescription?.toString()?.trim().orEmpty()
+            val hint = node.nodeInfo.hintText?.toString()?.trim().orEmpty()
+            if (text.isEmpty() && desc.isEmpty() && hint.isEmpty()) continue
+            arr.put(JSONObject().apply {
+                put("index", node.overlayIndex)
+                put("packageName", node.nodeInfo.packageName?.toString() ?: JSONObject.NULL)
+                put("className", node.className)
+                put("resourceId", node.nodeInfo.viewIdResourceName ?: JSONObject.NULL)
+                put("text", text)
+                put("contentDescription", desc)
+                put("hint", hint)
+                put("windowLayer", node.windowLayer)
+                put("bounds", JSONObject().apply {
+                    put("left", node.rect.left)
+                    put("top", node.rect.top)
+                    put("right", node.rect.right)
+                    put("bottom", node.rect.bottom)
+                    put("width", node.rect.width())
+                    put("height", node.rect.height())
+                })
+                put("center", JSONObject().apply {
+                    put("x", node.rect.centerX())
+                    put("y", node.rect.centerY())
+                })
+                put("isClickable", node.nodeInfo.isClickable)
+                put("isScrollable", node.nodeInfo.isScrollable)
+                put("isEditable", node.nodeInfo.isEditable)
+            })
+            if (arr.length() >= limit) break
+        }
+        return arr
+    }
+
+    private fun packageFilter(params: JSONObject): String? {
+        return params.optString("packageName")
+            .ifBlank { params.optString("package_name") }
+            .ifBlank { params.optString("package") }
+            .trim()
+            .takeIf { it.isNotEmpty() && it != "null" }
+    }
+
     private fun fileFailureResponse(operation: String, error: Throwable): ApiResponse {
         return when (error) {
             is SecurityException -> ApiResponse.Error("Security error: ${error.message}")
@@ -689,7 +801,8 @@ class ApiHandler(
             .trim()
             .lowercase(Locale.US)
             .ifBlank { "click" }
-        val elements = flattenElements(stateRepo.getVisibleElements())
+        val packageName = packageFilter(params)
+        val elements = flattenElements(stateRepo.getVisibleElements(packageName))
         val matchedNode = findNodeActionTarget(elements, params)
             ?: return ApiResponse.Error("No matching accessibility node")
         val actionableNode = when (actionName) {
@@ -758,6 +871,8 @@ class ApiHandler(
                 put("text", actionableNode.text)
                 put("resourceId", actionableNode.nodeInfo.viewIdResourceName ?: JSONObject.NULL)
                 put("className", actionableNode.className)
+                put("packageName", actionableNode.nodeInfo.packageName?.toString() ?: JSONObject.NULL)
+                put("windowLayer", actionableNode.windowLayer)
                 put("bounds", JSONObject().apply {
                     put("left", actionableNode.rect.left)
                     put("top", actionableNode.rect.top)
@@ -778,7 +893,8 @@ class ApiHandler(
         }
 
         val limit = params.optInt("limit", 20).coerceIn(1, 500)
-        val elements = flattenElements(stateRepo.getVisibleElements())
+        val packageName = packageFilter(params)
+        val elements = flattenElements(stateRepo.getVisibleElements(packageName))
         val matches = elements.filter { node -> includeAll || nodeMatchesSelector(node, params) }
         val nodes = JSONArray()
         matches.take(limit).forEach { node -> nodes.put(elementNodeDetailJson(node)) }
@@ -787,6 +903,7 @@ class ApiHandler(
             put("count", matches.size)
             put("returned", nodes.length())
             put("limit", limit)
+            packageName?.let { put("packageFilter", it) }
             put("nodes", nodes)
         })
     }

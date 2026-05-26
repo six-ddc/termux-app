@@ -40,6 +40,18 @@ class ActionDispatcher(
             "a11y_tree/cache",
             "tree/cache",
             "ui/tree/cache",
+            "ui/windows",
+            "windows",
+            "window/list",
+            "ui/texts",
+            "ui/visible-text",
+            "ui/visible-texts",
+            "ui/texts/cache",
+            "ui/visible-text/cache",
+            "ui/visible-texts/cache",
+            "ui/diagnose",
+            "ui/diagnostics",
+            "diagnostics",
         )
     }
 
@@ -121,24 +133,33 @@ class ActionDispatcher(
 
             "global" -> apiHandler.performGlobalAction(params.optInt("action", 0))
 
-            "a11y_tree", "tree", "ui/tree" -> apiHandler.getTree()
+            "a11y_tree", "tree", "ui/tree" -> apiHandler.getTree(packageName(params))
 
             "a11y_tree_full", "tree/full", "ui/tree/full" ->
-                apiHandler.getTreeFull(params.optBoolean("filter", true))
+                apiHandler.getTreeFull(params.optBoolean("filter", true), packageName(params))
 
             "phone_state", "phone-state", "ui/phone-state" -> apiHandler.getPhoneState()
 
-            "state" -> apiHandler.getState()
+            "state" -> apiHandler.getState(packageName(params))
 
-            "state_full", "state/full" -> apiHandler.getStateFull(params.optBoolean("filter", true))
+            "state_full", "state/full" ->
+                apiHandler.getStateFull(params.optBoolean("filter", true), packageName(params))
 
             "state/connection", "connection/state" -> apiHandler.getConnectionState()
 
             "a11y_tree/cache", "tree/cache", "ui/tree/cache" ->
-                apiHandler.cacheTree(full = false, filter = params.optBoolean("filter", true))
+                apiHandler.cacheTree(
+                    full = false,
+                    filter = params.optBoolean("filter", true),
+                    packageName = packageName(params),
+                )
 
             "a11y_tree_full/cache", "tree/full/cache", "ui/tree/full/cache" ->
-                apiHandler.cacheTree(full = true, filter = params.optBoolean("filter", true))
+                apiHandler.cacheTree(
+                    full = true,
+                    filter = params.optBoolean("filter", true),
+                    packageName = packageName(params),
+                )
 
             "phone_state/cache", "phone-state/cache", "ui/phone-state/cache" ->
                 apiHandler.cachePhoneState()
@@ -146,10 +167,27 @@ class ActionDispatcher(
             "packages/cache" -> apiHandler.cachePackages()
 
             "state/cache" ->
-                apiHandler.cacheState(full = false, filter = params.optBoolean("filter", true))
+                apiHandler.cacheState(
+                    full = false,
+                    filter = params.optBoolean("filter", true),
+                    packageName = packageName(params),
+                )
 
             "state_full/cache", "state/full/cache" ->
-                apiHandler.cacheState(full = true, filter = params.optBoolean("filter", true))
+                apiHandler.cacheState(
+                    full = true,
+                    filter = params.optBoolean("filter", true),
+                    packageName = packageName(params),
+                )
+
+            "ui/windows", "windows", "window/list" -> apiHandler.getWindows()
+
+            "ui/texts", "ui/visible-text", "ui/visible-texts" -> apiHandler.getVisibleTexts(params)
+
+            "ui/texts/cache", "ui/visible-text/cache", "ui/visible-texts/cache" ->
+                apiHandler.cacheVisibleTexts(params)
+
+            "ui/diagnose", "ui/diagnostics", "diagnostics" -> apiHandler.getDiagnostics(params)
 
             "node/action", "element/action", "ui/action" -> apiHandler.performNodeAction(params)
 
@@ -357,6 +395,14 @@ class ActionDispatcher(
             method == "mode_status" ||
             method == "triggers" ||
             method.startsWith("triggers/")
+
+    private fun packageName(params: JSONObject): String? {
+        return params.optString("packageName")
+            .ifBlank { params.optString("package_name") }
+            .ifBlank { params.optString("package") }
+            .trim()
+            .takeIf { it.isNotEmpty() && it != "null" }
+    }
 
     private fun shouldAuditBridgeAction(method: String): Boolean =
         !NOISY_AUDIT_METHODS.contains(method)

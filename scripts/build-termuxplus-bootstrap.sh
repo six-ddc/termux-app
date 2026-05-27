@@ -34,6 +34,7 @@ TERMUX_BOOTSTRAP_HOME_AGENTS_FILE="${TERMUX_BOOTSTRAP_HOME_AGENTS_FILE:-$PROJECT
 TERMUX_BOOTSTRAP_HOME_CODEX_DIR="${TERMUX_BOOTSTRAP_HOME_CODEX_DIR:-$PROJECT_DIR/bootstrap/home/.codex}"
 TERMUX_BOOTSTRAP_INCLUDE_ANDROID_CLI="${TERMUX_BOOTSTRAP_INCLUDE_ANDROID_CLI:-true}"
 TERMUX_BOOTSTRAP_ANDROID_CLI_FILE="${TERMUX_BOOTSTRAP_ANDROID_CLI_FILE:-$PROJECT_DIR/bootstrap/bin/tp-android}"
+TERMUX_BOOTSTRAP_TERMINAL_HOME_CLI_FILE="${TERMUX_BOOTSTRAP_TERMINAL_HOME_CLI_FILE:-$PROJECT_DIR/bootstrap/bin/tp-home}"
 TERMUX_BOOTSTRAP_CONTAINER_NAME="${TERMUX_BOOTSTRAP_CONTAINER_NAME:-termux-bootstrap-generator}"
 
 if [ "$TERMUX_PACKAGE_NAME" != "com.termux" ] || [ "$TERMUX_PREFIX" != "/data/data/com.termux/files/usr" ]; then
@@ -76,6 +77,10 @@ case "$TERMUX_BOOTSTRAP_INCLUDE_ANDROID_CLI" in
 esac
 if [ "$TERMUX_BOOTSTRAP_INCLUDE_ANDROID_CLI" = "true" ] && [ ! -f "$TERMUX_BOOTSTRAP_ANDROID_CLI_FILE" ]; then
   echo "TERMUX_BOOTSTRAP_ANDROID_CLI_FILE does not exist: $TERMUX_BOOTSTRAP_ANDROID_CLI_FILE" >&2
+  exit 1
+fi
+if [ "$TERMUX_BOOTSTRAP_INCLUDE_ANDROID_CLI" = "true" ] && [ ! -f "$TERMUX_BOOTSTRAP_TERMINAL_HOME_CLI_FILE" ]; then
+  echo "TERMUX_BOOTSTRAP_TERMINAL_HOME_CLI_FILE does not exist: $TERMUX_BOOTSTRAP_TERMINAL_HOME_CLI_FILE" >&2
   exit 1
 fi
 
@@ -443,11 +448,13 @@ inject_android_cli_file() {
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/termux-android-cli-files.XXXXXXXX")"
   mkdir -p "$temp_dir/bin"
   cp "$TERMUX_BOOTSTRAP_ANDROID_CLI_FILE" "$temp_dir/bin/tp-android"
+  cp "$TERMUX_BOOTSTRAP_TERMINAL_HOME_CLI_FILE" "$temp_dir/bin/tp-home"
   chmod 755 "$temp_dir/bin/tp-android"
+  chmod 755 "$temp_dir/bin/tp-home"
 
   while IFS= read -r zip_entry; do
     delete_entries+=("$zip_entry")
-  done < <(unzip -Z1 "$bootstrap_zip" | grep -E '^bin/tp-android$' || true)
+  done < <(unzip -Z1 "$bootstrap_zip" | grep -E '^bin/(tp-android|tp-home)$' || true)
 
   if [ "${#delete_entries[@]}" -gt 0 ]; then
     zip -q -d "$bootstrap_zip" "${delete_entries[@]}" >/dev/null
@@ -646,6 +653,7 @@ validate_bootstrap_zip() {
   fi
   if [ "$TERMUX_BOOTSTRAP_INCLUDE_ANDROID_CLI" = "true" ]; then
     required_entries+=(bin/tp-android)
+    required_entries+=(bin/tp-home)
   fi
   if csv_contains_package "$(bootstrap_packages_csv)" "python"; then
     required_entries+=(var/lib/dpkg/info/python.list)

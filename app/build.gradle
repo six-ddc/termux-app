@@ -397,7 +397,8 @@ afterEvaluate {
         )
         def termuxPlusCliGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-cli")
         def termuxPlusCliAssetDir = file("$buildDir/generated/assets/termuxplus-cli/termuxplus/bin")
-        def termuxPlusCliSource = rootProject.file("bootstrap/bin/tp-android")
+        def termuxPlusCliNames = ["tp-android", "tp-home"]
+        def termuxPlusCliSources = termuxPlusCliNames.collect { rootProject.file("bootstrap/bin/${it}") }
         def termuxPlusHomeGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-home")
         def termuxPlusHomeAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/home")
         def termuxPlusSkillsAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/codex-skills")
@@ -427,17 +428,21 @@ afterEvaluate {
             }
         }
         def copyTermuxPlusCliAssetTask = tasks.register("copyTermuxPlusCli${autoTermuxVariantName}Asset") {
-            inputs.file(termuxPlusCliSource)
+            inputs.files(termuxPlusCliSources)
             outputs.dir(termuxPlusCliGeneratedAssetsRoot)
             doLast {
-                if (!termuxPlusCliSource.isFile()) {
-                    throw new GradleException("TermuxPlus CLI source was not found at ${termuxPlusCliSource}")
+                termuxPlusCliSources.each { source ->
+                    if (!source.isFile()) {
+                        throw new GradleException("TermuxPlus CLI source was not found at ${source}")
+                    }
                 }
 
                 project.delete(termuxPlusCliGeneratedAssetsRoot)
                 termuxPlusCliAssetDir.mkdirs()
-                def targetCli = new File(termuxPlusCliAssetDir, "tp-android")
-                targetCli.bytes = termuxPlusCliSource.bytes
+                termuxPlusCliSources.each { source ->
+                    def targetCli = new File(termuxPlusCliAssetDir, source.name)
+                    targetCli.bytes = source.bytes
+                }
             }
         }
         def copyTermuxPlusHomeAssetTask = tasks.register("copyTermuxPlusHome${autoTermuxVariantName}Asset") {

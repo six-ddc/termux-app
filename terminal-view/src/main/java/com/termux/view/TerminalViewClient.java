@@ -28,6 +28,8 @@ public interface TerminalViewClient {
      */
     void onSingleTapUp(MotionEvent e);
 
+    boolean onFling(MotionEvent e, float velocityX, float velocityY);
+
     boolean shouldBackButtonBeMappedToEscape();
 
     boolean shouldEnforceCharBasedInput();

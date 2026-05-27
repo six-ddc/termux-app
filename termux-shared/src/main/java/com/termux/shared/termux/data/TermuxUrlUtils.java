@@ -39,7 +39,9 @@ public class TermuxUrlUtils {
         regex_sb.append("svn(?:(?:\\+ssh)?)|");     // The Subversion proto.
         regex_sb.append("tcp|");                    // The TCP proto.
         regex_sb.append("telnet|");                 // The Telnet proto.
+        regex_sb.append("termuxplus|");             // TermuxPlus terminal home actions.
         regex_sb.append("tftp|");                   // The TFTP proto.
+        regex_sb.append("tp|");                     // Short TermuxPlus terminal home actions.
         regex_sb.append("udp|");                    // The UDP proto.
         regex_sb.append("vnc|");                    // The VNC proto.
         regex_sb.append("ws(?:s?)");                // The Websocket proto.

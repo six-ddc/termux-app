@@ -17,35 +17,40 @@ import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH;
 
 final class TermuxPlusCliInstaller {
     private static final String LOG_TAG = "TermuxPlusCliInstaller";
-    private static final String TP_ANDROID_ASSET_PATH = "termuxplus/bin/tp-android";
-    private static final String TP_ANDROID_TARGET_PATH = TERMUX_PREFIX_DIR_PATH + "/bin/tp-android";
+    private static final String TERMUXPLUS_BIN_ASSET_DIR_PATH = "termuxplus/bin";
+    private static final String[] CLI_NAMES = new String[] {"tp-android", "tp-home"};
     private static final int EXECUTABLE_FILE_MODE = 0700;
 
     private TermuxPlusCliInstaller() {}
 
     static void syncBundledCliIfNeeded(Context context) {
+        for (String cliName : CLI_NAMES)
+            syncBundledCliIfNeeded(context, cliName);
+    }
+
+    private static void syncBundledCliIfNeeded(Context context, String cliName) {
         try {
-            File targetFile = new File(TP_ANDROID_TARGET_PATH);
+            File targetFile = new File(TERMUX_PREFIX_DIR_PATH + "/bin/" + cliName);
             File targetDirectory = targetFile.getParentFile();
             if (targetDirectory == null || !targetDirectory.isDirectory()) {
                 return;
             }
 
-            byte[] bundledCli = readAsset(context, TP_ANDROID_ASSET_PATH);
+            byte[] bundledCli = readAsset(context, TERMUXPLUS_BIN_ASSET_DIR_PATH + "/" + cliName);
             if (targetFile.isFile() && Arrays.equals(sha256(bundledCli), sha256(targetFile))) {
                 Os.chmod(targetFile.getAbsolutePath(), EXECUTABLE_FILE_MODE);
                 return;
             }
 
-            File tempFile = new File(targetDirectory, ".tp-android.tmp");
+            File tempFile = new File(targetDirectory, "." + cliName + ".tmp");
             try (FileOutputStream outputStream = new FileOutputStream(tempFile, false)) {
                 outputStream.write(bundledCli);
             }
             Os.chmod(tempFile.getAbsolutePath(), EXECUTABLE_FILE_MODE);
             Os.rename(tempFile.getAbsolutePath(), targetFile.getAbsolutePath());
-            Logger.logInfo(LOG_TAG, "Synced bundled tp-android CLI to " + TP_ANDROID_TARGET_PATH);
+            Logger.logInfo(LOG_TAG, "Synced bundled " + cliName + " CLI to " + targetFile.getAbsolutePath());
         } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to sync bundled tp-android CLI", e);
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to sync bundled " + cliName + " CLI", e);
         }
     }
 

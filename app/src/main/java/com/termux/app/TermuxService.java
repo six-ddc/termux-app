@@ -21,6 +21,7 @@ import androidx.annotation.Nullable;
 import com.termux.R;
 import com.termux.app.event.SystemEventReceiver;
 import com.termux.app.terminal.TermuxFloatingTerminalController;
+import com.termux.app.terminal.TermuxTerminalHomeBridge;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
@@ -103,6 +104,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
      * Small overlay terminal used while Termux is in the background and another app is being automated.
      */
     private TermuxFloatingTerminalController mFloatingTerminalController;
+    private TermuxTerminalHomeBridge mTerminalHomeBridge;
 
     /** The wake lock and wifi lock are always acquired and released together. */
     private PowerManager.WakeLock mWakeLock;
@@ -123,8 +125,10 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         mShellManager = TermuxShellManager.getShellManager();
         mFloatingTerminalController = new TermuxFloatingTerminalController(this);
+        mTerminalHomeBridge = new TermuxTerminalHomeBridge(this);
 
         runStartForeground();
+        mTerminalHomeBridge.start();
 
         SystemEventReceiver.registerPackageUpdateEvents(this);
     }
@@ -196,6 +200,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         if (mFloatingTerminalController != null)
             mFloatingTerminalController.hide();
+        if (mTerminalHomeBridge != null)
+            mTerminalHomeBridge.stop();
 
         runStopForeground();
     }
@@ -642,6 +648,62 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         TermuxActivity.updateTermuxActivityStyling(this, false);
 
         return newTermuxSession;
+    }
+
+    @Nullable
+    public synchronized TermuxSession createTermuxSessionForTerminalHome(@Nullable String command,
+                                                                         @Nullable String sessionName,
+                                                                         @Nullable String workingDirectory) {
+        TerminalSession currentSession = getCurrentStoredTerminalSessionOrLast();
+        String cwd = workingDirectory;
+        if (DataUtils.isNullOrEmpty(cwd) && currentSession != null)
+            cwd = currentSession.getCwd();
+        if (DataUtils.isNullOrEmpty(cwd))
+            cwd = mProperties.getDefaultWorkingDirectory();
+
+        if (DataUtils.isNullOrEmpty(command))
+            return createTermuxSession(null, null, null, cwd, false, sessionName);
+
+        String shellPath = TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/bin/sh";
+        String[] args = new String[]{"-lc", command};
+        String name = DataUtils.isNullOrEmpty(sessionName) ? command : sessionName;
+        return createTermuxSession(shellPath, args, null, cwd, false, name);
+    }
+
+    public synchronized boolean switchToTermuxSession(TerminalSession terminalSession) {
+        if (terminalSession == null || getIndexOfSession(terminalSession) < 0)
+            return false;
+
+        setCurrentStoredTerminalSession(terminalSession);
+        if (mTermuxTerminalSessionActivityClient != null)
+            mTermuxTerminalSessionActivityClient.setCurrentSession(terminalSession);
+        return true;
+    }
+
+    public synchronized boolean switchToTermuxSession(int index) {
+        TermuxSession termuxSession = getTermuxSession(index);
+        return termuxSession != null && switchToTermuxSession(termuxSession.getTerminalSession());
+    }
+
+    public synchronized boolean switchToAdjacentTermuxSession(boolean forward) {
+        int size = getTermuxSessionsSize();
+        if (size == 0) return false;
+
+        int index = getCurrentTermuxSessionIndex();
+        if (index < 0) index = 0;
+        if (forward) {
+            index++;
+            if (index >= size) index = 0;
+        } else {
+            index--;
+            if (index < 0) index = size - 1;
+        }
+        return switchToTermuxSession(index);
+    }
+
+    public synchronized int getCurrentTermuxSessionIndex() {
+        TerminalSession currentSession = getCurrentStoredTerminalSessionOrLast();
+        return getIndexOfSession(currentSession);
     }
 
     /** Remove a TermuxSession. */

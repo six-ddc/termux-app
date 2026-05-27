@@ -1,0 +1,288 @@
+#!/data/data/com.termux/files/usr/bin/python
+"""Terminal-first Android home commands for TermuxPlus."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import socket
+import sys
+from typing import Any, Dict, Iterable, List, Optional
+
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8077
+HOME = os.environ.get("HOME", "/data/data/com.termux/files/home")
+LAUNCHER_DIR = os.path.join(HOME, ".termuxplus", "launcher")
+STATE_PATH = os.path.join(LAUNCHER_DIR, "bridge.json")
+TOKEN_PATH = os.path.join(LAUNCHER_DIR, "bridge-token")
+APPS_CACHE_PATH = os.path.join(LAUNCHER_DIR, "apps.json")
+
+
+class BridgeError(RuntimeError):
+    pass
+
+
+def load_json_file(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_state() -> Dict[str, Any]:
+    try:
+        return load_json_file(STATE_PATH)
+    except Exception:
+        return {
+            "host": DEFAULT_HOST,
+            "port": DEFAULT_PORT,
+            "tokenPath": TOKEN_PATH,
+            "appsPath": APPS_CACHE_PATH,
+            "scheme": "termuxplus",
+        }
+
+
+def load_token(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            token = handle.readline().strip()
+            if token:
+                return token
+    except OSError:
+        pass
+    raise BridgeError("terminal home bridge is not running; open Termux first")
+
+
+def bridge_request(action: str, **payload: Any) -> Dict[str, Any]:
+    state = load_state()
+    token = load_token(str(state.get("tokenPath") or TOKEN_PATH))
+    request = {"token": token, "action": action}
+    request.update({key: value for key, value in payload.items() if value is not None})
+
+    host = str(state.get("host") or DEFAULT_HOST)
+    port = int(state.get("port") or DEFAULT_PORT)
+    try:
+        with socket.create_connection((host, port), timeout=4.0) as sock:
+            sock.sendall((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+            response = read_line(sock)
+    except OSError as exc:
+        raise BridgeError(f"cannot connect to terminal home bridge on {host}:{port}: {exc}") from exc
+
+    try:
+        data = json.loads(response)
+    except json.JSONDecodeError as exc:
+        raise BridgeError(f"invalid bridge response: {response!r}") from exc
+
+    if not data.get("ok"):
+        raise BridgeError(str(data.get("error") or "bridge request failed"))
+    return data
+
+
+def read_line(sock: socket.socket) -> str:
+    chunks: List[bytes] = []
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if b"\n" in chunk:
+            break
+    data = b"".join(chunks)
+    return data.split(b"\n", 1)[0].decode("utf-8", "replace")
+
+
+def load_cached_apps(query: str = "") -> List[Dict[str, Any]]:
+    try:
+        apps = load_json_file(APPS_CACHE_PATH).get("apps", [])
+    except Exception:
+        apps = []
+    if not query:
+        return list(apps)
+
+    normalized = query.lower()
+    return [
+        app for app in apps
+        if normalized in str(app.get("label", "")).lower()
+        or normalized in str(app.get("alias", "")).lower()
+        or normalized in str(app.get("package", "")).lower()
+    ]
+
+
+def fetch_apps(query: str = "") -> List[Dict[str, Any]]:
+    try:
+        return list(bridge_request("apps", query=query).get("apps", []))
+    except BridgeError:
+        return load_cached_apps(query)
+
+
+def print_apps(apps: Iterable[Dict[str, Any]], links: bool) -> None:
+    for app in apps:
+        alias = str(app.get("alias") or "")
+        label = str(app.get("label") or "")
+        package = str(app.get("package") or "")
+        print(f"{alias:<22} {label:<30} {package}")
+        if links:
+            print(f"  {app.get('url', '')}")
+
+
+def command_apps(args: argparse.Namespace) -> int:
+    query = " ".join(args.query).strip()
+    apps = fetch_apps(query)
+    print_apps(apps, links=not args.plain)
+    if not apps:
+        print("no apps found", file=sys.stderr)
+        return 1
+    return 0
+
+
+def command_open(args: argparse.Namespace) -> int:
+    target = " ".join(args.target).strip()
+    response = bridge_request("launch", target=target)
+    print(response.get("message", "launched"))
+    return 0
+
+
+def command_link(args: argparse.Namespace) -> int:
+    target = " ".join(args.target).strip()
+    apps = fetch_apps(target)
+    if not apps:
+        print(f"app not found: {target}", file=sys.stderr)
+        return 1
+    print(apps[0].get("url", ""))
+    return 0
+
+
+def command_tab(args: argparse.Namespace) -> int:
+    op = args.tab_command
+    if op == "list":
+        response = bridge_request("tab", op="list")
+        print_sessions(response.get("sessions", []))
+        return 0
+    if op == "new":
+        command = command_string(args.command)
+        response = bridge_request("tab", op="new", name=args.name, command=command)
+        print(response.get("message", "created tab"))
+        print_sessions(response.get("sessions", []))
+        return 0
+    if op == "next":
+        response = bridge_request("tab", op="next")
+        print_sessions(response.get("sessions", []))
+        return 0
+    if op == "prev":
+        response = bridge_request("tab", op="prev")
+        print_sessions(response.get("sessions", []))
+        return 0
+    if op == "select":
+        response = bridge_request("tab", op="select", index=args.index - 1)
+        print_sessions(response.get("sessions", []))
+        return 0
+    raise BridgeError(f"unknown tab command: {op}")
+
+
+def command_string(parts: Optional[List[str]]) -> Optional[str]:
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return shlex.join(parts)
+
+
+def print_sessions(sessions: Iterable[Dict[str, Any]]) -> None:
+    for session in sessions:
+        marker = "*" if session.get("current") else " "
+        index = int(session.get("index") or 0)
+        name = str(session.get("name") or session.get("title") or f"tab-{index}")
+        state = "running" if session.get("running") else f"exit {session.get('exitStatus', '')}".strip()
+        cwd = str(session.get("cwd") or "")
+        print(f"{marker} {index:>2} {state:<8} {name}")
+        if cwd:
+            print(f"     {cwd}")
+
+
+def command_refresh(args: argparse.Namespace) -> int:
+    del args
+    response = bridge_request("refresh")
+    print(response.get("appsPath", APPS_CACHE_PATH))
+    return 0
+
+
+def command_status(args: argparse.Namespace) -> int:
+    del args
+    response = bridge_request("ping")
+    print(f"terminal home bridge: 127.0.0.1:{response.get('port', DEFAULT_PORT)}")
+    return 0
+
+
+def command_home(args: argparse.Namespace) -> int:
+    response = bridge_request("home", op=args.home_command)
+    message = response.get("message")
+    if message:
+        print(message)
+
+    enabled = bool(response.get("enabled"))
+    print(f"home candidate: {'enabled' if enabled else 'disabled'}")
+    print(f"component: {response.get('component', '')}")
+    if enabled:
+        print("Choose it under Android Settings > Apps > Default apps > Home app.")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="tp-home",
+        description="Use Android as a terminal-first home screen.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    apps = subparsers.add_parser("apps", help="list launchable Android apps")
+    apps.add_argument("query", nargs="*", help="optional app search text")
+    apps.add_argument("--plain", action="store_true", help="hide clickable termuxplus:// links")
+    apps.set_defaults(func=command_apps)
+
+    open_app = subparsers.add_parser("open", help="launch an Android app")
+    open_app.add_argument("target", nargs="+", help="app label, alias, package, or activity")
+    open_app.set_defaults(func=command_open)
+
+    link = subparsers.add_parser("link", help="print a clickable app launch URL")
+    link.add_argument("target", nargs="+", help="app label, alias, package, or activity")
+    link.set_defaults(func=command_link)
+
+    tab = subparsers.add_parser("tab", aliases=["desktop"], help="use terminal tabs as desktop pages")
+    tab_subparsers = tab.add_subparsers(dest="tab_command", required=True)
+    tab_subparsers.add_parser("list", help="list terminal desktop tabs").set_defaults(func=command_tab)
+    tab_subparsers.add_parser("next", help="switch to next tab").set_defaults(func=command_tab)
+    tab_subparsers.add_parser("prev", aliases=["previous"], help="switch to previous tab").set_defaults(func=command_tab)
+
+    select = tab_subparsers.add_parser("select", help="switch to a 1-based tab index")
+    select.add_argument("index", type=int)
+    select.set_defaults(func=command_tab)
+
+    new = tab_subparsers.add_parser("new", help="create a new terminal desktop tab")
+    new.add_argument("-n", "--name", help="tab name")
+    new.add_argument("command", nargs=argparse.REMAINDER, help="optional command to run in the tab")
+    new.set_defaults(func=command_tab)
+
+    subparsers.add_parser("refresh", help="refresh cached Android app list").set_defaults(func=command_refresh)
+    subparsers.add_parser("status", help="show bridge status").set_defaults(func=command_status)
+
+    home = subparsers.add_parser("home", help="enable or disable Termux as a Home candidate")
+    home_subparsers = home.add_subparsers(dest="home_command", required=True)
+    home_subparsers.add_parser("status", help="show Home candidate status").set_defaults(func=command_home)
+    home_subparsers.add_parser("enable", help="make Termux selectable as Android Home").set_defaults(func=command_home)
+    home_subparsers.add_parser("disable", help="remove Termux from Android Home candidates").set_defaults(func=command_home)
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args) or 0)
+    except BridgeError as exc:
+        print(f"tp-home: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

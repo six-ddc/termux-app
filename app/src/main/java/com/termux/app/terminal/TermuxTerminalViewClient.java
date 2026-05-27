@@ -189,6 +189,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
             if (!urlSet.isEmpty()) {
                 String url = (String) urlSet.iterator().next();
+                if (TermuxTerminalHomeBridge.handleTerminalUrl(mActivity, url))
+                    return;
                 ShareUtils.openUrl(mActivity, url);
                 return;
             }
@@ -200,6 +202,18 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             else
                 Logger.logVerbose(LOG_TAG, "Not showing soft keyboard onSingleTapUp since its disabled");
         }
+    }
+
+    @Override
+    public boolean onFling(MotionEvent e, float velocityX, float velocityY) {
+        if (Math.abs(velocityX) <= Math.abs(velocityY) * 1.35f)
+            return false;
+        if (mActivity.getTermuxService() == null || mActivity.getTermuxService().getTermuxSessionsSize() <= 1)
+            return false;
+
+        // Left swipe moves to the next terminal desktop, right swipe to the previous one.
+        mTermuxTerminalSessionActivityClient.switchToSession(velocityX < 0);
+        return true;
     }
 
     @Override
@@ -703,6 +717,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             lv.setOnItemLongClickListener((parent, view, position, id) -> {
                 dialog.dismiss();
                 String url = (String) urls[position];
+                if (TermuxTerminalHomeBridge.handleTerminalUrl(mActivity, url))
+                    return true;
                 ShareUtils.openUrl(mActivity, url);
                 return true;
             });

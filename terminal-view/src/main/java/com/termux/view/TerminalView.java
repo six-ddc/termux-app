@@ -196,6 +196,10 @@ public final class TerminalView extends View {
             @Override
             public boolean onFling(final MotionEvent e2, float velocityX, float velocityY) {
                 if (mEmulator == null) return true;
+                if (!isSelectingText() && Math.abs(velocityX) > Math.abs(velocityY) * 1.35f && Math.abs(velocityX) > 900f) {
+                    if (mClient.onFling(e2, velocityX, velocityY))
+                        return true;
+                }
                 // Do not start scrolling until last fling has been taken care of:
                 if (!mScroller.isFinished()) return true;
 

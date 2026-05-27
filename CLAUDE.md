@@ -70,12 +70,6 @@ Termux/Codex 或 bridge 可能被系统杀掉；`tp-android` 可能显示 `Broad
 TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
 ```
 
-使用自定义 bootstrap 时须指定包含 `bootstrap-aarch64.zip` 等文件的目录：
-
-```sh
-TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
-```
-
 构建 AutoTermux：
 
 ```sh
@@ -105,21 +99,17 @@ adb -s <device> shell am start -n com.termux/com.termux.app.TermuxActivity
 
 ## Bootstrap
 
-- 入口脚本：`scripts/build-termuxplus-bootstrap.sh`
-- 缓存根目录：`.termuxplus-cache/`（不提交）
-- 输出目录：`bootstrap-output/`（不提交）
-- `TERMUX_BOOTSTRAP_REUSE_GENERATED=auto`：复用包列表匹配的已生成 zip；需强制刷新时设为 `false`
-- 默认基础包：`zsh,zsh-completions,python`；追加包用 `TERMUX_BOOTSTRAP_ADD_PACKAGES`
-- oh-my-zsh 注入到 `$PREFIX/share/termuxplus/oh-my-zsh` 和 `$PREFIX/etc/zshrc`
-- Codex CLI 对 aarch64/x86_64 以 `TERMUX_BOOTSTRAP_INCLUDE_CODEX=auto` 注入，含 `nodejs,npm,proot,ca-certificates` 和工具层 `git,ripgrep,fd,jq,openssh,make`
-- Termux home 模板来自 `bootstrap/home/`，首启后复制为 `$HOME/AGENTS.md`（0600）和 `$HOME/.codex/skills/`；`tp-android` Codex skill 定义在 `bootstrap/home/.codex/skills/tp-android/SKILL.md`
-- App 首启**不**写入 `~/.zshrc`，也**不**联网安装 zsh/oh-my-zsh/Codex
+- 只使用官方 Termux bootstrap zip。`app/build.gradle` 从 `termux/termux-packages` release 下载官方 `bootstrap-<arch>.zip`，并用固定 SHA-256 校验。
+- 自定义 bootstrap 生成/注入流程已移除，不要恢复 `TERMUX_BOOTSTRAP_DIR`、`bootstrap-output/`、`.termuxplus-cache/` 或 `scripts/build-termuxplus-bootstrap.sh`。
+- `TERMUX_BOOTSTRAP_ARCHS` 只用于选择构建/下载哪些官方架构 zip，以及控制 ABI split；它不是自定义 bootstrap 入口。
+- TermuxPlus 自带内容通过 APK assets 打包，不写进 bootstrap zip：`bootstrap/home/` 首启后复制到 `$HOME`，`bootstrap/bin/tp-android` 首启后复制到 `$PREFIX/bin/tp-android`。
+- 按需安装工具脚本位于 `bootstrap/home/.termuxplus/scripts/`，首启后同步到 `$HOME/.termuxplus/scripts/`。zsh、oh-my-zsh、Codex、Claude Code、Python 等都通过这些脚本由用户手动安装。
+- App 首启**不**写入 `~/.zshrc`，也**不**联网安装 zsh/oh-my-zsh/Codex/Claude Code。
 
 常用构建：
 
 ```sh
-TERMUX_BOOTSTRAP_ARCHS=aarch64 ./scripts/build-termuxplus-bootstrap.sh
-TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
+TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
 ```
 
 ## App 模块架构（`:app`）
@@ -131,7 +121,7 @@ TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :
 - **Snippets**：内置 JSON schema（`app/src/main/assets/termuxplus/snippets.json`），用户配置写入 `~/.termuxplus/snippets.json`；字段：`id, title, description, command, category, tags, mode`（mode 只有 `insert` 和 `run` 两值）；Java 模型在 `terminal/io/TermuxPlusSnippet.java`，存储库在 `TermuxPlusSnippetRepository.java`
 - **悬浮终端**：后台运行时出现 `TP` 气泡（`TermuxFloatingTerminalController`），点击展开半透明小终端，直接复用当前 TerminalSession
 - **AutoTermux 集成**：`app/src/main/java/com/termux/app/autotermux/` 包含安装引导（`AutoTermuxInstallActivity`、`AutoTermuxInstallReceiver`）和 APK provider（`AutoTermuxApkProvider`）
-- **Bootstrap 安装后处理**：`TermuxPlusCliInstaller`（安装 `tp-android` CLI）、`TermuxPlusHomeInstaller`（复制 home 模板文件）
+- **官方 Bootstrap 安装后处理**：`TermuxPlusCliInstaller`（安装 `tp-android` CLI）、`TermuxPlusHomeInstaller`（复制 home 模板文件和按需安装脚本）
 
 ## AutoTermux 模块架构（`:autotermux`）
 
@@ -176,7 +166,7 @@ TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :
 
 ## tp-android CLI
 
-`bootstrap/bin/tp-android` 是 227KB Python 脚本（v0.5.0），构建时注入到 `$PREFIX/bin/tp-android`。默认 transport 是 signature-protected broadcast bridge（`TermuxAutomationBridgeReceiver`）；HTTP transport 仅在显式使用 `tp-android server` 命令或 `--transport=http` 时才启动（`127.0.0.1:8080`）。用户配置读自 `~/.termuxplus/android-automation.json`。完整命令集运行 `tp-android --help` 查看。
+`bootstrap/bin/tp-android` 是 227KB Python 脚本（v0.5.0），构建时作为 APK asset 打包，首启后复制到 `$PREFIX/bin/tp-android`。默认 transport 是 signature-protected broadcast bridge（`TermuxAutomationBridgeReceiver`）；HTTP transport 仅在显式使用 `tp-android server` 命令或 `--transport=http` 时才启动（`127.0.0.1:8080`）。用户配置读自 `~/.termuxplus/android-automation.json`。完整命令集运行 `tp-android --help` 查看。
 
 ## 设置页架构
 
@@ -189,7 +179,7 @@ TERMUX_BOOTSTRAP_DIR=bootstrap-output TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :
 ## Git Hygiene
 
 - 工作区可能包含用户改动，不要回滚未明确要求回滚的内容。
-- 提交前运行与改动相关的最小验证：`bash -n scripts/build-termuxplus-bootstrap.sh`、`git diff --check`、相关 Gradle 构建。
+- 提交前运行与改动相关的最小验证：`git diff --check`、相关 shell 脚本 `sh -n`/`bash -n`、相关 Gradle 构建。
 
 ## 设备测试的陷阱
 

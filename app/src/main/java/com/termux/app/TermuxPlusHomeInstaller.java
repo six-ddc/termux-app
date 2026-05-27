@@ -22,154 +22,100 @@ final class TermuxPlusHomeInstaller {
     private static final String PREFIX_HOME_SOURCE_DIR_PATH = TERMUX_PREFIX_DIR_PATH + "/share/termuxplus/home";
     private static final String PREFIX_AGENTS_SOURCE_FILE_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/AGENTS.md";
     private static final String PREFIX_SKILLS_SOURCE_DIR_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/.codex/skills";
+    private static final String PREFIX_SCRIPTS_SOURCE_DIR_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/.termuxplus/scripts";
 
     private static final String ASSET_AGENTS_SOURCE_FILE_PATH = "termuxplus/home/AGENTS.md";
     private static final String ASSET_SKILLS_SOURCE_DIR_PATH = "termuxplus/codex-skills";
+    private static final String ASSET_SCRIPTS_SOURCE_DIR_PATH = "termuxplus/home-scripts";
 
     private static final String HOME_AGENTS_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/AGENTS.md";
     private static final String HOME_SKILLS_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.codex/skills";
-    private static final String HOME_TERMUX_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termux";
-    private static final String HOME_TERMUX_SHELL_TARGET_FILE_PATH = HOME_TERMUX_TARGET_DIR_PATH + "/shell";
-    private static final String HOME_ZSHRC_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zshrc";
-    private static final String PREFIX_ZSH_EXECUTABLE_FILE_PATH = TERMUX_PREFIX_DIR_PATH + "/bin/zsh";
+    private static final String HOME_TERMUXPLUS_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termuxplus";
+    private static final String HOME_SCRIPTS_TARGET_DIR_PATH = HOME_TERMUXPLUS_TARGET_DIR_PATH + "/scripts";
 
     private static final int PRIVATE_DIRECTORY_MODE = 0700;
     private static final int PRIVATE_FILE_MODE = 0600;
+    private static final int EXECUTABLE_FILE_MODE = 0700;
+
+    private static final HomeTemplateEntry[] HOME_TEMPLATE_ENTRIES = new HomeTemplateEntry[] {
+        HomeTemplateEntry.file(
+            "TermuxPlus home AGENTS.md",
+            PREFIX_AGENTS_SOURCE_FILE_PATH,
+            ASSET_AGENTS_SOURCE_FILE_PATH,
+            HOME_AGENTS_TARGET_FILE_PATH,
+            PRIVATE_FILE_MODE
+        ),
+        HomeTemplateEntry.directory(
+            "TermuxPlus home Codex skill",
+            PREFIX_SKILLS_SOURCE_DIR_PATH,
+            ASSET_SKILLS_SOURCE_DIR_PATH,
+            HOME_SKILLS_TARGET_DIR_PATH,
+            PRIVATE_FILE_MODE
+        ),
+        HomeTemplateEntry.directory(
+            "TermuxPlus home script",
+            PREFIX_SCRIPTS_SOURCE_DIR_PATH,
+            ASSET_SCRIPTS_SOURCE_DIR_PATH,
+            HOME_SCRIPTS_TARGET_DIR_PATH,
+            EXECUTABLE_FILE_MODE
+        )
+    };
 
     private TermuxPlusHomeInstaller() {}
 
     static void syncBundledHomeFilesIfAvailable(Context context) {
         try {
-            installDefaultShellIfMissing();
-            installDefaultZshrcIfMissing();
-            installAgentsFile(context);
-            installSkills(context);
+            for (HomeTemplateEntry entry : HOME_TEMPLATE_ENTRIES) {
+                syncHomeTemplateEntry(context, entry);
+            }
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to sync TermuxPlus home files", e);
         }
     }
 
-    private static void installDefaultShellIfMissing() throws Exception {
-        File zshExecutableFile = new File(PREFIX_ZSH_EXECUTABLE_FILE_PATH);
-        if (!zshExecutableFile.canExecute() || FileUtils.fileExists(HOME_TERMUX_SHELL_TARGET_FILE_PATH, false)) {
+    private static void syncHomeTemplateEntry(Context context, HomeTemplateEntry entry) throws Exception {
+        File targetFile = new File(entry.homeTargetPath);
+        if (entry.isDirectory) {
+            copyPrefixDirectoryContentsIfExists(entry.label, new File(entry.prefixSourcePath), targetFile, entry.fileMode);
+            copyAssetDirectoryContentsIfExists(context, entry.assetSourcePath, targetFile, entry.fileMode);
             return;
         }
 
-        ensureDirectory(new File(HOME_TERMUX_TARGET_DIR_PATH));
-        Error error = FileUtils.createSymlinkFile("TermuxPlus default shell", PREFIX_ZSH_EXECUTABLE_FILE_PATH,
-            HOME_TERMUX_SHELL_TARGET_FILE_PATH, false, false, true);
-        if (error != null) {
-            throw new RuntimeException(Error.getMinimalErrorString(error));
-        }
+        copyPrefixFileIfExists(entry.label, entry.prefixSourcePath, targetFile, entry.fileMode);
+        copyAssetFileIfExists(context, entry.assetSourcePath, targetFile, entry.fileMode);
     }
 
-    private static void installDefaultZshrcIfMissing() throws Exception {
-        if (hasUserZshStartupFile()) {
-            return;
-        }
-
-        ensureDirectory(new File(HOME_ZSHRC_TARGET_FILE_PATH).getParentFile());
-        try (FileOutputStream outputStream = new FileOutputStream(HOME_ZSHRC_TARGET_FILE_PATH, false)) {
-            outputStream.write(("# Created by TermuxPlus so zsh does not show the first-run configuration wizard.\n" +
-                "# Global defaults are loaded from $PREFIX/etc/zshrc.\n").getBytes("UTF-8"));
-        }
-        Os.chmod(HOME_ZSHRC_TARGET_FILE_PATH, PRIVATE_FILE_MODE);
-    }
-
-    private static boolean hasUserZshStartupFile() {
-        String[] startupFilePaths = new String[] {
-            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zshenv",
-            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zprofile",
-            HOME_ZSHRC_TARGET_FILE_PATH,
-            TermuxConstants.TERMUX_HOME_DIR_PATH + "/.zlogin"
-        };
-
-        for (String startupFilePath : startupFilePaths) {
-            if (FileUtils.fileExists(startupFilePath, false)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static void installAgentsFile(Context context) throws Exception {
-        copyPrefixFileIfExists(
-            "TermuxPlus home AGENTS.md",
-            PREFIX_AGENTS_SOURCE_FILE_PATH,
-            HOME_AGENTS_TARGET_FILE_PATH
-        );
-        copyAssetFileIfExists(context, ASSET_AGENTS_SOURCE_FILE_PATH, new File(HOME_AGENTS_TARGET_FILE_PATH));
-    }
-
-    private static void installSkills(Context context) throws Exception {
-        copyPrefixSkillsIfExists();
-        copyAssetDirectoryContentsIfExists(context, ASSET_SKILLS_SOURCE_DIR_PATH, new File(HOME_SKILLS_TARGET_DIR_PATH));
-    }
-
-    private static boolean copyPrefixFileIfExists(String label, String sourcePath, String targetPath) throws Exception {
+    private static boolean copyPrefixFileIfExists(String label, String sourcePath, File targetFile, int fileMode) throws Exception {
         File sourceFile = new File(sourcePath);
         if (!sourceFile.isFile()) {
             return false;
         }
 
-        ensureDirectory(new File(targetPath).getParentFile());
-        // AGENTS.md / SKILL.md are treated as install-managed instruction files,
+        ensureDirectory(targetFile.getParentFile());
+        // Home template entries are treated as install-managed instruction/tool files,
         // not user-owned data. Always overwrite so APK upgrades pick up new
-        // capability documentation. Users who want a custom file should put it
+        // capability documentation and scripts. Users who want custom files should put them
         // somewhere else under $HOME (it won't get clobbered there).
-        Error error = FileUtils.copyRegularFile(label, sourcePath, targetPath, true);
+        Error error = FileUtils.copyRegularFile(label, sourcePath, targetFile.getAbsolutePath(), true);
         if (error != null) {
             throw new RuntimeException(Error.getMinimalErrorString(error));
         }
-        Os.chmod(targetPath, PRIVATE_FILE_MODE);
+        Os.chmod(targetFile.getAbsolutePath(), fileMode);
         return true;
     }
 
-    private static void copyPrefixSkillsIfExists() throws Exception {
-        File sourceDirectory = new File(PREFIX_SKILLS_SOURCE_DIR_PATH);
-        if (!sourceDirectory.isDirectory()) {
-            return;
-        }
-
-        File targetDirectory = new File(HOME_SKILLS_TARGET_DIR_PATH);
-        ensureDirectory(targetDirectory);
-
-        File[] skillFiles = sourceDirectory.listFiles();
-        if (skillFiles == null) {
-            return;
-        }
-
-        // Same rationale as copyPrefixFileIfExists: skill instructions are
-        // install-managed; always overwrite so APK upgrades push new docs.
-        for (File sourceSkillFile : skillFiles) {
-            File targetSkillFile = new File(targetDirectory, sourceSkillFile.getName());
-            Error error;
-            if (sourceSkillFile.isDirectory()) {
-                error = FileUtils.copyDirectoryFile("TermuxPlus home skill " + sourceSkillFile.getName(),
-                    sourceSkillFile.getAbsolutePath(), targetSkillFile.getAbsolutePath(), true);
-            } else if (sourceSkillFile.isFile()) {
-                error = FileUtils.copyRegularFile("TermuxPlus home skill file " + sourceSkillFile.getName(),
-                    sourceSkillFile.getAbsolutePath(), targetSkillFile.getAbsolutePath(), true);
-            } else {
-                continue;
-            }
-            if (error != null) {
-                throw new RuntimeException(Error.getMinimalErrorString(error));
-            }
-        }
-    }
-
-    private static boolean copyAssetFileIfExists(Context context, String sourceAssetPath, File targetFile) throws Exception {
+    private static boolean copyAssetFileIfExists(Context context, String sourceAssetPath, File targetFile,
+                                                int fileMode) throws Exception {
         try {
-            copyAssetFile(context.getAssets(), sourceAssetPath, targetFile);
+            copyAssetFile(context.getAssets(), sourceAssetPath, targetFile, fileMode);
             return true;
         } catch (FileNotFoundException e) {
             return false;
         }
     }
 
-    private static boolean copyAssetDirectoryContentsIfExists(Context context, String sourceAssetPath, File targetDirectory) throws Exception {
+    private static boolean copyAssetDirectoryContentsIfExists(Context context, String sourceAssetPath, File targetDirectory,
+                                                             int fileMode) throws Exception {
         AssetManager assetManager = context.getAssets();
         String[] children = assetManager.list(sourceAssetPath);
         if (children == null || children.length == 0) {
@@ -178,25 +124,27 @@ final class TermuxPlusHomeInstaller {
 
         ensureDirectory(targetDirectory);
         for (String child : children) {
-            copyAssetPath(assetManager, sourceAssetPath + "/" + child, new File(targetDirectory, child));
+            copyAssetPath(assetManager, sourceAssetPath + "/" + child, new File(targetDirectory, child), fileMode);
         }
         return true;
     }
 
-    private static void copyAssetPath(AssetManager assetManager, String sourceAssetPath, File targetFile) throws Exception {
+    private static void copyAssetPath(AssetManager assetManager, String sourceAssetPath, File targetFile,
+                                      int fileMode) throws Exception {
         String[] children = assetManager.list(sourceAssetPath);
         if (children != null && children.length > 0) {
             ensureDirectory(targetFile);
             for (String child : children) {
-                copyAssetPath(assetManager, sourceAssetPath + "/" + child, new File(targetFile, child));
+                copyAssetPath(assetManager, sourceAssetPath + "/" + child, new File(targetFile, child), fileMode);
             }
             return;
         }
 
-        copyAssetFile(assetManager, sourceAssetPath, targetFile);
+        copyAssetFile(assetManager, sourceAssetPath, targetFile, fileMode);
     }
 
-    private static void copyAssetFile(AssetManager assetManager, String sourceAssetPath, File targetFile) throws Exception {
+    private static void copyAssetFile(AssetManager assetManager, String sourceAssetPath, File targetFile,
+                                      int fileMode) throws Exception {
         ensureDirectory(targetFile.getParentFile());
         File tempFile = new File(targetFile.getParentFile(), "." + targetFile.getName() + ".tmp");
 
@@ -209,8 +157,52 @@ final class TermuxPlusHomeInstaller {
             }
         }
 
-        Os.chmod(tempFile.getAbsolutePath(), PRIVATE_FILE_MODE);
+        Os.chmod(tempFile.getAbsolutePath(), fileMode);
         Os.rename(tempFile.getAbsolutePath(), targetFile.getAbsolutePath());
+    }
+
+    private static boolean copyPrefixDirectoryContentsIfExists(String label, File sourceDirectory, File targetDirectory,
+                                                              int fileMode) throws Exception {
+        if (!sourceDirectory.isDirectory()) {
+            return false;
+        }
+
+        ensureDirectory(targetDirectory);
+        File[] sourceFiles = sourceDirectory.listFiles();
+        if (sourceFiles == null) {
+            return true;
+        }
+
+        for (File sourceFile : sourceFiles) {
+            copyPrefixPath(label + " " + sourceFile.getName(), sourceFile,
+                new File(targetDirectory, sourceFile.getName()), fileMode);
+        }
+        return true;
+    }
+
+    private static void copyPrefixPath(String label, File sourceFile, File targetFile, int fileMode) throws Exception {
+        if (sourceFile.isDirectory()) {
+            ensureDirectory(targetFile);
+            File[] children = sourceFile.listFiles();
+            if (children == null) {
+                return;
+            }
+            for (File child : children) {
+                copyPrefixPath(label + "/" + child.getName(), child, new File(targetFile, child.getName()), fileMode);
+            }
+            return;
+        }
+
+        if (!sourceFile.isFile()) {
+            return;
+        }
+
+        ensureDirectory(targetFile.getParentFile());
+        Error error = FileUtils.copyRegularFile(label, sourceFile.getAbsolutePath(), targetFile.getAbsolutePath(), true);
+        if (error != null) {
+            throw new RuntimeException(Error.getMinimalErrorString(error));
+        }
+        Os.chmod(targetFile.getAbsolutePath(), fileMode);
     }
 
     private static void ensureDirectory(File directory) throws Exception {
@@ -223,5 +215,34 @@ final class TermuxPlusHomeInstaller {
             throw new RuntimeException(Error.getMinimalErrorString(error));
         }
         Os.chmod(directory.getAbsolutePath(), PRIVATE_DIRECTORY_MODE);
+    }
+
+    private static final class HomeTemplateEntry {
+        final String label;
+        final String prefixSourcePath;
+        final String assetSourcePath;
+        final String homeTargetPath;
+        final boolean isDirectory;
+        final int fileMode;
+
+        private HomeTemplateEntry(String label, String prefixSourcePath, String assetSourcePath,
+                                  String homeTargetPath, boolean isDirectory, int fileMode) {
+            this.label = label;
+            this.prefixSourcePath = prefixSourcePath;
+            this.assetSourcePath = assetSourcePath;
+            this.homeTargetPath = homeTargetPath;
+            this.isDirectory = isDirectory;
+            this.fileMode = fileMode;
+        }
+
+        static HomeTemplateEntry file(String label, String prefixSourcePath, String assetSourcePath,
+                                      String homeTargetPath, int fileMode) {
+            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, false, fileMode);
+        }
+
+        static HomeTemplateEntry directory(String label, String prefixSourcePath, String assetSourcePath,
+                                           String homeTargetPath, int fileMode) {
+            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, true, fileMode);
+        }
     }
 }

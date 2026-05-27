@@ -358,6 +358,12 @@ TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug \
   -Pandroid.injected.testOnly=false
 ```
 
+`TERMUX_BOOTSTRAP_ARCHS` only selects which official Termux bootstrap
+architectures are downloaded and packaged. TermuxPlus no longer supports a
+custom bootstrap directory or generated bootstrap zips; do not use
+`TERMUX_BOOTSTRAP_DIR`. TermuxPlus files are packaged as APK assets and copied
+into `$HOME`/`$PREFIX` after the official bootstrap finishes.
+
 The `android.injected.testOnly=false` flag is important when installing through
 the system package installer. Without it, Android Gradle Plugin may mark the APK
 as `android:testOnly="true"`, and some ROM package installers report that as an

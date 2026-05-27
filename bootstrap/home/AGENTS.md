@@ -78,12 +78,23 @@ termux-wake-lock
 termux-wake-unlock
 ```
 
-## Preinstalled Tools
+## Tool Scripts
 
-This build is expected to include Codex CLI, zsh/oh-my-zsh, `git`, `ripgrep`
-(`rg`), `fd`, `jq`, `openssh`, `make`, `python`, `nodejs`, `npm`, `npx`,
-`proot`, and the `tp-android` Android-control CLI (see "Android Automation
-CLI" below).
+On-demand TermuxPlus tools live in `~/.termuxplus/scripts/`. Run the specific
+script you need instead of assuming every heavier tool was placed in the
+bootstrap:
+
+```sh
+~/.termuxplus/scripts/install-python.sh
+~/.termuxplus/scripts/install-zsh.sh
+~/.termuxplus/scripts/install-codex.sh
+~/.termuxplus/scripts/install-claude-code.sh
+```
+
+The Codex installer also installs the bootstrap-era tool set: `nodejs`, `npm`,
+`proot`, `ca-certificates`, `git`, `ripgrep` (`rg`), `fd`, `jq`, `openssh`,
+and `make`. Set `TERMUX_CODEX_VERSION` before running it to pin a version;
+otherwise it installs `latest`.
 
 Install heavier project-specific toolchains only when needed:
 

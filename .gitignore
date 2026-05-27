@@ -17,10 +17,6 @@ local.properties
 # Gradle generated files
 .gradle/
 
-# TermuxPlus local bootstrap caches and outputs
-.termuxplus-cache/
-bootstrap-output/
-
 # Signing files
 .signing/
 

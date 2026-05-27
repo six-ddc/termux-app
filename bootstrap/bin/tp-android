@@ -3287,7 +3287,7 @@ def _ui_digest_collect(node: Any, depth: int = 0, out: list[dict[str, Any]] | No
             actions.append("scroll")
         if editable:
             actions.append("set-text")
-        bounds = node.get("bounds")
+        bounds = node.get("bounds") or node.get("boundsInScreen")
         bounds_str: str | None = None
         if isinstance(bounds, dict):
             try:
@@ -3307,7 +3307,7 @@ def _ui_digest_collect(node: Any, depth: int = 0, out: list[dict[str, Any]] | No
             "class": node.get("className") or node.get("class"),
             "package": node.get("packageName") or node.get("package"),
             "depth": depth,
-            "resource": node.get("resourceName") or node.get("viewIdResourceName") or node.get("resource"),
+            "resource": node.get("resourceId") or node.get("resourceName") or node.get("viewIdResourceName") or node.get("resource"),
             "focused": focused or None,
         }
         # Drop None fields for compactness
@@ -3381,8 +3381,7 @@ def command_ui_digest(args: argparse.Namespace) -> int:
     return 0
 
 
-def _ui_resolve_idx_bounds(idx: int) -> tuple[int, int]:
-    """Look up the cached digest, return the center (x, y) for `idx`."""
+def _ui_resolve_idx_node(idx: int) -> dict[str, Any]:
     cache = _ui_digest_read_cache()
     if not isinstance(cache, dict):
         raise CliError(
@@ -3390,16 +3389,48 @@ def _ui_resolve_idx_bounds(idx: int) -> tuple[int, int]:
             code="TARGET_NOT_FOUND",
         )
     for node in cache.get("elements", []):
-        if node.get("idx") == idx:
-            bounds = node.get("bounds")
-            if not isinstance(bounds, str):
-                raise CliError(f"idx={idx} has no bounds", code="TARGET_NOT_CLICKABLE")
-            parts = [int(p) for p in bounds.split(",")]
-            if len(parts) != 4:
-                raise CliError(f"Bad bounds for idx={idx}: {bounds}", code="TARGET_NOT_CLICKABLE")
-            left, top, right, bottom = parts
-            return ((left + right) // 2, (top + bottom) // 2)
+        if isinstance(node, dict) and node.get("idx") == idx:
+            return node
     raise CliError(f"idx={idx} not in cached digest", code="TARGET_NOT_FOUND")
+
+
+def _ui_resolve_idx_bounds(idx: int) -> tuple[int, int]:
+    """Look up the cached digest, return the center (x, y) for `idx`."""
+    node = _ui_resolve_idx_node(idx)
+    bounds = node.get("bounds")
+    if not isinstance(bounds, str):
+        raise CliError(f"idx={idx} has no bounds", code="TARGET_NOT_CLICKABLE")
+    parts = [int(p) for p in bounds.split(",")]
+    if len(parts) != 4:
+        raise CliError(f"Bad bounds for idx={idx}: {bounds}", code="TARGET_NOT_CLICKABLE")
+    left, top, right, bottom = parts
+    return ((left + right) // 2, (top + bottom) // 2)
+
+
+def _ui_idx_node_action_payload(idx: int, node: dict[str, Any], action: str) -> dict[str, Any] | None:
+    package_name = node.get("package")
+    bounds = node.get("bounds")
+    if not isinstance(package_name, str) or not package_name:
+        return None
+    if not isinstance(bounds, str) or not bounds:
+        return None
+    payload: dict[str, Any] = {
+        "action": action,
+        "packageName": package_name,
+        "bounds": bounds,
+    }
+    # Extra selectors keep the bounds-based match from landing on a sibling if
+    # the layout shifts by a couple of pixels between digest and action.
+    if isinstance(node.get("resource"), str) and node["resource"]:
+        payload["resourceId"] = node["resource"]
+    if isinstance(node.get("text"), str) and node["text"]:
+        payload["text"] = node["text"]
+    if isinstance(node.get("desc"), str) and node["desc"]:
+        payload["desc"] = node["desc"]
+    if isinstance(node.get("class"), str) and node["class"]:
+        payload["className"] = node["class"].split(".")[-1]
+    payload["digestIdx"] = idx
+    return payload
 
 
 def command_ui_phone_state(args: argparse.Namespace) -> int:
@@ -3504,6 +3535,7 @@ def ui_selector_payload(args: argparse.Namespace) -> dict[str, Any]:
         ("resource_id", "resourceId"),
         ("class_name", "className"),
         ("scrollable", "scrollable"),
+        ("bounds", "bounds"),
         ("start", "start"),
         ("end", "end"),
         ("package", "packageName"),
@@ -3515,16 +3547,32 @@ def ui_selector_payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_ui_action(args: argparse.Namespace) -> int:
-    # `--idx N` is a fast-path that resolves a digest-cached interactive node
-    # to coordinates and issues a tap, bypassing the selector machinery. It is
-    # only valid for `ui click` (no value, no long-press) for now.
+    # `--idx N` resolves a digest-cached node. Prefer package-scoped
+    # accessibility actions; fall back to coordinate taps only for old caches
+    # that lack package/bounds metadata.
     idx = getattr(args, "idx", None)
     if idx is not None:
         if args.action != "click":
             raise CliError("--idx is only supported with ui click", code="CLI_ERROR")
+        node = _ui_resolve_idx_node(idx)
+        node_payload = _ui_idx_node_action_payload(idx, node, args.action)
+        if node_payload is not None:
+            result = portal_post("/node/action", args, node_payload)
+            result_payload: dict[str, Any] = {
+                "idx": idx,
+                "mode": "node-action",
+                "package": node_payload["packageName"],
+                "bounds": node_payload["bounds"],
+                "action_result": result,
+            }
+            verification = verify_after_ui_action(args)
+            if verification is not None:
+                result_payload["verification"] = verification
+            emit_success(args, result_payload, command=getattr(args, "command_path", "ui.action"))
+            return 0
         x, y = _ui_resolve_idx_bounds(idx)
         result = portal_post("/tap", args, {"x": x, "y": y})
-        result_payload: dict[str, Any] = {"x": x, "y": y, "idx": idx, "tap_result": result}
+        result_payload = {"x": x, "y": y, "idx": idx, "mode": "tap", "tap_result": result}
         verification = verify_after_ui_action(args)
         if verification is not None:
             result_payload["verification"] = verification
@@ -7491,6 +7539,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_find.add_argument("--desc-contains", dest="desc_contains", help="Case-insensitive content description substring")
     ui_find.add_argument("--resource-id", dest="resource_id", help="Exact view resource id selector")
     ui_find.add_argument("--class-name", dest="class_name", help="Class name substring selector")
+    ui_find.add_argument("--bounds", help="Exact bounds selector as left,top,right,bottom")
     ui_find.add_argument("--scrollable", action="store_const", const=True, default=None, help="Select scrollable nodes")
     add_ui_scope_option(ui_find)
     ui_find.add_argument("--all", action="store_true", help="Return visible nodes without requiring a selector")
@@ -7511,6 +7560,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_action.add_argument("--desc-contains", dest="desc_contains", help="Case-insensitive content description substring")
     ui_action.add_argument("--resource-id", dest="resource_id", help="Exact view resource id selector")
     ui_action.add_argument("--class-name", dest="class_name", help="Class name substring selector")
+    ui_action.add_argument("--bounds", help="Exact bounds selector as left,top,right,bottom")
     ui_action.add_argument("--scrollable", action="store_const", const=True, default=None, help="Select the first scrollable node")
     add_ui_scope_option(ui_action)
     ui_action.add_argument("--value", help="Text value for set-text")
@@ -7529,6 +7579,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_click.add_argument("--desc-contains", dest="desc_contains")
     ui_click.add_argument("--resource-id", dest="resource_id")
     ui_click.add_argument("--class-name", dest="class_name")
+    ui_click.add_argument("--bounds")
     ui_click.add_argument("--scrollable", action="store_const", const=True, default=None)
     add_ui_scope_option(ui_click)
     add_ui_verification_options(ui_click)
@@ -7541,6 +7592,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_wait.add_argument("--desc-contains", dest="desc_contains")
     ui_wait.add_argument("--resource-id", dest="resource_id")
     ui_wait.add_argument("--class-name", dest="class_name")
+    ui_wait.add_argument("--bounds")
     ui_wait.add_argument("--scrollable", action="store_const", const=True, default=None)
     add_ui_scope_option(ui_wait)
     ui_wait.add_argument("--wait-timeout", dest="timeout_seconds", type=float, default=15.0)

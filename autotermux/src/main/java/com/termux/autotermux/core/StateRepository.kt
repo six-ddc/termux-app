@@ -1,6 +1,7 @@
 package com.termux.autotermux.core
 
 import android.graphics.Rect
+import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -13,6 +14,8 @@ import org.json.JSONObject
 class StateRepository(private val service: AutoTermuxAccessibilityService?) {
     companion object {
         private const val TAG = "StateRepository"
+        private const val PACKAGE_ROOT_LOOKUP_ATTEMPTS = 4
+        private const val PACKAGE_ROOT_LOOKUP_RETRY_DELAY_MS = 80L
     }
 
     val hasAccessibilityService: Boolean
@@ -76,6 +79,20 @@ class StateRepository(private val service: AutoTermuxAccessibilityService?) {
     }
 
     private fun pickRootForPackage(
+        svc: AutoTermuxAccessibilityService,
+        packageName: String,
+    ): AccessibilityNodeInfo? {
+        repeat(PACKAGE_ROOT_LOOKUP_ATTEMPTS) { attempt ->
+            val root = pickRootForPackageOnce(svc, packageName)
+            if (root != null) return root
+            if (attempt < PACKAGE_ROOT_LOOKUP_ATTEMPTS - 1) {
+                SystemClock.sleep(PACKAGE_ROOT_LOOKUP_RETRY_DELAY_MS)
+            }
+        }
+        return null
+    }
+
+    private fun pickRootForPackageOnce(
         svc: AutoTermuxAccessibilityService,
         packageName: String,
     ): AccessibilityNodeInfo? {

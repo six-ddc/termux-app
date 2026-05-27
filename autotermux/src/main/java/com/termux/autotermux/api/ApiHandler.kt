@@ -9,6 +9,7 @@ import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -47,6 +48,7 @@ import java.io.FilterInputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.abs
 import androidx.core.net.toUri
 import com.termux.autotermux.keepalive.KeepAliveController
 import com.termux.autotermux.keepalive.KeepAliveStartupException
@@ -1091,11 +1093,15 @@ class ApiHandler(
                 params.has("viewId") ||
                 params.has("className") ||
                 params.has("class_name") ||
-                params.has("scrollable")
+                params.has("scrollable") ||
+                params.has("bounds") ||
+                params.has("boundsInScreen") ||
+                params.has("bounds_in_screen")
     }
 
     private fun nodeMatchesSelector(node: ElementNode, params: JSONObject): Boolean {
         return matchesOptionalIndex(node, params) &&
+                matchesOptionalBounds(node, params) &&
                 matchesOptionalBoolean(node.nodeInfo.isScrollable, params, "scrollable") &&
                 matchesOptionalString(node.text, params, "text", exact = true) &&
                 matchesOptionalString(node.text, params, "textContains", "text_contains", exact = false) &&
@@ -1213,6 +1219,51 @@ class ApiHandler(
     private fun matchesOptionalIndex(node: ElementNode, params: JSONObject): Boolean {
         if (!params.has("index")) return true
         return node.overlayIndex == params.optInt("index")
+    }
+
+    private fun matchesOptionalBounds(node: ElementNode, params: JSONObject): Boolean {
+        if (!hasBoundsSelector(params)) return true
+        val expected = parseBoundsSelector(params) ?: return false
+        return rectsApproximatelyEqual(node.rect, expected)
+    }
+
+    private fun hasBoundsSelector(params: JSONObject): Boolean {
+        return params.has("bounds") ||
+                params.has("boundsInScreen") ||
+                params.has("bounds_in_screen")
+    }
+
+    private fun parseBoundsSelector(params: JSONObject): Rect? {
+        val boundsObject = params.optJSONObject("bounds")
+            ?: params.optJSONObject("boundsInScreen")
+            ?: params.optJSONObject("bounds_in_screen")
+        if (boundsObject != null) {
+            return Rect(
+                boundsObject.optInt("left"),
+                boundsObject.optInt("top"),
+                boundsObject.optInt("right"),
+                boundsObject.optInt("bottom"),
+            )
+        }
+
+        val boundsText = sequenceOf("bounds", "boundsInScreen", "bounds_in_screen")
+            .firstNotNullOfOrNull { key ->
+                params.optString(key).takeIf { it.isNotBlank() && it != "null" }
+            } ?: return null
+        val values = Regex("-?\\d+").findAll(boundsText)
+            .map { it.value.toIntOrNull() }
+            .filterNotNull()
+            .toList()
+        if (values.size != 4) return null
+        return Rect(values[0], values[1], values[2], values[3])
+    }
+
+    private fun rectsApproximatelyEqual(actual: Rect, expected: Rect): Boolean {
+        val tolerancePx = 2
+        return abs(actual.left - expected.left) <= tolerancePx &&
+                abs(actual.top - expected.top) <= tolerancePx &&
+                abs(actual.right - expected.right) <= tolerancePx &&
+                abs(actual.bottom - expected.bottom) <= tolerancePx
     }
 
     private fun matchesOptionalBoolean(

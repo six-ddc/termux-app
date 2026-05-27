@@ -66,6 +66,8 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         private const val LOCAL_WS_NOTIFICATION_CHANNEL_ID = "local_ws_connection_channel"
         private const val LOCAL_WS_NOTIFICATION_ID = 2003
         internal const val VISIBLE_ELEMENTS_STALE_GRACE_MS = 750L
+        private const val PACKAGE_ROOT_LOOKUP_ATTEMPTS = 4
+        private const val PACKAGE_ROOT_LOOKUP_RETRY_DELAY_MS = 80L
 
         // Periodic update constants
         private const val REFRESH_INTERVAL_MS = 250L // Update every 250ms
@@ -781,7 +783,7 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         val indexCounter = IndexCounter(1)
         val screenBoundsSnapshot = refreshScreenBounds()
 
-        val rootCandidates = collectRootCandidates(packageNameFilter)
+        val rootCandidates = collectRootCandidatesWithRetry(packageNameFilter)
         if (rootCandidates.isEmpty()) {
             synchronized(visibleElements) {
                 if (packageNameFilter == null && shouldReuseVisibleElementsSnapshot(
@@ -827,6 +829,19 @@ class AutoTermuxAccessibilityService : AccessibilityService(), ConfigManager.Con
         }
 
         return elements
+    }
+
+    private fun collectRootCandidatesWithRetry(packageNameFilter: String? = null): List<Pair<AccessibilityNodeInfo, Int>> {
+        if (packageNameFilter == null) return collectRootCandidates(null)
+
+        repeat(PACKAGE_ROOT_LOOKUP_ATTEMPTS) { attempt ->
+            val candidates = collectRootCandidates(packageNameFilter)
+            if (candidates.isNotEmpty()) return candidates
+            if (attempt < PACKAGE_ROOT_LOOKUP_ATTEMPTS - 1) {
+                SystemClock.sleep(PACKAGE_ROOT_LOOKUP_RETRY_DELAY_MS)
+            }
+        }
+        return emptyList()
     }
 
     private fun collectRootCandidates(packageNameFilter: String? = null): List<Pair<AccessibilityNodeInfo, Int>> {

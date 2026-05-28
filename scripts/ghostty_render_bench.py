@@ -10,20 +10,25 @@ ghostty_render_bench.py — Ghostty 渲染能力综合压测 / 演示脚本
     # 一屏综合 showcase（最直观，截图证据用）
     python3 ghostty_render_bench.py showcase
 
-    # 全套自动跑，结束后打印汇总 + 写 JSON 报告
+    # 全套自动跑：先跑动态/性能项，最后在报告里嵌入静态渲染样张
     python3 ghostty_render_bench.py all --report bench.json
 
     # 单测
     python3 ghostty_render_bench.py fps_scroll --duration 5
     python3 ghostty_render_bench.py latency --samples 200
     python3 ghostty_render_bench.py kitty
+    python3 ghostty_render_bench.py visual --duration 5
+    python3 ghostty_render_bench.py neon_tunnel --duration 5
 
-    # 列出所有测试
+    # 分组 / 列表
+    python3 ghostty_render_bench.py perf --duration 5
     python3 ghostty_render_bench.py list
 
 测试维度：
     协议正确性: truecolor / palette / styles / underlines / wide / osc8 / kitty
     渲染性能:   fps_static / fps_scroll / throughput / stress_rgba / stress_glyph
+    视觉压测:   disco / plasma / matrix / fireworks / neon_tunnel
+                braille_particles / emoji_storm / dashboard
     延迟:       latency (DSR 6 round-trip)
     一屏综合:   showcase
 
@@ -115,6 +120,15 @@ def rgb_fg(r: int, g: int, b: int) -> str:
 
 def rgb_bg(r: int, g: int, b: int) -> str:
     return f"{CSI}48;2;{r};{g};{b}m"
+
+
+def fit_text(s: str, width: int) -> str:
+    """Clip/pad mostly-ASCII dashboard labels to a fixed cell width."""
+    if width <= 0:
+        return ""
+    if len(s) > width:
+        return s[:max(width - 1, 0)] + "…"
+    return s + " " * (width - len(s))
 
 
 def palette_bg(idx: int) -> str:
@@ -840,6 +854,310 @@ def t_gradient_2d(b: Bench) -> Result:
                            "elapsed_ms": round(elapsed * 1000, 2)})
 
 
+@register("neon_tunnel")
+def t_neon_tunnel(b: Bench) -> Result:
+    """霓虹透视隧道 —— 全屏 24-bit + 几何动画 + 高频整屏重绘。"""
+    duration = float(getattr(b.args, "duration", 3) or 3)
+    b.refresh_size()
+    clear_screen()
+    hide_cursor()
+    cols = b.cols
+    rows = max(b.rows - 2, 8)
+    aspect = cols / max(rows * 2.0, 1.0)
+    coords = []
+    for y in range(rows):
+        ny = (y - rows / 2.0) / max(rows / 2.0, 1.0)
+        for x in range(cols):
+            nx = ((x - cols / 2.0) / max(cols / 2.0, 1.0)) * aspect
+            dist = math.sqrt(nx * nx + ny * ny) + 0.03
+            ang = math.atan2(ny, nx)
+            coords.append((18.0 / dist, ang * 6.0, ang * 10.0))
+    glyphs = " .·:-=+*#%@"
+    palette_n = 192
+    bg_table = []
+    for i in range(palette_n):
+        h = (0.58 + i / palette_n * 0.45) % 1.0
+        rr, gg, bb = colorsys.hsv_to_rgb(h, 0.92, 0.92)
+        bg_table.append(
+            f"\033[48;2;{int(rr*80)};{int(gg*80)};{int(bb*80)};"
+            f"38;2;{int(rr*255)};{int(gg*255)};{int(bb*255)}m")
+    frames = 0
+    t0 = time.perf_counter()
+    deadline = t0 + duration
+    try:
+        while time.perf_counter() < deadline:
+            t = frames * 0.14
+            parts = ["\033[H"]
+            idx = 0
+            for y in range(rows):
+                row = []
+                for x in range(cols):
+                    tunnel, wave_a, wave_b = coords[idx]
+                    idx += 1
+                    ring = math.sin(tunnel - t * 9.0)
+                    twist = math.sin(wave_a + t * 2.3) * 0.35
+                    stripe = math.sin(wave_b - t * 4.0) * 0.25
+                    level = max(0.0, min(1.0, 0.5 + ring * 0.45
+                                          + twist + stripe))
+                    color_idx = int((tunnel * 3.0 + frames * 5 + y * 2)
+                                    % palette_n)
+                    char_idx = min(len(glyphs) - 1,
+                                   int(level * (len(glyphs) - 1)))
+                    row.append(bg_table[color_idx] + glyphs[char_idx])
+                row.append("\033[0m\n")
+                parts.append("".join(row))
+            wf("".join(parts))
+            frames += 1
+    finally:
+        show_cursor()
+        wf("\033[0m")
+    elapsed = time.perf_counter() - t0
+    cells_per_s = frames * cols * rows / elapsed
+    b.note(f"\nframes={frames}  fps={frames/elapsed:.1f}  "
+           f"cells/s={cells_per_s:.0f}")
+    return Result(name="neon_tunnel",
+                  metrics={"frames": frames, "elapsed_s": elapsed,
+                           "fps": round(frames / elapsed, 1),
+                           "cells_per_s": int(cells_per_s),
+                           "cols": cols, "rows": rows})
+
+
+@register("braille_particles")
+def t_braille_particles(b: Bench) -> Result:
+    """Braille 子像素粒子场 —— Unicode glyph atlas + 密集动态 bitmask。"""
+    duration = float(getattr(b.args, "duration", 3) or 3)
+    b.refresh_size()
+    clear_screen()
+    hide_cursor()
+    cols = b.cols
+    rows = max(b.rows - 2, 8)
+    subcols = cols * 2
+    subrows = rows * 4
+    rng = random.Random(1234)
+    count = min(max(cols * rows // 2, 260), 1800)
+    particles = []
+    for i in range(count):
+        angle = rng.random() * math.tau
+        speed = 0.45 + rng.random() * 1.75
+        particles.append([
+            rng.random() * max(subcols - 1, 1),
+            rng.random() * max(subrows - 1, 1),
+            math.cos(angle) * speed,
+            math.sin(angle) * speed,
+            rng.random(),
+        ])
+    dot_bits = [0x01, 0x08, 0x02, 0x10, 0x04, 0x20, 0x40, 0x80]
+    fg_table = []
+    for i in range(160):
+        rr, gg, bb = colorsys.hsv_to_rgb(i / 160.0, 0.82, 1.0)
+        fg_table.append(
+            f"\033[38;2;{int(rr*255)};{int(gg*255)};{int(bb*255)}m")
+    frames = 0
+    t0 = time.perf_counter()
+    deadline = t0 + duration
+    try:
+        while time.perf_counter() < deadline:
+            grid = [0] * (cols * rows)
+            hues = [0] * (cols * rows)
+            for p in particles:
+                p[0] += p[2]
+                p[1] += p[3]
+                if p[0] < 0 or p[0] >= subcols:
+                    p[2] *= -1
+                    p[0] = max(0, min(subcols - 1, p[0]))
+                if p[1] < 0 or p[1] >= subrows:
+                    p[3] *= -1
+                    p[1] = max(0, min(subrows - 1, p[1]))
+                sx = int(p[0])
+                sy = int(p[1])
+                cx = sx // 2
+                cy = sy // 4
+                cell = cy * cols + cx
+                grid[cell] |= dot_bits[(sy % 4) * 2 + (sx % 2)]
+                hues[cell] = int((p[4] * 160 + frames * 2) % 160)
+            parts = ["\033[H"]
+            idx = 0
+            for _ in range(rows):
+                row = []
+                for _ in range(cols):
+                    bits = grid[idx]
+                    if bits:
+                        row.append(fg_table[hues[idx]] + chr(0x2800 + bits))
+                    else:
+                        row.append(" ")
+                    idx += 1
+                row.append("\033[0m\n")
+                parts.append("".join(row))
+            wf("".join(parts))
+            frames += 1
+    finally:
+        show_cursor()
+        wf("\033[0m")
+    elapsed = time.perf_counter() - t0
+    cells_per_s = frames * cols * rows / elapsed
+    b.note(f"\nframes={frames}  fps={frames/elapsed:.1f}  "
+           f"particles={count}  cells/s={cells_per_s:.0f}")
+    return Result(name="braille_particles",
+                  metrics={"frames": frames, "elapsed_s": elapsed,
+                           "fps": round(frames / elapsed, 1),
+                           "particles": count,
+                           "cells_per_s": int(cells_per_s)})
+
+
+@register("emoji_storm")
+def t_emoji_storm(b: Bench) -> Result:
+    """Emoji/ZWJ/组合字符风暴 —— font fallback、宽字符和复杂 glyph 压测。"""
+    duration = float(getattr(b.args, "duration", 3) or 3)
+    b.refresh_size()
+    clear_screen()
+    hide_cursor()
+    cols = b.cols
+    rows = max(b.rows - 2, 8)
+    tokens = [
+        "🚀", "🎨", "🔥", "⚡", "✨", "🌈", "🧪", "🧠", "🛠️", "📱",
+        "👩‍💻", "👨‍🔬", "🧑🏽‍🚀", "🏳️‍🌈", "🇨🇳", "🇺🇸", "👨‍👩‍👧‍👦",
+        "a\u0301", "e\u0308", "n\u0303", "Z\u0351", "क", "क्", "क्ष",
+        "中文", "かな", "한글", "🟩", "🟦", "🟪", "🟥", "◌̸", "◌͜",
+    ]
+    fg_table = []
+    for i in range(96):
+        rr, gg, bb = colorsys.hsv_to_rgb(i / 96.0, 0.82, 1.0)
+        fg_table.append(
+            f"\033[38;2;{int(rr*255)};{int(gg*255)};{int(bb*255)}m")
+    frames = 0
+    token_count = 0
+    rng = random.Random(2026)
+    t0 = time.perf_counter()
+    deadline = t0 + duration
+    try:
+        while time.perf_counter() < deadline:
+            parts = ["\033[H"]
+            for y in range(rows):
+                row = []
+                # Complex emoji do not map cleanly to len(); intentionally
+                # overfill each row so wrapping/fallback paths are exercised.
+                for x in range(max(cols // 2, 18)):
+                    token = tokens[(x * 5 + y * 7 + frames * 3
+                                    + rng.randrange(len(tokens)))
+                                   % len(tokens)]
+                    row.append(fg_table[(x + y * 3 + frames) % len(fg_table)])
+                    row.append(token)
+                    if (x + frames) % 5 == 0:
+                        row.append("\033[1m")
+                    if (x + y) % 7 == 0:
+                        row.append("\033[4:3m")
+                    token_count += 1
+                row.append("\033[0m\n")
+                parts.append("".join(row))
+            wf("".join(parts))
+            frames += 1
+    finally:
+        show_cursor()
+        wf("\033[0m")
+    elapsed = time.perf_counter() - t0
+    b.note(f"\nframes={frames}  fps={frames/elapsed:.1f}  "
+           f"tokens/s={token_count/elapsed:.0f}")
+    return Result(name="emoji_storm",
+                  metrics={"frames": frames, "elapsed_s": elapsed,
+                           "fps": round(frames / elapsed, 1),
+                           "tokens": token_count,
+                           "tokens_per_s": int(token_count / elapsed)})
+
+
+@register("dashboard")
+def t_dashboard(b: Bench) -> Result:
+    """动态 TUI 仪表盘 —— 混合 box drawing、sparklines、日志和进度条。"""
+    duration = float(getattr(b.args, "duration", 3) or 3)
+    b.refresh_size()
+    clear_screen()
+    hide_cursor()
+    cols = b.cols
+    rows = max(b.rows - 2, 10)
+    spark = "▁▂▃▄▅▆▇█"
+    logs = [
+        "decode: APC kitty image chunk accepted",
+        "renderer: atlas page recycled without fallback",
+        "damage: merged 13 dirty rows into 3 rectangles",
+        "input: CPR latency sample queued",
+        "gpu: texture upload batched with glyph quads",
+        "term: wide cell pair resolved after resize",
+        "style: colored underline + italic span cached",
+    ]
+    sections = ["parser", "shape", "atlas", "blend", "upload", "swap"]
+    frames = 0
+    t0 = time.perf_counter()
+    deadline = t0 + duration
+    try:
+        while time.perf_counter() < deadline:
+            parts = ["\033[H"]
+            line_count = 0
+
+            def emit(line: str = "") -> None:
+                nonlocal line_count
+                parts.append(line + "\033[0m\n")
+                line_count += 1
+
+            title = (f" Ghostty Render Ops  frame={frames:05d}  "
+                     f"viewport={cols}x{rows} ")
+            emit(sgr(1, "48;2;20;26;42", "38;2;235;245;255")
+                 + fit_text(title, cols))
+
+            heat_w = max(cols - 2, 1)
+            heat = [" "]
+            for x in range(heat_w):
+                h = (x / max(heat_w, 1) + frames * 0.013) % 1.0
+                rr, gg, bb = colorsys.hsv_to_rgb(h, 0.88, 0.95)
+                heat.append(rgb_bg(int(rr * 255), int(gg * 255),
+                                   int(bb * 255)) + " ")
+            emit("".join(heat))
+
+            chart_w = max(cols - 24, 10)
+            points = []
+            for i in range(chart_w):
+                v = (math.sin((i + frames) * 0.24)
+                     + math.sin((i * 0.37) - frames * 0.13)) * 0.5
+                points.append(spark[int((v + 1.0) * 0.5
+                                        * (len(spark) - 1))])
+            emit(rgb_fg(130, 210, 255) + "frame-time "
+                 + rgb_fg(225, 245, 255) + "".join(points))
+
+            bar_w = max(cols - 22, 8)
+            for i, name in enumerate(sections):
+                phase = frames * 0.18 + i * 0.9
+                ratio = 0.5 + math.sin(phase) * 0.36
+                fill = max(0, min(bar_w, int(ratio * bar_w)))
+                ms = 0.3 + ratio * (7.0 + i * 0.4)
+                bar = (rgb_fg(90, 230, 150) + "█" * fill
+                       + rgb_fg(45, 65, 85) + "░" * (bar_w - fill))
+                emit(rgb_fg(170, 180, 210) + f"{name:<7} "
+                     + bar + rgb_fg(235, 210, 150) + f" {ms:5.2f}ms")
+
+            log_rows = max(1, rows - line_count - 2)
+            emit(rgb_fg(120, 130, 160) + "─ logs " + "─" * max(cols - 8, 0))
+            for i in range(log_rows):
+                msg = logs[(frames + i) % len(logs)]
+                sev = ["INFO", "WARN", "GPU ", "VT  "][(frames + i) % 4]
+                hue = (frames * 3 + i * 19) % 96
+                rr, gg, bb = colorsys.hsv_to_rgb(hue / 96.0, 0.6, 1.0)
+                prefix = f"{frames+i:05d} {sev} "
+                emit(rgb_fg(int(rr * 255), int(gg * 255), int(bb * 255))
+                     + fit_text(prefix + msg, cols))
+
+            while line_count < rows:
+                emit(" " * cols)
+            wf("".join(parts))
+            frames += 1
+    finally:
+        show_cursor()
+        wf("\033[0m")
+    elapsed = time.perf_counter() - t0
+    b.note(f"\nframes={frames}  fps={frames/elapsed:.1f}")
+    return Result(name="dashboard",
+                  metrics={"frames": frames, "elapsed_s": elapsed,
+                           "fps": round(frames / elapsed, 1),
+                           "cols": cols, "rows": rows})
+
+
 @register("stress_rgba")
 def t_stress_rgba(b: Bench) -> Result:
     """每帧整屏背景换 RGB —— GPU 大面积重绘压测。"""
@@ -1054,11 +1372,83 @@ def t_showcase(b: Bench) -> Result:
 # 汇总 + 报告
 # ─────────────────────────────────────────────────────────────────────────────
 
-def print_summary(b: Bench) -> None:
+def print_render_samples(b: Bench) -> None:
+    """Append compact static render samples to the final visible report."""
+    b.refresh_size()
+    width = max(b.cols - 2, 24)
+    sample_width = min(width, 80)
+
     w("\n" + sgr(1, "38;2;120;180;255")
-      + "═══ Summary " + "═" * max(b.cols - 12, 10) + reset() + "\n")
-    name_w = max((len(r.name) for r in b.results), default=8) + 2
-    for r in b.results:
+      + "═══ Render Samples "
+      + "═" * max(b.cols - 20, 10) + reset() + "\n")
+
+    w(rgb_fg(160, 160, 200) + "── TrueColor / grayscale "
+      + "─" * max(sample_width - 23, 0) + reset() + "\n")
+    for x in range(sample_width):
+        h = x / max(sample_width - 1, 1)
+        r, g, bl = colorsys.hsv_to_rgb(h, 0.95, 1.0)
+        w(rgb_bg(int(r * 255), int(g * 255), int(bl * 255)) + " ")
+    w(reset() + "\n")
+    for x in range(sample_width):
+        v = int(x / max(sample_width - 1, 1) * 255)
+        w(rgb_bg(v, v, v) + " ")
+    w(reset() + "\n")
+
+    w(rgb_fg(160, 160, 200) + "── 256-color palette excerpt "
+      + "─" * max(sample_width - 29, 0) + reset() + "\n")
+    cells = min(128, sample_width * 2)
+    per_row = max(8, sample_width)
+    for i in range(cells):
+        w(palette_bg(i) + " ")
+        if (i + 1) % per_row == 0:
+            w(reset() + "\n")
+    if cells % per_row:
+        w(reset() + "\n")
+
+    w(rgb_fg(160, 160, 200) + "── SGR / highlights / underline "
+      + "─" * max(sample_width - 31, 0) + reset() + "\n")
+    w(sgr(1) + "Bold" + reset() + "  "
+      + sgr(3) + "Italic" + reset() + "  "
+      + sgr(2) + "Dim" + reset() + "  "
+      + sgr(7) + "Inverse" + reset() + "  "
+      + sgr(9) + "Strike" + reset() + "  "
+      + sgr(1, "48;2;40;90;65", "38;2;220;255;230")
+      + "Highlighted" + reset() + "\n")
+    w(underline(1, (255, 120, 120)) + "single-red" + reset() + "  "
+      + underline(2, (255, 210, 90)) + "double-amber" + reset() + "  "
+      + underline(3, (120, 220, 255)) + "curly-cyan" + reset() + "  "
+      + underline(4, (170, 255, 130)) + "dotted-lime" + reset() + "  "
+      + underline(5, (255, 150, 225)) + "dashed-pink" + reset() + "\n")
+
+    w(rgb_fg(160, 160, 200) + "── Wide / emoji / OSC 8 "
+      + "─" * max(sample_width - 23, 0) + reset() + "\n")
+    w("CJK 中文  ひらがな  한글  Emoji 🚀🎨🐧☕  Box ┌─┐│└┘├┤\n")
+    w(osc8("https://ghostty.org", "ghostty.org",
+           CSI + "4;38;2;120;180;255m") + "  "
+      + osc8("https://github.com/termux", "github/termux",
+             CSI + "4;38;2;180;255;180m") + "\n")
+
+    w(rgb_fg(160, 160, 200) + "── Kitty graphics PNG "
+      + "─" * max(sample_width - 21, 0) + reset() + "\n")
+    try:
+        kitty_emit(_make_or_load_png_bytes())
+        w("\n")
+    except Exception as e:
+        w(rgb_fg(255, 160, 120) + f"kitty sample failed: {e}"
+          + reset() + "\n")
+    flush()
+
+
+def print_summary(b: Bench,
+                  results: Optional[list[Result]] = None,
+                  title: str = "Summary",
+                  include_render_samples: bool = False) -> None:
+    rows = results if results is not None else b.results
+    w("\n" + sgr(1, "38;2;120;180;255")
+      + f"═══ {title} " + "═" * max(b.cols - len(title) - 6, 10)
+      + reset() + "\n")
+    name_w = max((len(r.name) for r in rows), default=8) + 2
+    for r in rows:
         status = (rgb_fg(120, 220, 140) + "✓"
                   if r.ok else rgb_fg(255, 110, 110) + "✗")
         line = f"{status} {r.name:<{name_w}}{reset()}"
@@ -1069,6 +1459,8 @@ def print_summary(b: Bench) -> None:
         if r.note:
             line += "  " + rgb_fg(255, 180, 120) + r.note + reset()
         w(line + "\n")
+    if include_render_samples:
+        print_render_samples(b)
     flush()
 
 
@@ -1081,7 +1473,7 @@ def write_report(b: Bench, path: str) -> None:
 # main
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEFAULT_ALL_ORDER = [
+STATIC_ORDER = [
     "showcase",
     "truecolor",
     "palette",
@@ -1090,23 +1482,44 @@ DEFAULT_ALL_ORDER = [
     "wide",
     "osc8",
     "kitty",
+]
+
+PERF_ORDER = [
     "fps_static",
     "fps_scroll",
     "throughput",
     "stress_rgba",
     "stress_glyph",
-    "latency",
 ]
+
+VISUAL_ORDER = [
+    "gradient_2d",
+    "rainbow",
+    "disco",
+    "plasma",
+    "matrix",
+    "fireworks",
+    "neon_tunnel",
+    "braille_particles",
+    "emoji_storm",
+    "dashboard",
+]
+
+PERF_VISUAL_ORDER = PERF_ORDER + VISUAL_ORDER + ["latency"]
+DEFAULT_ALL_ORDER = PERF_VISUAL_ORDER
+LIST_ORDER = PERF_VISUAL_ORDER + STATIC_ORDER
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description="Ghostty render capability + perf bench",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Tests: " + ", ".join(DEFAULT_ALL_ORDER),
+        epilog=("Groups: all, perf, visual, static\n"
+                "Tests: " + ", ".join(LIST_ORDER)),
     )
     p.add_argument("test", nargs="?", default="all",
-                   help="test name, 'all', 'list', or 'showcase' (default: all)")
+                   help=("test name, 'all', 'perf', 'visual', 'static', "
+                         "'list', or 'showcase' (default: all)"))
     p.add_argument("--duration", type=float, default=3.0,
                    help="seconds for perf tests (default 3)")
     p.add_argument("--samples", type=int, default=100,
@@ -1119,14 +1532,34 @@ def main(argv: list[str] | None = None) -> int:
     bench = Bench(args)
 
     if args.test == "list":
-        for name in DEFAULT_ALL_ORDER:
+        w("groups:\n")
+        w("  all\n")
+        w("  perf\n")
+        w("  visual\n")
+        w("  static\n")
+        w("tests:\n")
+        seen = set()
+        for name in LIST_ORDER:
+            seen.add(name)
             w(f"  {name}\n")
+        for name in TESTS:
+            if name not in seen:
+                w(f"  {name}\n")
         flush()
         return 0
 
     try:
         if args.test == "all":
             for name in DEFAULT_ALL_ORDER:
+                bench.run_one(name)
+        elif args.test == "perf":
+            for name in PERF_ORDER + ["latency"]:
+                bench.run_one(name)
+        elif args.test == "visual":
+            for name in VISUAL_ORDER:
+                bench.run_one(name)
+        elif args.test == "static":
+            for name in STATIC_ORDER:
                 bench.run_one(name)
         elif args.test == "showcase":
             bench.run_one("showcase")
@@ -1142,7 +1575,12 @@ def main(argv: list[str] | None = None) -> int:
         show_cursor()
         wf(reset())
         if not args.no_summary and len(bench.results) > 1:
-            print_summary(bench)
+            print_summary(
+                bench,
+                title=("Performance Report" if args.test == "all"
+                       else "Summary"),
+                include_render_samples=(args.test == "all"),
+            )
         if args.report:
             write_report(bench, args.report)
             sys.stderr.write(f"\nreport written to {args.report}\n")

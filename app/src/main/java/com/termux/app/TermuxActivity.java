@@ -312,6 +312,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         if (mIsInvalidState) return;
 
+        if (mTerminalView != null)
+            mTerminalView.onResume();
+
         if (mTermuxTerminalSessionActivityClient != null)
             mTermuxTerminalSessionActivityClient.onResume();
 
@@ -326,6 +329,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+
+        Logger.logVerbose(LOG_TAG, "onPause");
+
+        if (mIsInvalidState) return;
+
+        if (mTermuxTerminalSessionActivityClient != null)
+            mTermuxTerminalSessionActivityClient.onPause();
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
 
@@ -334,6 +349,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mIsInvalidState) return;
 
         mIsVisible = false;
+
+        if (mTerminalView != null)
+            mTerminalView.onPause();
 
         if (mTermuxTerminalSessionActivityClient != null)
             mTermuxTerminalSessionActivityClient.onStop();
@@ -428,7 +446,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             }
         }
 
-        // Update the {@link TerminalSession} and {@link TerminalEmulator} clients.
+        // Update the {@link TerminalSession} and terminal engine clients.
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
     }
 

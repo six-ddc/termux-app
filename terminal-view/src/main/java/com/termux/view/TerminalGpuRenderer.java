@@ -1,0 +1,868 @@
+package com.termux.view;
+
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Typeface;
+import android.opengl.GLES20;
+import android.opengl.GLSurfaceView;
+import android.opengl.GLUtils;
+import android.util.Log;
+
+import com.termux.terminal.TerminalEngine;
+import com.termux.terminal.TerminalKittyGraphicsPlacement;
+import com.termux.terminal.TextStyle;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.opengles.GL10;
+
+final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
+
+    private static final String LOG_TAG = "TerminalGpuRenderer";
+    private static final int ATLAS_SIZE = 2048;
+    private static final int MAX_BATCH_QUADS = 8192;
+    private static final int UNDERLINE_NONE = 0;
+    private static final int UNDERLINE_SINGLE = 1;
+    private static final int UNDERLINE_DOUBLE = 2;
+    private static final int UNDERLINE_CURLY = 3;
+    private static final int UNDERLINE_DOTTED = 4;
+    private static final int UNDERLINE_DASHED = 5;
+
+    private final TerminalView mView;
+    private final FloatBuffer mVertexBuffer = ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+    private final FloatBuffer mGlyphBatchBuffer = ByteBuffer.allocateDirect(MAX_BATCH_QUADS * 6 * 4 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+    private final Map<Long, Glyph> mCodepointGlyphs = new HashMap<>();
+    private final Map<String, Glyph> mGlyphs = new HashMap<>();
+    private final Map<Long, KittyTexture> mKittyTextures = new HashMap<>();
+    private final int[] mSelection = new int[]{-1, -1, -1, -1};
+    private final int[] mLastSelection = new int[]{-1, -1, -1, -1};
+
+    private int mProgram;
+    private int mPositionLocation;
+    private int mTexCoordLocation;
+    private int mColorLocation;
+    private int mTexturedLocation;
+    private int mTextureLocation;
+    private int mAtlasTexture;
+    private int mFramebuffer;
+    private int mFramebufferTexture;
+    private int mFramebufferWidth;
+    private int mFramebufferHeight;
+    private boolean mFramebufferContentValid;
+    private int mWidth;
+    private int mHeight;
+    private Bitmap mAtlasBitmap;
+    private Canvas mAtlasCanvas;
+    private Paint mGlyphPaint;
+    private int mAtlasX;
+    private int mAtlasY;
+    private int mAtlasRowHeight;
+    private int mGlyphCacheTextSize;
+    private Typeface mGlyphCacheTypeface;
+    private boolean mLoggedDirectRenderPath;
+    private boolean mLoggedMissingDirectRenderState;
+    private int mLoggedFrameStats;
+    private long mFrameStartNanos;
+    private int mFrameDrawCalls;
+    private int mFrameGlyphs;
+    private int mFrameRects;
+    private int mFrameKittyImages;
+    private int mFrameDirtyState;
+    private int mFrameDirtyRows;
+    private int mFrameTopRow;
+    private int mGlyphBatchVertexCount;
+    private int mGlyphBatchColor;
+    private int mLastCursorRow = -1;
+    private int mLastTopRow;
+
+    TerminalGpuRenderer(TerminalView view) {
+        mView = view;
+    }
+
+    @Override
+    public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+        mKittyTextures.clear();
+        mProgram = createProgram();
+        mPositionLocation = GLES20.glGetAttribLocation(mProgram, "aPosition");
+        mTexCoordLocation = GLES20.glGetAttribLocation(mProgram, "aTexCoord");
+        mColorLocation = GLES20.glGetUniformLocation(mProgram, "uColor");
+        mTexturedLocation = GLES20.glGetUniformLocation(mProgram, "uTextured");
+        mTextureLocation = GLES20.glGetUniformLocation(mProgram, "uTexture");
+
+        int[] textures = new int[1];
+        GLES20.glGenTextures(1, textures, 0);
+        mAtlasTexture = textures[0];
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+
+        mAtlasBitmap = Bitmap.createBitmap(ATLAS_SIZE, ATLAS_SIZE, Bitmap.Config.ARGB_8888);
+        mAtlasCanvas = new Canvas(mAtlasBitmap);
+        mGlyphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        mGlyphPaint.setColor(Color.WHITE);
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasBitmap, 0);
+
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        Log.i(LOG_TAG, "OpenGL ES terminal renderer initialized; renderer=" + gl.glGetString(GL10.GL_RENDERER) +
+            ", version=" + gl.glGetString(GL10.GL_VERSION));
+    }
+
+    @Override
+    public void onSurfaceChanged(GL10 gl, int width, int height) {
+        mWidth = width;
+        mHeight = height;
+        GLES20.glViewport(0, 0, width, height);
+        recreateFramebuffer(width, height);
+    }
+
+    @Override
+    public void onDrawFrame(GL10 gl) {
+        TerminalEngine engine = mView.mTerminalEngine;
+        TerminalRenderer renderer = mView.mRenderer;
+        if (engine == null || renderer == null || mWidth <= 0 || mHeight <= 0) {
+            GLES20.glClearColor(0, 0, 0, 1);
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            return;
+        }
+        if (!engine.isGhosttyBacked()) {
+            Log.e(LOG_TAG, "Refusing to render non-Ghostty terminal engine on GPU path");
+            GLES20.glClearColor(0, 0, 0, 1);
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            return;
+        }
+        beginFrameStats();
+
+        renderer.copyGlyphPaintTo(mGlyphPaint);
+        ensureGlyphCacheForRenderer(renderer);
+        mView.copyRenderSelectors(mSelection);
+
+        int[] palette = engine.getCurrentColors();
+        int background = palette[engine.isReverseVideo() ? TextStyle.COLOR_INDEX_FOREGROUND : TextStyle.COLOR_INDEX_BACKGROUND];
+
+        int columns = engine.getColumns();
+        int rows = engine.getRows();
+        int topRow = mView.mTopRow;
+        mFrameTopRow = topRow;
+        int cursorCol = engine.getCursorCol();
+        int cursorRow = engine.getCursorRow();
+        boolean cursorVisible = engine.shouldCursorBeVisible();
+        boolean cursorWideTail = engine.isCursorWideTail();
+        mFrameDirtyState = engine.getRenderDirtyState();
+        mFrameDirtyRows = countDirtyRows(engine.getRenderDirtyRows(), rows);
+        float cellWidth = renderer.mFontWidth;
+        float cellHeight = renderer.mFontLineSpacing;
+        int[] renderCells = engine.getRenderCells();
+        String[] renderCellText = engine.getRenderCellText();
+        TerminalKittyGraphicsPlacement[] kittyPlacements = sortedKittyPlacements(engine.getKittyGraphicsPlacements());
+        int requiredRenderCells = columns * rows * TerminalEngine.RENDER_CELL_STRIDE;
+
+        if (renderCells != null && renderCells.length >= requiredRenderCells) {
+            if (!mLoggedDirectRenderPath) {
+                Log.i(LOG_TAG, "Rendering Ghostty render-state cells with OpenGL ES; size=" + columns + "x" + rows);
+                mLoggedDirectRenderPath = true;
+            }
+            boolean fullRedraw = !mFramebufferContentValid || topRow != mLastTopRow ||
+                mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL ||
+                (kittyPlacements != null && kittyPlacements.length > 0);
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
+            GLES20.glViewport(0, 0, mWidth, mHeight);
+            if (fullRedraw) {
+                setClearColor(background);
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            }
+            drawGhosttyRenderStateFrame(engine, renderer, renderCells, renderCellText, palette, columns, rows,
+                topRow, cursorCol, cursorRow, cursorVisible, cursorWideTail, cellWidth, cellHeight, background,
+                fullRedraw, engine.getRenderDirtyRows(), kittyPlacements);
+            mFramebufferContentValid = true;
+            engine.clearRenderDirtyState();
+            mLastCursorRow = cursorRow;
+            mLastTopRow = topRow;
+            System.arraycopy(mSelection, 0, mLastSelection, 0, mSelection.length);
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+            GLES20.glViewport(0, 0, mWidth, mHeight);
+            GLES20.glClearColor(0, 0, 0, 1);
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            drawFramebufferToScreen();
+            finishFrameStats("ghostty-render-state", columns, rows);
+            return;
+        }
+
+        if (!mLoggedMissingDirectRenderState) {
+            Log.e(LOG_TAG, "Ghostty render-state cells are unavailable; refusing TerminalBuffer fallback");
+            mLoggedMissingDirectRenderState = true;
+        }
+        GLES20.glClearColor(0, 0, 0, 1);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        finishFrameStats("missing-ghostty-render-state", columns, rows);
+    }
+
+    private void drawGhosttyRenderStateFrame(TerminalEngine engine, TerminalRenderer renderer, int[] renderCells,
+                                             String[] renderCellText,
+                                             int[] palette, int columns, int rows, int topRow, int cursorCol, int cursorRow,
+                                             boolean cursorVisible, boolean cursorWideTail, float cellWidth, float cellHeight,
+                                             int defaultBackground, boolean fullRedraw, int[] dirtyRows,
+                                             TerminalKittyGraphicsPlacement[] kittyPlacements) {
+        int cursorShape = engine.getCursorStyle();
+        boolean reverseVideo = engine.isReverseVideo();
+        int cursorRenderCol = cursorWideTail ? Math.max(0, cursorCol - 1) : cursorCol;
+
+        for (int row = 0; row < rows; row++) {
+            if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
+                continue;
+            if (!fullRedraw)
+                drawRect(0, row * cellHeight, columns * cellWidth, cellHeight, defaultBackground);
+            for (int column = 0; column < columns; column++) {
+                int base = renderCellBase(row, column, columns);
+                int effect = renderCells[base + TerminalEngine.RENDER_CELL_EFFECT];
+                boolean cursor = cursorVisible && row == cursorRow && cursorRenderCol == column;
+                boolean selected = renderCells[base + TerminalEngine.RENDER_CELL_SELECTED] != 0;
+                int fg = resolveCellForeground(renderCells[base + TerminalEngine.RENDER_CELL_FOREGROUND], effect, palette);
+                int bg = resolveCellBackground(renderCells[base + TerminalEngine.RENDER_CELL_BACKGROUND], palette);
+                if (shouldSwapColors(reverseVideo, effect, selected, cursor && cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_BLOCK)) {
+                    int swap = fg;
+                    fg = bg;
+                    bg = swap;
+                }
+                if (bg != defaultBackground)
+                    drawRect(column * cellWidth, row * cellHeight, cellWidth, cellHeight, bg);
+                if (cursor && cursorShape != TerminalEngine.TERMINAL_CURSOR_STYLE_BLOCK)
+                    drawCursorShape(column * cellWidth, row * cellHeight, cellWidth, cellHeight, cursorShape, palette);
+            }
+        }
+
+        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, false);
+
+        for (int row = 0; row < rows; row++) {
+            if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
+                continue;
+            for (int column = 0; column < columns; ) {
+                int base = renderCellBase(row, column, columns);
+                int codePoint = renderCells[base + TerminalEngine.RENDER_CELL_CODEPOINT];
+                int cellIndex = row * columns + column;
+                String text = renderCellText != null && cellIndex < renderCellText.length ? renderCellText[cellIndex] : null;
+                int effect = renderCells[base + TerminalEngine.RENDER_CELL_EFFECT];
+                int widthColumns = renderCells[base + TerminalEngine.RENDER_CELL_WIDTH];
+                if (widthColumns <= 0) {
+                    column++;
+                    continue;
+                }
+                boolean cursor = cursorVisible && row == cursorRow && cursorRenderCol == column;
+                boolean selected = renderCells[base + TerminalEngine.RENDER_CELL_SELECTED] != 0;
+                int fg = resolveCellForeground(renderCells[base + TerminalEngine.RENDER_CELL_FOREGROUND], effect, palette);
+                int bg = resolveCellBackground(renderCells[base + TerminalEngine.RENDER_CELL_BACKGROUND], palette);
+                if (shouldSwapColors(reverseVideo, effect, selected, cursor && cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_BLOCK)) {
+                    int swap = fg;
+                    fg = bg;
+                    bg = swap;
+                }
+                fg = applyDimEffect(fg, effect);
+
+                if ((text != null || (codePoint > 0 && codePoint != ' ')) && (effect & TextStyle.CHARACTER_ATTRIBUTE_INVISIBLE) == 0) {
+                    boolean bold = (effect & TextStyle.CHARACTER_ATTRIBUTE_BOLD) != 0;
+                    boolean italic = (effect & TextStyle.CHARACTER_ATTRIBUTE_ITALIC) != 0;
+                    Glyph glyph = text != null ? getGlyph(renderer, text, bold, italic, widthColumns, cellWidth) :
+                        getGlyph(renderer, codePoint, bold, italic, widthColumns, cellWidth);
+                    drawGlyph(glyph, column * cellWidth, row * cellHeight, fg);
+                }
+                int underlineColor = resolveUnderlineColor(renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_COLOR], fg, palette);
+                int underlineStyle = renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_STYLE];
+                boolean overline = renderCells[base + TerminalEngine.RENDER_CELL_OVERLINE] != 0;
+                drawTextDecorations(column * cellWidth, row * cellHeight, widthColumns * cellWidth, cellHeight,
+                    fg, effect, underlineColor, underlineStyle, overline);
+                column += widthColumns;
+            }
+        }
+        flushGlyphBatch();
+        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, true);
+    }
+
+    private TerminalKittyGraphicsPlacement[] sortedKittyPlacements(TerminalKittyGraphicsPlacement[] placements) {
+        if (placements == null || placements.length == 0)
+            return placements;
+        TerminalKittyGraphicsPlacement[] sorted = placements.clone();
+        Arrays.sort(sorted, (left, right) -> Integer.compare(left.zIndex, right.zIndex));
+        return sorted;
+    }
+
+    private void drawKittyGraphicsPlacements(TerminalKittyGraphicsPlacement[] placements, float cellWidth,
+                                             float cellHeight, boolean aboveText) {
+        if (placements == null)
+            return;
+        for (TerminalKittyGraphicsPlacement placement : placements) {
+            if (placement == null || !placement.isTextureUploadSupported())
+                continue;
+            boolean placementAboveText = placement.zIndex >= 0;
+            if (placementAboveText != aboveText)
+                continue;
+            KittyTexture texture = getKittyTexture(placement);
+            if (texture == null)
+                continue;
+
+            float x = placement.viewportColumn * cellWidth + placement.xOffset;
+            float y = placement.viewportRow * cellHeight + placement.yOffset;
+            float width = Math.max(1, placement.pixelWidth);
+            float height = Math.max(1, placement.pixelHeight);
+            float u1 = (float) placement.sourceX / Math.max(1, placement.imageWidth);
+            float v1 = (float) placement.sourceY / Math.max(1, placement.imageHeight);
+            float u2 = (float) (placement.sourceX + placement.sourceWidth) / Math.max(1, placement.imageWidth);
+            float v2 = (float) (placement.sourceY + placement.sourceHeight) / Math.max(1, placement.imageHeight);
+            drawTextureQuad(texture.textureId, x, y, width, height, u1, v1, u2, v2);
+            mFrameKittyImages++;
+        }
+    }
+
+    private KittyTexture getKittyTexture(TerminalKittyGraphicsPlacement placement) {
+        long key = (((long) placement.imageId) << 32) ^
+            (((long) placement.imageDataHash) & 0xffffffffL) ^
+            (((long) placement.imageData.length) << 1);
+        KittyTexture cached = mKittyTextures.get(key);
+        if (cached != null && cached.width == placement.imageWidth && cached.height == placement.imageHeight &&
+            cached.format == placement.imageFormat) {
+            return cached;
+        }
+
+        int glFormat;
+        if (placement.imageFormat == TerminalKittyGraphicsPlacement.FORMAT_RGBA)
+            glFormat = GLES20.GL_RGBA;
+        else if (placement.imageFormat == TerminalKittyGraphicsPlacement.FORMAT_RGB)
+            glFormat = GLES20.GL_RGB;
+        else
+            return null;
+
+        ByteBuffer buffer = ByteBuffer.allocateDirect(placement.imageData.length).order(ByteOrder.nativeOrder());
+        buffer.put(placement.imageData);
+        buffer.position(0);
+
+        int[] textures = new int[1];
+        GLES20.glGenTextures(1, textures, 0);
+        int textureId = textures[0];
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1);
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, glFormat, placement.imageWidth, placement.imageHeight, 0,
+            glFormat, GLES20.GL_UNSIGNED_BYTE, buffer);
+
+        KittyTexture texture = new KittyTexture(textureId, placement.imageWidth, placement.imageHeight,
+            placement.imageFormat);
+        mKittyTextures.put(key, texture);
+        return texture;
+    }
+
+    private boolean rowNeedsFramebufferUpdate(int row, int topRow, boolean fullRedraw, int[] dirtyRows, int cursorRow) {
+        if (fullRedraw)
+            return true;
+        if (row == cursorRow || row == mLastCursorRow)
+            return true;
+        if (rowHasSelection(mSelection, topRow + row) || rowHasSelection(mLastSelection, topRow + row))
+            return true;
+        return dirtyRows != null && row < dirtyRows.length && dirtyRows[row] != 0;
+    }
+
+    private boolean rowHasSelection(int[] selection, int row) {
+        int y1 = selection[0];
+        int y2 = selection[1];
+        return y1 >= 0 && row >= y1 && row <= y2;
+    }
+
+    private int renderCellBase(int row, int column, int columns) {
+        return (row * columns + column) * TerminalEngine.RENDER_CELL_STRIDE;
+    }
+
+    private boolean shouldSwapColors(boolean reverseVideo, int effect, boolean selected, boolean blockCursor) {
+        boolean swap = reverseVideo || selected || blockCursor;
+        if ((effect & TextStyle.CHARACTER_ATTRIBUTE_INVERSE) != 0)
+            swap = !swap;
+        return swap;
+    }
+
+    private int resolveCellForeground(int color, int effect, int[] palette) {
+        if ((effect & TextStyle.CHARACTER_ATTRIBUTE_BOLD) != 0 && color >= 0 && color < 8)
+            color += 8;
+        return resolveColor(color, palette);
+    }
+
+    private int resolveCellBackground(int color, int[] palette) {
+        return resolveColor(color, palette);
+    }
+
+    private int resolveUnderlineColor(int color, int fallbackColor, int[] palette) {
+        return color == TerminalEngine.RENDER_CELL_COLOR_DEFAULT ? fallbackColor : resolveColor(color, palette);
+    }
+
+    private int resolveColor(int color, int[] palette) {
+        if ((color & 0xff000000) == 0xff000000)
+            return color;
+        if (color >= 0 && color < palette.length)
+            return palette[color];
+        return Color.WHITE;
+    }
+
+    private int applyDimEffect(int color, int effect) {
+        if ((effect & TextStyle.CHARACTER_ATTRIBUTE_DIM) == 0)
+            return color;
+        int red = (0xFF & (color >> 16)) * 2 / 3;
+        int green = (0xFF & (color >> 8)) * 2 / 3;
+        int blue = (0xFF & color) * 2 / 3;
+        return 0xFF000000 | (red << 16) | (green << 8) | blue;
+    }
+
+    private void ensureGlyphCacheForRenderer(TerminalRenderer renderer) {
+        if (mGlyphCacheTypeface == renderer.mTypeface && mGlyphCacheTextSize == renderer.mTextSize)
+            return;
+        mGlyphs.clear();
+        mCodepointGlyphs.clear();
+        mGlyphCacheTypeface = renderer.mTypeface;
+        mGlyphCacheTextSize = renderer.mTextSize;
+        mAtlasBitmap.eraseColor(Color.TRANSPARENT);
+        mAtlasX = 0;
+        mAtlasY = 0;
+        mAtlasRowHeight = 0;
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasBitmap, 0);
+    }
+
+    private Glyph getGlyph(TerminalRenderer renderer, int codePoint, boolean bold, boolean italic, int widthColumns, float cellWidth) {
+        mGlyphPaint.setFakeBoldText(bold);
+        mGlyphPaint.setTextSkewX(italic ? -0.35f : 0.f);
+        long key = ((long) codePoint << 4) | ((long) Math.min(3, Math.max(1, widthColumns)) << 2) |
+            (bold ? 1L : 0L) | (italic ? 2L : 0L);
+        Glyph cached = mCodepointGlyphs.get(key);
+        if (cached != null) return cached;
+        Glyph glyph = createGlyph(renderer, new String(Character.toChars(codePoint)), maxGlyphPixelWidth(widthColumns, cellWidth));
+        mCodepointGlyphs.put(key, glyph);
+        return glyph;
+    }
+
+    private Glyph getGlyph(TerminalRenderer renderer, String text, boolean bold, boolean italic, int widthColumns, float cellWidth) {
+        mGlyphPaint.setFakeBoldText(bold);
+        mGlyphPaint.setTextSkewX(italic ? -0.35f : 0.f);
+        String key = bold + ":" + italic + ":" + widthColumns + ":" + text;
+        Glyph cached = mGlyphs.get(key);
+        if (cached != null) return cached;
+        Glyph glyph = createGlyph(renderer, text, maxGlyphPixelWidth(widthColumns, cellWidth));
+        mGlyphs.put(key, glyph);
+        return glyph;
+    }
+
+    private int maxGlyphPixelWidth(int widthColumns, float cellWidth) {
+        return Math.max(1, Math.min(ATLAS_SIZE, (int) Math.ceil(Math.max(1, widthColumns) * cellWidth) + 4));
+    }
+
+    private Glyph createGlyph(TerminalRenderer renderer, String text, int maxGlyphWidth) {
+        int measuredGlyphWidth = Math.max(1, (int) Math.ceil(mGlyphPaint.measureText(text)) + 4);
+        int glyphWidth = Math.min(measuredGlyphWidth, maxGlyphWidth);
+        int glyphHeight = Math.max(1, renderer.mFontLineSpacing);
+        if (mAtlasX + glyphWidth >= ATLAS_SIZE) {
+            mAtlasX = 0;
+            mAtlasY += mAtlasRowHeight;
+            mAtlasRowHeight = 0;
+        }
+        if (mAtlasY + glyphHeight >= ATLAS_SIZE) {
+            mGlyphs.clear();
+            mCodepointGlyphs.clear();
+            mAtlasBitmap.eraseColor(Color.TRANSPARENT);
+            mAtlasX = 0;
+            mAtlasY = 0;
+            mAtlasRowHeight = 0;
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasBitmap, 0);
+        }
+
+        float baseline = mAtlasY + renderer.mFontLineSpacing - renderer.mFontLineSpacingAndAscent;
+        int saveCount = mAtlasCanvas.save();
+        mAtlasCanvas.clipRect(mAtlasX, mAtlasY, mAtlasX + glyphWidth, mAtlasY + glyphHeight);
+        mAtlasCanvas.drawText(text, mAtlasX + 2, baseline, mGlyphPaint);
+        mAtlasCanvas.restoreToCount(saveCount);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
+        Bitmap glyphBitmap = Bitmap.createBitmap(mAtlasBitmap, mAtlasX, mAtlasY, glyphWidth, glyphHeight);
+        GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasX, mAtlasY, glyphBitmap);
+        glyphBitmap.recycle();
+
+        Glyph glyph = new Glyph(mAtlasX, mAtlasY, glyphWidth, glyphHeight);
+        mAtlasX += glyphWidth;
+        mAtlasRowHeight = Math.max(mAtlasRowHeight, glyphHeight);
+        return glyph;
+    }
+
+    private void drawGlyph(Glyph glyph, float x, float y, int color) {
+        mFrameGlyphs++;
+        drawTexturedQuadBatched(x, y, glyph.width, glyph.height,
+            (float) glyph.x / ATLAS_SIZE, (float) glyph.y / ATLAS_SIZE,
+            (float) (glyph.x + glyph.width) / ATLAS_SIZE, (float) (glyph.y + glyph.height) / ATLAS_SIZE,
+            color);
+    }
+
+    private void drawRect(float x, float y, float width, float height, int color) {
+        flushGlyphBatch();
+        mFrameRects++;
+        drawQuad(x, y, width, height, 0, 0, 0, 0, color, false);
+    }
+
+    private void drawTextureQuad(int texture, float x, float y, float width, float height,
+                                 float u1, float v1, float u2, float v2) {
+        flushGlyphBatch();
+        float left = (x / mWidth) * 2f - 1f;
+        float right = ((x + width) / mWidth) * 2f - 1f;
+        float top = 1f - (y / mHeight) * 2f;
+        float bottom = 1f - ((y + height) / mHeight) * 2f;
+        mVertexBuffer.clear();
+        putVertex(mVertexBuffer, left, top, u1, v1);
+        putVertex(mVertexBuffer, left, bottom, u1, v2);
+        putVertex(mVertexBuffer, right, top, u2, v1);
+        putVertex(mVertexBuffer, right, bottom, u2, v2);
+        mVertexBuffer.position(0);
+
+        GLES20.glUseProgram(mProgram);
+        GLES20.glUniform4f(mColorLocation, 1f, 1f, 1f, 1f);
+        GLES20.glUniform1f(mTexturedLocation, 2f);
+        GLES20.glUniform1i(mTextureLocation, 0);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
+
+        mVertexBuffer.position(0);
+        GLES20.glVertexAttribPointer(mPositionLocation, 2, GLES20.GL_FLOAT, false, 16, mVertexBuffer);
+        GLES20.glEnableVertexAttribArray(mPositionLocation);
+        mVertexBuffer.position(2);
+        GLES20.glVertexAttribPointer(mTexCoordLocation, 2, GLES20.GL_FLOAT, false, 16, mVertexBuffer);
+        GLES20.glEnableVertexAttribArray(mTexCoordLocation);
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+        mFrameDrawCalls++;
+    }
+
+    private void beginFrameStats() {
+        mFrameStartNanos = System.nanoTime();
+        mFrameDrawCalls = 0;
+        mFrameGlyphs = 0;
+        mFrameRects = 0;
+        mFrameKittyImages = 0;
+        mGlyphBatchVertexCount = 0;
+    }
+
+    private void finishFrameStats(String source, int columns, int rows) {
+        if (mLoggedFrameStats >= 16)
+            return;
+        long elapsedMicros = (System.nanoTime() - mFrameStartNanos) / 1000L;
+        Log.i(LOG_TAG, "Frame " + source + " " + columns + "x" + rows +
+            ": " + (elapsedMicros / 1000f) + "ms, drawCalls=" + mFrameDrawCalls +
+            ", glyphs=" + mFrameGlyphs + ", rects=" + mFrameRects +
+            ", kittyImages=" + mFrameKittyImages +
+            ", dirtyState=" + mFrameDirtyState + ", dirtyRows=" + mFrameDirtyRows +
+            ", topRow=" + mFrameTopRow);
+        mLoggedFrameStats++;
+    }
+
+    private int countDirtyRows(int[] dirtyRows, int rows) {
+        if (mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL)
+            return rows;
+        if (mFrameDirtyState == TerminalEngine.RENDER_DIRTY_CLEAN || dirtyRows == null)
+            return 0;
+        int count = 0;
+        for (int i = 0; i < rows && i < dirtyRows.length; i++) {
+            if (dirtyRows[i] != 0)
+                count++;
+        }
+        return count;
+    }
+
+    private void drawCursorShape(float x, float y, float width, float height, int cursorShape, int[] palette) {
+        int cursorColor = palette[TextStyle.COLOR_INDEX_CURSOR];
+        if (cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_UNDERLINE)
+            drawRect(x, y + height - Math.max(1f, height / 4f), width, Math.max(1f, height / 4f), cursorColor);
+        else if (cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_BAR)
+            drawRect(x, y, Math.max(1f, width / 4f), height, cursorColor);
+    }
+
+    private void drawTextDecorations(float x, float y, float width, float height, int color, int effect,
+                                     int underlineColor, int underlineStyle, boolean overline) {
+        float stroke = Math.max(1f, height / 14f);
+        if ((effect & TextStyle.CHARACTER_ATTRIBUTE_UNDERLINE) != 0)
+            drawUnderline(x, y + height - stroke * 2f, width, stroke, underlineColor, underlineStyle);
+        if ((effect & TextStyle.CHARACTER_ATTRIBUTE_STRIKETHROUGH) != 0)
+            drawRect(x, y + height * 0.55f, width, stroke, color);
+        if (overline)
+            drawRect(x, y + stroke, width, stroke, underlineColor);
+    }
+
+    private void drawUnderline(float x, float y, float width, float stroke, int color, int style) {
+        switch (style) {
+            case UNDERLINE_DOUBLE:
+                drawRect(x, y - stroke * 1.5f, width, stroke, color);
+                drawRect(x, y + stroke * 1.5f, width, stroke, color);
+                break;
+            case UNDERLINE_DOTTED:
+                drawSegmentedLine(x, y, width, stroke, color, stroke * 1.25f, stroke * 2.5f);
+                break;
+            case UNDERLINE_DASHED:
+                drawSegmentedLine(x, y, width, stroke, color, stroke * 5f, stroke * 3f);
+                break;
+            case UNDERLINE_CURLY:
+                drawCurlyUnderline(x, y, width, stroke, color);
+                break;
+            case UNDERLINE_NONE:
+            case UNDERLINE_SINGLE:
+            default:
+                drawRect(x, y, width, stroke, color);
+                break;
+        }
+    }
+
+    private void drawSegmentedLine(float x, float y, float width, float stroke, int color, float segmentWidth, float gapWidth) {
+        float cursor = x;
+        float end = x + width;
+        while (cursor < end) {
+            float currentWidth = Math.min(segmentWidth, end - cursor);
+            drawRect(cursor, y, currentWidth, stroke, color);
+            cursor += segmentWidth + gapWidth;
+        }
+    }
+
+    private void drawCurlyUnderline(float x, float y, float width, float stroke, int color) {
+        float segmentWidth = Math.max(stroke * 2f, 2f);
+        float cursor = x;
+        float end = x + width;
+        boolean high = false;
+        while (cursor < end) {
+            float currentWidth = Math.min(segmentWidth, end - cursor);
+            drawRect(cursor, y + (high ? -stroke : stroke), currentWidth, stroke, color);
+            cursor += segmentWidth;
+            high = !high;
+        }
+    }
+
+    private void drawQuad(float x, float y, float width, float height, float u1, float v1, float u2, float v2, int color, boolean textured) {
+        float left = (x / mWidth) * 2f - 1f;
+        float right = ((x + width) / mWidth) * 2f - 1f;
+        float top = 1f - (y / mHeight) * 2f;
+        float bottom = 1f - ((y + height) / mHeight) * 2f;
+        mVertexBuffer.clear();
+        putVertex(mVertexBuffer, left, top, u1, v1);
+        putVertex(mVertexBuffer, left, bottom, u1, v2);
+        putVertex(mVertexBuffer, right, top, u2, v1);
+        putVertex(mVertexBuffer, right, bottom, u2, v2);
+        mVertexBuffer.position(0);
+
+        GLES20.glUseProgram(mProgram);
+        GLES20.glUniform4f(mColorLocation, Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, Color.alpha(color) / 255f);
+        GLES20.glUniform1f(mTexturedLocation, textured ? 1f : 0f);
+        GLES20.glUniform1i(mTextureLocation, 0);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
+
+        mVertexBuffer.position(0);
+        GLES20.glVertexAttribPointer(mPositionLocation, 2, GLES20.GL_FLOAT, false, 16, mVertexBuffer);
+        GLES20.glEnableVertexAttribArray(mPositionLocation);
+        mVertexBuffer.position(2);
+        GLES20.glVertexAttribPointer(mTexCoordLocation, 2, GLES20.GL_FLOAT, false, 16, mVertexBuffer);
+        GLES20.glEnableVertexAttribArray(mTexCoordLocation);
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+        mFrameDrawCalls++;
+    }
+
+    private void drawTexturedQuadBatched(float x, float y, float width, float height, float u1, float v1, float u2, float v2, int color) {
+        if (mGlyphBatchVertexCount > 0 && mGlyphBatchColor != color)
+            flushGlyphBatch();
+        if (mGlyphBatchVertexCount + 6 > MAX_BATCH_QUADS * 6)
+            flushGlyphBatch();
+        if (mGlyphBatchVertexCount == 0)
+            mGlyphBatchColor = color;
+
+        float left = (x / mWidth) * 2f - 1f;
+        float right = ((x + width) / mWidth) * 2f - 1f;
+        float top = 1f - (y / mHeight) * 2f;
+        float bottom = 1f - ((y + height) / mHeight) * 2f;
+        mGlyphBatchBuffer.position(mGlyphBatchVertexCount * 4);
+        putVertex(mGlyphBatchBuffer, left, top, u1, v1);
+        putVertex(mGlyphBatchBuffer, left, bottom, u1, v2);
+        putVertex(mGlyphBatchBuffer, right, top, u2, v1);
+        putVertex(mGlyphBatchBuffer, right, top, u2, v1);
+        putVertex(mGlyphBatchBuffer, left, bottom, u1, v2);
+        putVertex(mGlyphBatchBuffer, right, bottom, u2, v2);
+        mGlyphBatchVertexCount += 6;
+    }
+
+    private void putVertex(FloatBuffer buffer, float x, float y, float u, float v) {
+        buffer.put(x);
+        buffer.put(y);
+        buffer.put(u);
+        buffer.put(v);
+    }
+
+    private void flushGlyphBatch() {
+        if (mGlyphBatchVertexCount == 0)
+            return;
+
+        mGlyphBatchBuffer.position(0);
+        GLES20.glUseProgram(mProgram);
+        GLES20.glUniform4f(mColorLocation, Color.red(mGlyphBatchColor) / 255f, Color.green(mGlyphBatchColor) / 255f,
+            Color.blue(mGlyphBatchColor) / 255f, Color.alpha(mGlyphBatchColor) / 255f);
+        GLES20.glUniform1f(mTexturedLocation, 1f);
+        GLES20.glUniform1i(mTextureLocation, 0);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
+
+        mGlyphBatchBuffer.position(0);
+        GLES20.glVertexAttribPointer(mPositionLocation, 2, GLES20.GL_FLOAT, false, 16, mGlyphBatchBuffer);
+        GLES20.glEnableVertexAttribArray(mPositionLocation);
+        mGlyphBatchBuffer.position(2);
+        GLES20.glVertexAttribPointer(mTexCoordLocation, 2, GLES20.GL_FLOAT, false, 16, mGlyphBatchBuffer);
+        GLES20.glEnableVertexAttribArray(mTexCoordLocation);
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, mGlyphBatchVertexCount);
+        mFrameDrawCalls++;
+        mGlyphBatchVertexCount = 0;
+    }
+
+    private void recreateFramebuffer(int width, int height) {
+        if (mFramebufferTexture != 0) {
+            int[] textures = new int[]{mFramebufferTexture};
+            GLES20.glDeleteTextures(1, textures, 0);
+            mFramebufferTexture = 0;
+        }
+        if (mFramebuffer != 0) {
+            int[] framebuffers = new int[]{mFramebuffer};
+            GLES20.glDeleteFramebuffers(1, framebuffers, 0);
+            mFramebuffer = 0;
+        }
+
+        int[] textures = new int[1];
+        GLES20.glGenTextures(1, textures, 0);
+        mFramebufferTexture = textures[0];
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mFramebufferTexture);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null);
+
+        int[] framebuffers = new int[1];
+        GLES20.glGenFramebuffers(1, framebuffers, 0);
+        mFramebuffer = framebuffers[0];
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
+            GLES20.GL_TEXTURE_2D, mFramebufferTexture, 0);
+        int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+        if (status != GLES20.GL_FRAMEBUFFER_COMPLETE)
+            throw new IllegalStateException("Terminal framebuffer is incomplete: " + status);
+
+        mFramebufferWidth = width;
+        mFramebufferHeight = height;
+        mFramebufferContentValid = false;
+    }
+
+    private void drawFramebufferToScreen() {
+        drawTextureToScreen(mFramebufferTexture, 0, 1, 1, 0);
+    }
+
+    private void drawTextureToScreen(int texture, float u1, float v1, float u2, float v2) {
+        mVertexBuffer.clear();
+        putVertex(mVertexBuffer, -1f, 1f, u1, v1);
+        putVertex(mVertexBuffer, -1f, -1f, u1, v2);
+        putVertex(mVertexBuffer, 1f, 1f, u2, v1);
+        putVertex(mVertexBuffer, 1f, -1f, u2, v2);
+        mVertexBuffer.position(0);
+
+        GLES20.glUseProgram(mProgram);
+        GLES20.glUniform4f(mColorLocation, 1f, 1f, 1f, 1f);
+        GLES20.glUniform1f(mTexturedLocation, 2f);
+        GLES20.glUniform1i(mTextureLocation, 0);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
+
+        mVertexBuffer.position(0);
+        GLES20.glVertexAttribPointer(mPositionLocation, 2, GLES20.GL_FLOAT, false, 16, mVertexBuffer);
+        GLES20.glEnableVertexAttribArray(mPositionLocation);
+        mVertexBuffer.position(2);
+        GLES20.glVertexAttribPointer(mTexCoordLocation, 2, GLES20.GL_FLOAT, false, 16, mVertexBuffer);
+        GLES20.glEnableVertexAttribArray(mTexCoordLocation);
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+        mFrameDrawCalls++;
+    }
+
+    private void setClearColor(int color) {
+        GLES20.glClearColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, 1f);
+    }
+
+    private static int createProgram() {
+        String vertexShader =
+            "attribute vec2 aPosition;\n" +
+            "attribute vec2 aTexCoord;\n" +
+            "varying vec2 vTexCoord;\n" +
+            "void main(){ gl_Position = vec4(aPosition, 0.0, 1.0); vTexCoord = aTexCoord; }";
+        String fragmentShader =
+            "precision mediump float;\n" +
+            "uniform vec4 uColor;\n" +
+            "uniform float uTextured;\n" +
+            "uniform sampler2D uTexture;\n" +
+            "varying vec2 vTexCoord;\n" +
+            "void main(){ if (uTextured > 1.5) { gl_FragColor = texture2D(uTexture, vTexCoord); } else { float a = uTextured > 0.5 ? texture2D(uTexture, vTexCoord).a : 1.0; gl_FragColor = vec4(uColor.rgb, uColor.a * a); } }";
+        int program = GLES20.glCreateProgram();
+        GLES20.glAttachShader(program, compileShader(GLES20.GL_VERTEX_SHADER, vertexShader));
+        GLES20.glAttachShader(program, compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentShader));
+        GLES20.glLinkProgram(program);
+        int[] linkStatus = new int[1];
+        GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, linkStatus, 0);
+        if (linkStatus[0] == 0) {
+            String log = GLES20.glGetProgramInfoLog(program);
+            GLES20.glDeleteProgram(program);
+            throw new IllegalStateException("Failed to link terminal GPU shader program: " + log);
+        }
+        return program;
+    }
+
+    private static int compileShader(int type, String source) {
+        int shader = GLES20.glCreateShader(type);
+        GLES20.glShaderSource(shader, source);
+        GLES20.glCompileShader(shader);
+        int[] compileStatus = new int[1];
+        GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, compileStatus, 0);
+        if (compileStatus[0] == 0) {
+            String log = GLES20.glGetShaderInfoLog(shader);
+            GLES20.glDeleteShader(shader);
+            throw new IllegalStateException("Failed to compile terminal GPU shader: " + log);
+        }
+        return shader;
+    }
+
+    private static final class Glyph {
+        final int x;
+        final int y;
+        final int width;
+        final int height;
+
+        Glyph(int x, int y, int width, int height) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+        }
+    }
+
+    private static final class KittyTexture {
+        final int textureId;
+        final int width;
+        final int height;
+        final int format;
+
+        KittyTexture(int textureId, int width, int height, int format) {
+            this.textureId = textureId;
+            this.width = width;
+            this.height = height;
+            this.format = format;
+        }
+    }
+}

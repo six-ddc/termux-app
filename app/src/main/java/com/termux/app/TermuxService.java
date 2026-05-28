@@ -46,7 +46,7 @@ import com.termux.shared.data.DataUtils;
 import com.termux.shared.shell.command.ExecutionCommand;
 import com.termux.shared.shell.command.ExecutionCommand.Runner;
 import com.termux.shared.shell.command.ExecutionCommand.ShellCreateMode;
-import com.termux.terminal.TerminalEmulator;
+import com.termux.terminal.TerminalEngine;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 
@@ -771,7 +771,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
     /** This should be called when {@link TermuxActivity#onServiceConnected} is called to set the
      * {@link TermuxService#mTermuxTerminalSessionActivityClient} variable and update the {@link TerminalSession}
-     * and {@link TerminalEmulator} clients in case they were passed {@link TermuxTerminalSessionServiceClient}
+     * and {@link TerminalEngine} clients in case they were passed {@link TermuxTerminalSessionServiceClient}
      * earlier.
      *
      * @param termuxTerminalSessionActivityClient The {@link TermuxTerminalSessionActivityClient} object that fully
@@ -785,7 +785,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     }
 
     /** This should be called when {@link TermuxActivity} has been destroyed and in {@link #onUnbind(Intent)}
-     * so that the {@link TermuxService} and {@link TerminalSession} and {@link TerminalEmulator}
+     * so that the {@link TermuxService} and {@link TerminalSession} and {@link TerminalEngine}
      * clients do not hold an activity references.
      */
     public synchronized void unsetTermuxTerminalSessionClient() {

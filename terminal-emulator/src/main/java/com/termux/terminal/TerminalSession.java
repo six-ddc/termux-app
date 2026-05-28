@@ -35,7 +35,7 @@ public final class TerminalSession extends TerminalOutput {
 
     public final String mHandle = UUID.randomUUID().toString();
 
-    TerminalEmulator mEmulator;
+    TerminalEngine mTerminalEngine;
 
     /**
      * A queue written to from a separate thread when the process outputs, and read by main thread to process by
@@ -95,23 +95,23 @@ public final class TerminalSession extends TerminalOutput {
     public void updateTerminalSessionClient(TerminalSessionClient client) {
         mClient = client;
 
-        if (mEmulator != null)
-            mEmulator.updateTerminalSessionClient(client);
+        if (mTerminalEngine != null)
+            mTerminalEngine.updateTerminalSessionClient(client);
     }
 
     /** Inform the attached pty of the new size and reflow or initialize the emulator. */
     public void updateSize(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
-        if (mEmulator == null) {
+        if (mTerminalEngine == null) {
             initializeEmulator(columns, rows, cellWidthPixels, cellHeightPixels);
         } else {
             JNI.setPtyWindowSize(mTerminalFileDescriptor, rows, columns, cellWidthPixels, cellHeightPixels);
-            mEmulator.resize(columns, rows, cellWidthPixels, cellHeightPixels);
+            mTerminalEngine.resize(columns, rows, cellWidthPixels, cellHeightPixels);
         }
     }
 
     /** The terminal title as set through escape sequences or null if none set. */
     public String getTitle() {
-        return (mEmulator == null) ? null : mEmulator.getTitle();
+        return (mTerminalEngine == null) ? null : mTerminalEngine.getTitle();
     }
 
     /**
@@ -121,7 +121,7 @@ public final class TerminalSession extends TerminalOutput {
      * @param rows    The number of rows in the terminal window.
      */
     public void initializeEmulator(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
-        mEmulator = new TerminalEmulator(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
+        mTerminalEngine = TerminalEngineFactory.create(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
 
         int[] processId = new int[1];
         mTerminalFileDescriptor = JNI.createSubprocess(mShellPath, mCwd, mArgs, mEnv, processId, rows, columns, cellWidthPixels, cellHeightPixels);
@@ -216,8 +216,8 @@ public final class TerminalSession extends TerminalOutput {
         write(mUtf8InputBuffer, 0, bufferPosition);
     }
 
-    public TerminalEmulator getEmulator() {
-        return mEmulator;
+    public TerminalEngine getTerminalEngine() {
+        return mTerminalEngine;
     }
 
     /** Notify the {@link #mClient} that the screen has changed. */
@@ -227,7 +227,7 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Reset state for terminal emulator state. */
     public void reset() {
-        mEmulator.reset();
+        mTerminalEngine.reset();
         notifyScreenUpdate();
     }
 
@@ -342,7 +342,7 @@ public final class TerminalSession extends TerminalOutput {
         public void handleMessage(Message msg) {
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0) {
-                mEmulator.append(mReceiveBuffer, bytesRead);
+                mTerminalEngine.append(mReceiveBuffer, bytesRead);
                 notifyScreenUpdate();
             }
 
@@ -361,7 +361,7 @@ public final class TerminalSession extends TerminalOutput {
                 exitDescription += " - press Enter]";
 
                 byte[] bytesToWrite = exitDescription.getBytes(StandardCharsets.UTF_8);
-                mEmulator.append(bytesToWrite, bytesToWrite.length);
+                mTerminalEngine.append(bytesToWrite, bytesToWrite.length);
                 notifyScreenUpdate();
 
                 mClient.onSessionFinished(TerminalSession.this);

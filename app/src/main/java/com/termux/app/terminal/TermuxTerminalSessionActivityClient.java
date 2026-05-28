@@ -90,12 +90,22 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         // the first time bell key is pressed and play() is called, since sound may not be loaded
         // quickly enough before the call to play(). https://stackoverflow.com/questions/35435625
         loadBellSoundPool();
+        sendFocusEventToCurrentSession(true);
+    }
+
+    /**
+     * Should be called when mActivity.onPause() is called.
+     */
+    public void onPause() {
+        sendFocusEventToCurrentSession(false);
     }
 
     /**
      * Should be called when mActivity.onStop() is called
      */
     public void onStop() {
+        sendFocusEventToCurrentSession(false);
+
         // Store current session in shared preferences so that it can be restored later in
         // {@link #onStart} if needed.
         setCurrentStoredSession();
@@ -113,6 +123,12 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void onReloadActivityStyling() {
         // Set terminal fonts and colors
         checkForFontAndColors();
+    }
+
+    private void sendFocusEventToCurrentSession(boolean focused) {
+        TerminalSession session = mActivity.getCurrentSession();
+        if (session != null && session.getTerminalEngine() != null)
+            session.getTerminalEngine().sendFocusEvent(focused);
     }
 
 
@@ -192,7 +208,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
         String text = ShareUtils.getTextStringFromClipboardIfSet(mActivity, true);
         if (text != null)
-            mActivity.getTerminalView().mEmulator.paste(text);
+            mActivity.getTerminalView().mTerminalEngine.paste(text);
     }
 
     @Override
@@ -510,9 +526,17 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             }
 
             TerminalColors.COLOR_SCHEME.updateWith(props);
-            TerminalSession session = mActivity.getCurrentSession();
-            if (session != null && session.getEmulator() != null) {
-                session.getEmulator().mColors.reset();
+            TermuxService service = mActivity.getTermuxService();
+            if (service != null) {
+                for (TermuxSession termuxSession : service.getTermuxSessions()) {
+                    TerminalSession session = termuxSession.getTerminalSession();
+                    if (session != null && session.getTerminalEngine() != null)
+                        session.getTerminalEngine().resetColors();
+                }
+            } else {
+                TerminalSession session = mActivity.getCurrentSession();
+                if (session != null && session.getTerminalEngine() != null)
+                    session.getTerminalEngine().resetColors();
             }
             updateBackgroundColor();
 
@@ -526,8 +550,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void updateBackgroundColor() {
         if (!mActivity.isVisible()) return;
         TerminalSession session = mActivity.getCurrentSession();
-        if (session != null && session.getEmulator() != null) {
-            mActivity.getWindow().getDecorView().setBackgroundColor(session.getEmulator().mColors.mCurrentColors[TextStyle.COLOR_INDEX_BACKGROUND]);
+        if (session != null && session.getTerminalEngine() != null) {
+            mActivity.getWindow().getDecorView().setBackgroundColor(session.getTerminalEngine().getCurrentColors()[TextStyle.COLOR_INDEX_BACKGROUND]);
         }
     }
 

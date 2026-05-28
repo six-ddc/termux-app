@@ -63,7 +63,7 @@ public interface TerminalViewClient {
     boolean onCodePoint(int codePoint, boolean ctrlDown, TerminalSession session);
 
 
-    void onEmulatorSet();
+    void onTerminalEngineSet();
 
 
     void logError(String tag, String message);

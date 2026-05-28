@@ -1,16 +1,13 @@
 package com.termux.terminal;
 
 /**
- * <p>
- * Encodes effects, foreground and background colors into a 64 bit long, which are stored for each cell in a terminal
- * row in {@link TerminalRow#mStyle}.
- * </p>
- * <p>
- * The bit layout is:
- * </p>
- * - 16 flags (11 currently used).
- * - 24 for foreground color (only 9 first bits if a color index).
- * - 24 for background color (only 9 first bits if a color index).
+ * Encodes effects, foreground and background colors into a 64 bit long used by
+ * the Ghostty-backed engine. The bit layout is:
+ * <ul>
+ *   <li>16 flags (11 currently used).</li>
+ *   <li>24 for foreground color (only 9 first bits if a color index).</li>
+ *   <li>24 for background color (only 9 first bits if a color index).</li>
+ * </ul>
  */
 public final class TextStyle {
 

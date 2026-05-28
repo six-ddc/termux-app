@@ -155,8 +155,8 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
                 mTermuxTerminalSessionActivityClient.onPasteTextFromClipboard(null);
         }  else if ("SCROLL".equals(key)) {
             TerminalView terminalView = mTermuxTerminalViewClient.getActivity().getTerminalView();
-            if (terminalView != null && terminalView.mEmulator != null)
-                terminalView.mEmulator.toggleAutoScrollDisabled();
+            if (terminalView != null && terminalView.mTerminalEngine != null)
+                terminalView.mTerminalEngine.toggleAutoScrollDisabled();
         } else if (KEY_SNIPPETS.equals(key)) {
             mActivity.showTerminalToolbarSnippetsPopup();
         } else if (KEY_SNIPPETS_MANAGE.equals(key)) {

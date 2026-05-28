@@ -82,6 +82,9 @@ public final class TermuxFloatingTerminalController {
         mHandler.removeCallbacks(mRefreshRunnable);
         if (!mAttached || mRootView == null) return;
 
+        if (mTerminalView != null)
+            mTerminalView.onPause();
+
         try {
             mWindowManager.removeView(mRootView);
         } catch (Exception e) {
@@ -122,11 +125,19 @@ public final class TermuxFloatingTerminalController {
         if (mRootView == null)
             mRootView = new FrameLayout(mService);
 
+        if (mTerminalView != null)
+            mTerminalView.onPause();
+
         mRootView.removeAllViews();
+        mTerminalView = null;
+        mTitleView = null;
         if (expanded)
             buildExpandedView();
         else
             buildCollapsedView();
+
+        if (mTerminalView != null)
+            mTerminalView.onResume();
 
         WindowManager.LayoutParams params = createLayoutParams(expanded);
         if (!mAttached) {

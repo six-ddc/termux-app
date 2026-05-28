@@ -85,7 +85,7 @@ public class TermuxTerminalViewClientBase implements TerminalViewClient {
     }
 
     @Override
-    public void onEmulatorSet() {
+    public void onTerminalEngineSet() {
 
     }
 

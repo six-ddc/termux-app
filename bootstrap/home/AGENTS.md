@@ -89,6 +89,7 @@ bootstrap:
 ~/.termuxplus/scripts/install-zsh.sh
 ~/.termuxplus/scripts/install-codex.sh
 ~/.termuxplus/scripts/install-claude-code.sh
+~/.termuxplus/scripts/install-android-build-env.sh
 ```
 
 The Codex installer also installs the bootstrap-era tool set: `nodejs`, `npm`,

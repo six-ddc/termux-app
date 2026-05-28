@@ -452,7 +452,25 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
                 if (term == null) return true;
                 term.sendKeyEvent(resultingKeyCode, 0);
             } else if (resultingCodePoint != -1) {
-                session.writeCodePoint(altDown, resultingCodePoint);
+                // Route Fn-shortcut codepoints through the Ghostty encoder so they
+                // observe the same keyboard mode (kitty kbd / modifyOtherKeys)
+                // and Alt-prefix semantics as hardware keys. This unifies the
+                // Fn-key path with the hardware-key path so a user can rebind
+                // either to the same effect.
+                //
+                // BEHAVIOR NOTE vs. pre-Ghostty Termux: the old path wrote raw
+                // UTF-8 bytes (+ ESC prefix on Alt). With kitty keyboard / xterm
+                // modifyOtherKeys enabled, Fn shortcuts that map to printable
+                // characters now emit CSI u sequences instead, matching how
+                // hardware Alt-letter behaves. Fn shortcuts that map to C0
+                // control bytes (Fn+E→ESC, Fn+.→Ctrl-\, Fn+B/F/X→Ctrl-equiv)
+                // pass through unchanged via the bridge's C0 passthrough.
+                TerminalEngine term = session.getTerminalEngine();
+                if (term != null) {
+                    term.sendCodePoint(resultingCodePoint, false, altDown);
+                } else {
+                    session.writeCodePoint(altDown, resultingCodePoint);
+                }
             }
             return true;
         } else if (ctrlDown) {

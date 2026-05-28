@@ -141,6 +141,10 @@ public interface TerminalEngine {
 
     String getTitle();
 
+    /** Working directory reported by the shell via OSC 7, or null/empty when
+     * the shell hasn't published one. */
+    String getPwd();
+
     int[] getCurrentColors();
 
     void resetColors();

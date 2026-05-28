@@ -72,6 +72,8 @@ final class GhosttyTerminalEngine implements TerminalEngine {
     private boolean mLoggedFocusEncoderPath;
     private boolean mLoggedPasteEncoderPath;
     private Boolean mLastSentFocusState;
+    private Boolean mObservedFocus;
+    private boolean mPrevFocusReportingEnabled;
 
     static boolean isAvailable() {
         return JNI.ghosttyIsAvailable();
@@ -191,6 +193,8 @@ final class GhosttyTerminalEngine implements TerminalEngine {
 
         if (JNI.ghosttyConsumeTitleChanged(mNativeContext))
             syncTitleChangedEffect();
+
+        maybeReplayFocusOnModeTransition();
     }
 
     private void syncTitleChangedEffect() {
@@ -223,7 +227,19 @@ final class GhosttyTerminalEngine implements TerminalEngine {
         int background = colors[TextStyle.COLOR_INDEX_BACKGROUND];
         if (foreground == background || (foreground & 0xff000000) != 0xff000000 || (background & 0xff000000) != 0xff000000)
             return;
+        // Detect OSC 4 / 10 / 11 / 12 runtime palette changes by diffing against
+        // the previous snapshot; fire onColorsChanged so the Activity can repaint
+        // its surrounding chrome (background, status bar) to match.
+        boolean changed = false;
+        for (int i = 0; i < TextStyle.NUM_INDEXED_COLORS; i++) {
+            if (mColors.mCurrentColors[i] != colors[i]) {
+                changed = true;
+                break;
+            }
+        }
         System.arraycopy(colors, 0, mColors.mCurrentColors, 0, TextStyle.NUM_INDEXED_COLORS);
+        if (changed)
+            mSession.onColorsChanged();
     }
 
     private void syncCursorSnapshot() {
@@ -448,12 +464,20 @@ final class GhosttyTerminalEngine implements TerminalEngine {
 
     @Override
     public void sendFocusEvent(boolean focused) {
-        if (mNativeContext == 0 || !JNI.ghosttyGetMode(mNativeContext, MODE_FOCUS_EVENT)) {
-            mLastSentFocusState = null;
+        // Always remember the latest observed focus, even when reporting is
+        // disabled, so we can replay it when the program turns reporting back
+        // on (DECSET 1004 mid-session). Otherwise tmux / nvim that disable
+        // then re-enable focus reporting would miss the current focus state.
+        mObservedFocus = focused;
+        if (mNativeContext == 0) return;
+        if (!JNI.ghosttyGetMode(mNativeContext, MODE_FOCUS_EVENT))
             return;
-        }
-        if (mLastSentFocusState != null && mLastSentFocusState == focused)
+        if (mLastSentFocusState != null && mLastSentFocusState.booleanValue() == focused)
             return;
+        emitFocusBytes(focused);
+    }
+
+    private void emitFocusBytes(boolean focused) {
         byte[] encoded = JNI.ghosttyEncodeFocus(focused);
         if (encoded == null || encoded.length == 0) return;
         if (!mLoggedFocusEncoderPath) {
@@ -462,6 +486,17 @@ final class GhosttyTerminalEngine implements TerminalEngine {
         }
         mSession.write(encoded, 0, encoded.length);
         mLastSentFocusState = focused;
+    }
+
+    private void maybeReplayFocusOnModeTransition() {
+        if (mNativeContext == 0) return;
+        boolean enabled = JNI.ghosttyGetMode(mNativeContext, MODE_FOCUS_EVENT);
+        if (enabled && !mPrevFocusReportingEnabled
+                && mObservedFocus != null
+                && !Objects.equals(mLastSentFocusState, mObservedFocus)) {
+            emitFocusBytes(mObservedFocus.booleanValue());
+        }
+        mPrevFocusReportingEnabled = enabled;
     }
 
     @Override
@@ -583,6 +618,11 @@ final class GhosttyTerminalEngine implements TerminalEngine {
     @Override
     public String getTitle() {
         return mNativeContext == 0 ? null : JNI.ghosttyGetTitle(mNativeContext);
+    }
+
+    @Override
+    public String getPwd() {
+        return mNativeContext == 0 ? null : JNI.ghosttyGetPwd(mNativeContext);
     }
 
     @Override

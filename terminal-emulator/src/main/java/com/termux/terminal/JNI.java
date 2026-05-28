@@ -80,6 +80,9 @@ final class JNI {
     /** Read the terminal title from a libghostty-vt terminal context. */
     public static native String ghosttyGetTitle(long context);
 
+    /** Read the shell-reported working directory (OSC 7) or null when unset. */
+    public static native String ghosttyGetPwd(long context);
+
     /** Read scrollbar state as [totalRows, viewportOffset, viewportRows]. */
     public static native int[] ghosttyGetScrollbar(long context);
 

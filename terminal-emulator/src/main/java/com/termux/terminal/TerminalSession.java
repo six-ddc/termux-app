@@ -35,7 +35,7 @@ public final class TerminalSession extends TerminalOutput {
 
     public final String mHandle = UUID.randomUUID().toString();
 
-    TerminalEngine mTerminalEngine;
+    volatile TerminalEngine mTerminalEngine;
 
     /**
      * A queue written to from a separate thread when the process outputs, and read by main thread to process by
@@ -293,8 +293,15 @@ public final class TerminalSession extends TerminalOutput {
         return mShellPid;
     }
 
-    /** Returns the shell's working directory or null if it was unavailable. */
+    /** Returns the shell's working directory or null if it was unavailable.
+     * Prefers the OSC 7 value reported by the shell (via libghostty-vt) and
+     * falls back to /proc/&lt;pid&gt;/cwd when the shell hasn't published one. */
     public String getCwd() {
+        if (mTerminalEngine != null) {
+            String shellReported = mTerminalEngine.getPwd();
+            if (shellReported != null && !shellReported.isEmpty())
+                return shellReported;
+        }
         if (mShellPid < 1) {
             return null;
         }

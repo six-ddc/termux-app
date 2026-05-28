@@ -1488,6 +1488,33 @@ JNIEXPORT jstring JNICALL Java_com_termux_terminal_JNI_ghosttyGetTitle(
     return resultString;
 }
 
+// libghostty-vt 1.3.0: GHOSTTY_TERMINAL_DATA_PWD = 13. Returns the shell's
+// reported working directory as set via OSC 7. Empty when not set; we let
+// callers fall back to /proc/<pid>/cwd in that case.
+JNIEXPORT jstring JNICALL Java_com_termux_terminal_JNI_ghosttyGetPwd(
+        JNIEnv* env,
+        jclass TERMUX_UNUSED(clazz),
+        jlong context)
+{
+    GhosttyBridgeContext* bridge = require_context(env, context);
+    if (bridge == NULL) return NULL;
+
+    GhosttyString pwd = {0};
+    GhosttyResult result = gTerminalGet(bridge->terminal, 13, &pwd);
+    if (result != 0 || pwd.ptr == NULL || pwd.len == 0) return NULL;
+
+    char* copy = (char*) malloc(pwd.len + 1);
+    if (copy == NULL) {
+        throw_runtime_exception(env, "Failed to allocate pwd string");
+        return NULL;
+    }
+    for (size_t i = 0; i < pwd.len; i++) copy[i] = (char) pwd.ptr[i];
+    copy[pwd.len] = '\0';
+    jstring resultString = (*env)->NewStringUTF(env, copy);
+    free(copy);
+    return resultString;
+}
+
 static jint saturated_jint_from_uint64(uint64_t value) {
     return value > (uint64_t) INT32_MAX ? INT32_MAX : (jint) value;
 }
@@ -2194,9 +2221,25 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeKey(
         throw_runtime_exception(env, "Failed to create libghostty-vt key event");
         return NULL;
     }
+    GhosttyMods mods = key_mods_from_termux(keyMod);
     gKeyEventSetAction(event, GHOSTTY_KEY_ACTION_PRESS);
     gKeyEventSetKey(event, key);
-    gKeyEventSetMods(event, key_mods_from_termux(keyMod));
+    gKeyEventSetMods(event, mods);
+
+    // Mirror the codepoint encoder: feed utf8 for keys with a natural ASCII
+    // representation so the encoder can apply modifier transformations
+    // (e.g. Ctrl-Space → NUL). Without utf8 the legacy encoder path emits
+    // nothing for "text-like" keys held with Ctrl, swallowing user input.
+    const char* key_utf8 = NULL;
+    size_t key_utf8_len = 0;
+    switch (key) {
+        case GHOSTTY_KEY_SPACE: key_utf8 = " "; key_utf8_len = 1; break;
+        case GHOSTTY_KEY_TAB:   key_utf8 = "\t"; key_utf8_len = 1; break;
+        case GHOSTTY_KEY_ENTER: key_utf8 = "\r"; key_utf8_len = 1; break;
+        default: break;
+    }
+    if (key_utf8_len > 0)
+        gKeyEventSetUtf8(event, key_utf8, key_utf8_len);
 
     char stackBuffer[128];
     size_t written = 0;
@@ -2229,6 +2272,29 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeKey(
         throw_runtime_exception(env, "Failed to encode libghostty-vt key event");
         return NULL;
     }
+
+    // Safety net: if the encoder produced no output for a Ctrl-modified key
+    // that has a well-defined C0 control byte, emit the byte directly. This
+    // catches encoder builds that don't apply Ctrl transformations to keyed
+    // (non-codepoint) inputs.
+    if (resultArray == NULL && (mods & GHOSTTY_MODS_CTRL) != 0) {
+        jbyte fallback = -1;
+        switch (key) {
+            case GHOSTTY_KEY_SPACE: fallback = (jbyte) 0x00; break;
+            default: break;
+        }
+        if (fallback != (jbyte) -1) {
+            jsize n = (mods & GHOSTTY_MODS_ALT) != 0 ? 2 : 1;
+            resultArray = (*env)->NewByteArray(env, n);
+            if (resultArray != NULL) {
+                jbyte buf[2];
+                jsize idx = 0;
+                if ((mods & GHOSTTY_MODS_ALT) != 0) buf[idx++] = (jbyte) 0x1b;
+                buf[idx++] = fallback;
+                (*env)->SetByteArrayRegion(env, resultArray, 0, n, buf);
+            }
+        }
+    }
     return resultArray;
 }
 
@@ -2242,6 +2308,24 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeCodePoint
 {
     GhosttyBridgeContext* bridge = require_context(env, context);
     if (bridge == NULL) return NULL;
+
+    // TerminalView.inputCodePoint() already maps Ctrl-X → C0 / Ctrl-? → DEL
+    // (legacy Termux convention covers Ctrl-Space, Ctrl-2..8, Ctrl-/ that
+    // libghostty-vt's encoder does not). Routing those pre-transformed
+    // bytes back through the encoder drops them on the floor because the
+    // encoder rejects raw C0. Emit the byte directly; prepend ESC if Alt
+    // was also held (Meta-prefix convention).
+    if ((codepoint >= 0 && codepoint <= 0x1f) || codepoint == 0x7f) {
+        jsize n = (altDown == JNI_TRUE) ? 2 : 1;
+        jbyteArray arr = (*env)->NewByteArray(env, n);
+        if (arr == NULL) return NULL;
+        jbyte buf[2];
+        jsize idx = 0;
+        if (altDown == JNI_TRUE) buf[idx++] = (jbyte) 0x1b;
+        buf[idx++] = (jbyte) codepoint;
+        (*env)->SetByteArrayRegion(env, arr, 0, n, buf);
+        return arr;
+    }
 
     GhosttyKey key = GHOSTTY_KEY_UNIDENTIFIED;
     if (!ghostty_key_from_codepoint(codepoint, &key))

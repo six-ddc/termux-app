@@ -39,9 +39,21 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private final TerminalView mView;
     private final FloatBuffer mVertexBuffer = ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
     private final FloatBuffer mGlyphBatchBuffer = ByteBuffer.allocateDirect(MAX_BATCH_QUADS * 6 * 4 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
-    private final Map<Long, Glyph> mCodepointGlyphs = new HashMap<>();
-    private final Map<String, Glyph> mGlyphs = new HashMap<>();
-    private final Map<Long, KittyTexture> mKittyTextures = new HashMap<>();
+    // Access-ordered so eviction sweeps the least-recently-used glyphs first
+    // once a real per-row LRU allocator replaces the current "atlas full =
+    // clear all" policy in createGlyph(). The current eviction below still
+    // does a full clear, but ordering is now in place for the upcoming work.
+    private final Map<Long, Glyph> mCodepointGlyphs = new java.util.LinkedHashMap<>(256, 0.75f, true);
+    private final Map<String, Glyph> mGlyphs = new java.util.LinkedHashMap<>(256, 0.75f, true);
+    // LRU-ordered Kitty texture cache (access-order). Eviction policy:
+    //   max 64 entries OR 64 MiB of GPU memory, whichever hits first.
+    // When the cap is exceeded we drop the least-recently-used entry and
+    // release its GL texture object.
+    private static final int KITTY_TEXTURE_MAX_ENTRIES = 64;
+    private static final long KITTY_TEXTURE_MAX_BYTES = 64L * 1024L * 1024L;
+    private final java.util.LinkedHashMap<Long, KittyTexture> mKittyTextures =
+        new java.util.LinkedHashMap<>(16, 0.75f, true);
+    private long mKittyTexturesByteCount;
     private final int[] mSelection = new int[]{-1, -1, -1, -1};
     private final int[] mLastSelection = new int[]{-1, -1, -1, -1};
 
@@ -89,7 +101,11 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
 
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+        // Texture handles are tied to the previous EGL context which is now
+        // gone; just drop our references — the driver reclaimed the GPU memory
+        // with the context.
         mKittyTextures.clear();
+        mKittyTexturesByteCount = 0;
         mProgram = createProgram();
         mPositionLocation = GLES20.glGetAttribLocation(mProgram, "aPosition");
         mTexCoordLocation = GLES20.glGetAttribLocation(mProgram, "aTexCoord");
@@ -356,10 +372,29 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, glFormat, placement.imageWidth, placement.imageHeight, 0,
             glFormat, GLES20.GL_UNSIGNED_BYTE, buffer);
 
+        int sizeBytes = placement.imageData.length;
         KittyTexture texture = new KittyTexture(textureId, placement.imageWidth, placement.imageHeight,
-            placement.imageFormat);
+            placement.imageFormat, sizeBytes);
         mKittyTextures.put(key, texture);
+        mKittyTexturesByteCount += sizeBytes;
+        evictKittyTexturesIfNeeded();
         return texture;
+    }
+
+    private void evictKittyTexturesIfNeeded() {
+        java.util.Iterator<java.util.Map.Entry<Long, KittyTexture>> it = mKittyTextures.entrySet().iterator();
+        int[] handle = new int[1];
+        while (it.hasNext()
+                && (mKittyTextures.size() > KITTY_TEXTURE_MAX_ENTRIES
+                    || mKittyTexturesByteCount > KITTY_TEXTURE_MAX_BYTES)) {
+            java.util.Map.Entry<Long, KittyTexture> oldest = it.next();
+            KittyTexture evicted = oldest.getValue();
+            handle[0] = evicted.textureId;
+            GLES20.glDeleteTextures(1, handle, 0);
+            mKittyTexturesByteCount -= evicted.sizeBytes;
+            it.remove();
+        }
+        if (mKittyTexturesByteCount < 0) mKittyTexturesByteCount = 0;
     }
 
     private boolean rowNeedsFramebufferUpdate(int row, int topRow, boolean fullRedraw, int[] dirtyRows, int cursorRow) {
@@ -857,12 +892,14 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         final int width;
         final int height;
         final int format;
+        final int sizeBytes;
 
-        KittyTexture(int textureId, int width, int height, int format) {
+        KittyTexture(int textureId, int width, int height, int format, int sizeBytes) {
             this.textureId = textureId;
             this.width = width;
             this.height = height;
             this.format = format;
+            this.sizeBytes = sizeBytes;
         }
     }
 }

@@ -273,6 +273,8 @@ public abstract class TermuxSharedProperties {
                 return (int) getTerminalMarginVerticalInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_TERMINAL_TRANSCRIPT_ROWS:
                 return (int) getTerminalTranscriptRowsInternalPropertyValueFromValue(value);
+            case TermuxPropertyConstants.KEY_TERMINAL_TRANSPARENCY:
+                return (int) getTerminalTransparencyInternalPropertyValueFromValue(value);
 
             /* float */
             case TermuxPropertyConstants.KEY_TERMINAL_TOOLBAR_HEIGHT_SCALE_FACTOR:
@@ -435,6 +437,25 @@ public abstract class TermuxSharedProperties {
             TermuxPropertyConstants.DEFAULT_IVALUE_TERMINAL_TRANSCRIPT_ROWS,
             TermuxPropertyConstants.IVALUE_TERMINAL_TRANSCRIPT_ROWS_MIN,
             TermuxPropertyConstants.IVALUE_TERMINAL_TRANSCRIPT_ROWS_MAX,
+            true, true, LOG_TAG);
+    }
+
+    /**
+     * Returns the internal value after similarly checking the value of
+     * {@link TermuxPropertyConstants#KEY_TERMINAL_TRANSPARENCY} is between
+     * {@link TermuxPropertyConstants#IVALUE_TERMINAL_TRANSPARENCY_MIN} and
+     * {@link TermuxPropertyConstants#IVALUE_TERMINAL_TRANSPARENCY_MAX},
+     * otherwise returns {@link TermuxPropertyConstants#DEFAULT_IVALUE_TERMINAL_TRANSPARENCY}.
+     *
+     * @param value The {@link String} value to convert.
+     * @return Returns the internal value for value.
+     */
+    public static int getTerminalTransparencyInternalPropertyValueFromValue(String value) {
+        return SharedProperties.getDefaultIfNotInRange(TermuxPropertyConstants.KEY_TERMINAL_TRANSPARENCY,
+            DataUtils.getIntFromString(value, TermuxPropertyConstants.DEFAULT_IVALUE_TERMINAL_TRANSPARENCY),
+            TermuxPropertyConstants.DEFAULT_IVALUE_TERMINAL_TRANSPARENCY,
+            TermuxPropertyConstants.IVALUE_TERMINAL_TRANSPARENCY_MIN,
+            TermuxPropertyConstants.IVALUE_TERMINAL_TRANSPARENCY_MAX,
             true, true, LOG_TAG);
     }
 
@@ -652,6 +673,10 @@ public abstract class TermuxSharedProperties {
 
     public int getTerminalTranscriptRows() {
         return (int) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_TRANSCRIPT_ROWS, true);
+    }
+
+    public int getTerminalTransparency() {
+        return (int) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_TRANSPARENCY, true);
     }
 
     public float getTerminalToolbarHeightScaleFactor() {

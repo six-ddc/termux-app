@@ -7,6 +7,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
@@ -83,6 +84,11 @@ public final class TerminalView extends GLSurfaceView {
      * thrash). A mirror simply renders the session at its current size. */
     private boolean mDrivesSessionResize = true;
 
+    /** Default terminal-background alpha (1 = opaque, the default). Lowered by the
+     * terminal-transparency property to let the wallpaper show through. Read by
+     * the GPU renderer and {@link #isOpaque()}. */
+    private volatile float mBackgroundAlpha = 1f;
+
     float mScaleFactor = 1.f;
     final GestureAndScaleRecognizer mGestureRecognizer;
 
@@ -149,6 +155,10 @@ public final class TerminalView extends GLSurfaceView {
     public TerminalView(Context context, AttributeSet attributes) { // NO_UCD (unused code)
         super(context, attributes);
         setEGLContextClientVersion(2);
+        // Request an RGBA8888 surface so terminal background transparency
+        // (terminal-transparency property) can composite the wallpaper through
+        // the alpha channel. Harmless when opaque (alpha is cleared to 1).
+        setEGLConfigChooser(8, 8, 8, 8, 0, 0);
         setPreserveEGLContextOnPause(true);
         mGpuRenderer = new TerminalGpuRenderer(this);
         setRenderer(mGpuRenderer);
@@ -560,7 +570,31 @@ public final class TerminalView extends GLSurfaceView {
 
     @Override
     public boolean isOpaque() {
-        return true;
+        return mBackgroundAlpha >= 1f;
+    }
+
+    /** Apply terminal background transparency: 0 = opaque (default), 255 = fully
+     * transparent. When transparent, make the GL surface translucent and overlay
+     * it so the window (wallpaper) shows through the default background. */
+    public void setTerminalTransparency(int transparency) {
+        transparency = Math.max(0, Math.min(255, transparency));
+        float alpha = (255 - transparency) / 255f;
+        if (alpha == mBackgroundAlpha) return;
+        mBackgroundAlpha = alpha;
+        if (mBackgroundAlpha < 1f) {
+            // Must be set before the surface is created (done from the activity's
+            // property load, before the first frame). Once translucent the
+            // surface stays an overlay; toggling back fully opaque needs a
+            // restart, which is acceptable for a config property.
+            setZOrderMediaOverlay(true);
+            getHolder().setFormat(PixelFormat.TRANSLUCENT);
+        }
+        invalidate();
+    }
+
+    /** Background alpha for the default terminal background (1 = opaque). */
+    public float getBackgroundAlpha() {
+        return mBackgroundAlpha;
     }
 
     /**

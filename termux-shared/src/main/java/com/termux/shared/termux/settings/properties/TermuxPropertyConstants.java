@@ -255,6 +255,18 @@ public final class TermuxPropertyConstants {
 
 
 
+    /** Defines the key for the terminal background transparency. Value is the
+     * transparency amount of the default terminal background, 0 (fully opaque,
+     * the default) to 255 (fully transparent). When > 0 the terminal surface
+     * becomes translucent and the system wallpaper shows through the default
+     * background; explicit cell background colours stay opaque. */
+    public static final String KEY_TERMINAL_TRANSPARENCY =  "terminal-transparency"; // Default: "terminal-transparency"
+    public static final int IVALUE_TERMINAL_TRANSPARENCY_MIN = 0;
+    public static final int IVALUE_TERMINAL_TRANSPARENCY_MAX = 255;
+    public static final int DEFAULT_IVALUE_TERMINAL_TRANSPARENCY = 0;
+
+
+
 
 
     /* float */
@@ -413,6 +425,7 @@ public final class TermuxPropertyConstants {
         KEY_TERMINAL_MARGIN_HORIZONTAL,
         KEY_TERMINAL_MARGIN_VERTICAL,
         KEY_TERMINAL_TRANSCRIPT_ROWS,
+        KEY_TERMINAL_TRANSPARENCY,
 
         /* float */
         KEY_TERMINAL_TOOLBAR_HEIGHT_SCALE_FACTOR,

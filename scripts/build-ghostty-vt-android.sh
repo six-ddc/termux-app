@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CACHE_DIR="${GHOSTTY_VT_CACHE_DIR:-"$ROOT_DIR/build/ghostty-vt"}"
 ZIG_VERSION="${GHOSTTY_VT_ZIG_VERSION:-0.15.2}"
 GHOSTTY_REPO="${GHOSTTY_VT_REPO:-https://github.com/ghostty-org/ghostty.git}"
-GHOSTTY_REF="${GHOSTTY_VT_REF:-3103ae883880fe6cccdc17ea923e3ccd3587a83e}"
-LIB_VERSION="${GHOSTTY_VT_LIB_VERSION:-1.3.0}"
+GHOSTTY_REF="${GHOSTTY_VT_REF:-90175950d5004382abd3b0b9528e7be81b0b52ec}"
+LIB_VERSION="${GHOSTTY_VT_LIB_VERSION:-1.3.1}"
 
 if [ "$#" -gt 0 ]; then
   ABIS=("$@")
@@ -55,6 +55,19 @@ if [ ! -d "$GHOSTTY_DIR/.git" ]; then
 fi
 git -C "$GHOSTTY_DIR" fetch --depth 1 origin "$GHOSTTY_REF"
 git -C "$GHOSTTY_DIR" checkout --detach FETCH_HEAD
+
+# Reset any previously-applied local patches so re-runs start from the pinned
+# upstream tree, then apply our tracked patches on top. These carry fixes we
+# have not (yet) upstreamed; keep each patch minimal and conflict-resistant.
+git -C "$GHOSTTY_DIR" checkout -- . 2>/dev/null || true
+PATCH_DIR="$ROOT_DIR/scripts/ghostty-vt-patches"
+if [ -d "$PATCH_DIR" ]; then
+  for patch in "$PATCH_DIR"/*.patch; do
+    [ -e "$patch" ] || continue
+    echo "Applying ghostty-vt patch: $(basename "$patch")"
+    git -C "$GHOSTTY_DIR" apply --verbose "$patch"
+  done
+fi
 
 target_for_abi() {
   case "$1" in

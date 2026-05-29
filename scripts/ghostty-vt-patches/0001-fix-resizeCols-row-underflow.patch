@@ -1,0 +1,73 @@
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index 8e5cd1934..e8b56f69a 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -1059,7 +1059,14 @@ fn resizeCols(
+         break :cursor .{
+             .tracked_pin = c.pin orelse try self.trackPin(p),
+             .untrack = c.pin == null,
+-            .remaining_rows = self.rows - c.y - 1,
++            // Saturating subtraction: when shrinking cols, the caller may have
++            // already shrunk `self.rows` (via resizeWithoutReflow) before this
++            // runs, so the cursor `c.y` captured in the old row space can be
++            // >= the new `self.rows`. A plain `self.rows - c.y - 1` then
++            // underflows; in a release (no-safety) build it wraps to a huge
++            // value, making the grow() loop below fabricate thousands of blank
++            // rows and push all real content off-screen. Clamp to 0 instead.
++            .remaining_rows = self.rows -| c.y -| 1,
+             .wrapped_rows = wrapped,
+         };
+     } else null;
+diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
+index d41e47501..501de725f 100644
+--- a/src/terminal/Terminal.zig
++++ b/src/terminal/Terminal.zig
+@@ -13183,3 +13183,48 @@ test "Terminal: deleteLines wide char at right margin with full clear" {
+     // violation in clearCells.
+     try t.scrollUp(t.rows);
+ }
++
++// Regression: a pinch-zoom-in on Android walks cols+rows down one step at a
++// time. The col-shrink reflow path captures the cursor y in the OLD row space
++// but `self.rows` may already have been shrunk by resizeWithoutReflow, so
++// `self.rows - c.y - 1` could underflow. In a ReleaseFast (no-safety) build the
++// underflow wrapped to a huge value and the grow() loop fabricated thousands of
++// blank rows, pushing all real content off-screen (terminal appeared blank
++// until a keypress). See PageList.resizeCols.
++test "Terminal: stepwise col+row shrink with wrapped content does not balloon rows" {
++    const alloc = testing.allocator;
++    var t = try init(alloc, .{ .cols = 34, .rows = 24 });
++    defer t.deinit(alloc);
++
++    const motd = [_][]const u8{
++        "Working with packages:",
++        " - Search:  pkg search <query>",
++        " - Install: pkg install <package>",
++        " - Upgrade: pkg upgrade",
++        "Subscribing to additional repositories:",
++        " - Root:    pkg install root-repo",
++        " - X11:     pkg install x11-repo",
++        "For fixing any repository issues,",
++        "try 'termux-change-repo' command.",
++        "Report issues at https://termux.dev/issues",
++        "~ $",
++    };
++    for (motd, 0..) |line, i| {
++        try t.printString(line);
++        if (i != motd.len - 1) {
++            t.carriageReturn();
++            try t.linefeed();
++        }
++    }
++
++    const sizes = [_][2]u16{
++        .{ 31, 23 }, .{ 30, 22 }, .{ 29, 21 }, .{ 28, 20 },
++        .{ 26, 19 }, .{ 25, 19 }, .{ 25, 18 }, .{ 24, 17 },
++        .{ 23, 16 }, .{ 22, 16 },
++    };
++    for (sizes) |sz| {
++        try t.resize(alloc, sz[0], sz[1]);
++        // ~11 short lines can never legitimately occupy hundreds of rows.
++        try testing.expect(t.screens.active.pages.total_rows < 200);
++    }
++}

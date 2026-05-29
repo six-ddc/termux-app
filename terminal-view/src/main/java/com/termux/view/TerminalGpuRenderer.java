@@ -103,6 +103,15 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
      * previous session's pixels and a full redraw is mandatory — incremental
      * dirty-row drawing would leave the old session showing through. */
     private TerminalEngine mLastRenderedEngine;
+    /** Grid/cell geometry of the framebuffer's current content. When the font
+     * size changes (pinch zoom) the column/row count and cell pixel size change
+     * but the FBO keeps the old-geometry pixels; the resize may not be reported
+     * as fully dirty, so without forcing a full redraw the incremental path
+     * paints onto stale geometry and the terminal goes blank. */
+    private int mLastColumns = -1;
+    private int mLastRows = -1;
+    private float mLastCellWidth = -1f;
+    private float mLastCellHeight = -1f;
 
     TerminalGpuRenderer(TerminalView view) {
         mView = view;
@@ -167,6 +176,28 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
 
     @Override
     public void onDrawFrame(GL10 gl) {
+        try {
+            drawFrameGuarded(gl);
+        } catch (Throwable t) {
+            // A throw here would kill the GLSurfaceView render thread, leaving the
+            // terminal permanently blank until the surface is recreated. Catch it,
+            // log it (with GL error + geometry), and keep the thread alive so the
+            // next frame can recover.
+            int glErr = GLES20.glGetError();
+            Log.e(LOG_TAG, "onDrawFrame threw; glError=" + glErr
+                + " atlasX=" + mAtlasX + " atlasY=" + mAtlasY + " rowH=" + mAtlasRowHeight
+                + " glyphCacheSize=" + mGlyphs.size() + "/" + mCodepointGlyphs.size(), t);
+            try {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+                GLES20.glViewport(0, 0, mWidth, mHeight);
+                GLES20.glClearColor(0, 0, 0, 1);
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private void drawFrameGuarded(GL10 gl) {
         TerminalEngine engine = mView.mTerminalEngine;
         TerminalRenderer renderer = mView.mRenderer;
         if (engine == null || renderer == null || mWidth <= 0 || mHeight <= 0) {
@@ -235,7 +266,9 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 Log.i(LOG_TAG, "Rendering Ghostty render-state cells with OpenGL ES; size=" + columns + "x" + rows);
                 mLoggedDirectRenderPath = true;
             }
-            boolean fullRedraw = engineChanged || !mFramebufferContentValid || topRow != mLastTopRow ||
+            boolean geometryChanged = columns != mLastColumns || rows != mLastRows ||
+                cellWidth != mLastCellWidth || cellHeight != mLastCellHeight;
+            boolean fullRedraw = engineChanged || geometryChanged || !mFramebufferContentValid || topRow != mLastTopRow ||
                 mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL ||
                 (kittyPlacements != null && kittyPlacements.length > 0);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
@@ -250,6 +283,10 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             mFramebufferContentValid = true;
             mLastRenderedSnapshot = snapshot;
             mLastRenderedEngine = engine;
+            mLastColumns = columns;
+            mLastRows = rows;
+            mLastCellWidth = cellWidth;
+            mLastCellHeight = cellHeight;
             mLastCursorRow = cursorRow;
             mLastTopRow = topRow;
             System.arraycopy(mSelection, 0, mLastSelection, 0, mSelection.length);
@@ -561,6 +598,19 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             mAtlasRowHeight = 0;
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasBitmap, 0);
+        }
+
+        // Defensive: the glyph region must stay inside the atlas, otherwise
+        // Bitmap.createBitmap() below throws IllegalArgumentException and (without
+        // the onDrawFrame guard) kills the render thread, blanking the terminal
+        // permanently. Clamp and log if a font size ever produces an oversized
+        // glyph so the real dimensions show up on-device.
+        if (glyphWidth > ATLAS_SIZE - mAtlasX || glyphHeight > ATLAS_SIZE - mAtlasY) {
+            Log.e(LOG_TAG, "oversized glyph clamped: w=" + glyphWidth + " h=" + glyphHeight
+                + " atlasX=" + mAtlasX + " atlasY=" + mAtlasY + " lineSpacing=" + renderer.mFontLineSpacing
+                + " fontWidth=" + renderer.mFontWidth + " textSize=" + renderer.mTextSize);
+            glyphWidth = Math.max(1, Math.min(glyphWidth, ATLAS_SIZE - mAtlasX));
+            glyphHeight = Math.max(1, Math.min(glyphHeight, ATLAS_SIZE - mAtlasY));
         }
 
         float baseline = mAtlasY + renderer.mFontLineSpacing - renderer.mFontLineSpacingAndAscent;

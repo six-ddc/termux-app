@@ -121,6 +121,10 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     /** Background alpha the framebuffer content was last drawn with; a change
      * forces a full redraw so the FBO is re-cleared at the new alpha. */
     private float mLastBackgroundAlpha = 1f;
+    /** Cursor-blink phase the frame was last drawn with. BLINK-attributed text
+     * follows the same phase (there is no separate blink timer); a phase change
+     * forces a full redraw when any blinking text is present so it animates. */
+    private boolean mLastBlinkOn = true;
 
     TerminalGpuRenderer(TerminalView view) {
         mView = view;
@@ -250,8 +254,9 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         mFrameTopRow = topRow;
         int cursorCol = snapshot.cursorCol;
         int cursorRow = snapshot.cursorRow;
+        boolean blinkOn = engine.isCursorBlinkOn();
         boolean cursorVisible = snapshot.cursorVisibleIgnoringBlink
-            && (!snapshot.cursorSubjectToBlink || engine.isCursorBlinkOn());
+            && (!snapshot.cursorSubjectToBlink || blinkOn);
         boolean cursorWideTail = snapshot.cursorWideTail;
         // A repeat frame of an already-rendered snapshot (cursor blink, selection
         // tweak) is treated as CLEAN so only cursor/selection rows redraw — this
@@ -279,7 +284,12 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             boolean geometryChanged = columns != mLastColumns || rows != mLastRows ||
                 cellWidth != mLastCellWidth || cellHeight != mLastCellHeight ||
                 mBackgroundAlpha != mLastBackgroundAlpha;
-            boolean fullRedraw = engineChanged || geometryChanged || !mFramebufferContentValid || topRow != mLastTopRow ||
+            // When the blink phase flips, blinking text must repaint everywhere it
+            // appears, not just on the cursor row the incremental path would touch.
+            boolean blinkForcesRedraw = blinkOn != mLastBlinkOn
+                && snapshotHasBlinkingText(renderCells, columns, rows);
+            boolean fullRedraw = engineChanged || geometryChanged || blinkForcesRedraw ||
+                !mFramebufferContentValid || topRow != mLastTopRow ||
                 mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL ||
                 (kittyPlacements != null && kittyPlacements.length > 0);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
@@ -293,7 +303,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             }
             drawGhosttyRenderStateFrame(snapshot.cursorStyle, snapshot.reverseVideo, renderer, renderCells,
                 renderCellText, palette, columns, rows, topRow, cursorCol, cursorRow, cursorVisible, cursorWideTail,
-                cellWidth, cellHeight, background, fullRedraw, dirtyRows, kittyPlacements);
+                cellWidth, cellHeight, background, fullRedraw, dirtyRows, kittyPlacements, blinkOn);
             mFramebufferContentValid = true;
             mLastRenderedSnapshot = snapshot;
             mLastRenderedEngine = engine;
@@ -302,6 +312,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             mLastCellWidth = cellWidth;
             mLastCellHeight = cellHeight;
             mLastBackgroundAlpha = mBackgroundAlpha;
+            mLastBlinkOn = blinkOn;
             mLastCursorRow = cursorRow;
             mLastTopRow = topRow;
             System.arraycopy(mSelection, 0, mLastSelection, 0, mSelection.length);
@@ -329,7 +340,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                                              int[] palette, int columns, int rows, int topRow, int cursorCol, int cursorRow,
                                              boolean cursorVisible, boolean cursorWideTail, float cellWidth, float cellHeight,
                                              int defaultBackground, boolean fullRedraw, int[] dirtyRows,
-                                             TerminalKittyGraphicsPlacement[] kittyPlacements) {
+                                             TerminalKittyGraphicsPlacement[] kittyPlacements, boolean blinkTextVisible) {
         int cursorRenderCol = cursorWideTail ? Math.max(0, cursorCol - 1) : cursorCol;
 
         for (int row = 0; row < rows; row++) {
@@ -383,18 +394,26 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 }
                 fg = applyDimEffect(fg, effect);
 
-                if ((text != null || (codePoint > 0 && codePoint != ' ')) && (effect & TextStyle.CHARACTER_ATTRIBUTE_INVISIBLE) == 0) {
+                // BLINK text is hidden during the blink-off phase (the cell
+                // background, already painted above, stays). The cursor cell is
+                // exempt so the cursor itself never blinks out with the text.
+                boolean blinkHidden = !blinkTextVisible && !cursor
+                    && (effect & TextStyle.CHARACTER_ATTRIBUTE_BLINK) != 0;
+
+                if (!blinkHidden && (text != null || (codePoint > 0 && codePoint != ' ')) && (effect & TextStyle.CHARACTER_ATTRIBUTE_INVISIBLE) == 0) {
                     boolean bold = (effect & TextStyle.CHARACTER_ATTRIBUTE_BOLD) != 0;
                     boolean italic = (effect & TextStyle.CHARACTER_ATTRIBUTE_ITALIC) != 0;
                     Glyph glyph = text != null ? getGlyph(renderer, text, bold, italic, widthColumns, cellWidth) :
                         getGlyph(renderer, codePoint, bold, italic, widthColumns, cellWidth);
                     drawGlyph(glyph, column * cellWidth, row * cellHeight, fg);
                 }
-                int underlineColor = resolveUnderlineColor(renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_COLOR], fg, palette);
-                int underlineStyle = renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_STYLE];
-                boolean overline = renderCells[base + TerminalEngine.RENDER_CELL_OVERLINE] != 0;
-                drawTextDecorations(column * cellWidth, row * cellHeight, widthColumns * cellWidth, cellHeight,
-                    fg, effect, underlineColor, underlineStyle, overline);
+                if (!blinkHidden) {
+                    int underlineColor = resolveUnderlineColor(renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_COLOR], fg, palette);
+                    int underlineStyle = renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_STYLE];
+                    boolean overline = renderCells[base + TerminalEngine.RENDER_CELL_OVERLINE] != 0;
+                    drawTextDecorations(column * cellWidth, row * cellHeight, widthColumns * cellWidth, cellHeight,
+                        fg, effect, underlineColor, underlineStyle, overline);
+                }
                 column += widthColumns;
             }
         }
@@ -997,6 +1016,18 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         mFrameDrawCalls++;
         if (premultiply)
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    /** Whether any visible cell carries the BLINK attribute. Scanned only on a
+     * blink-phase flip to decide whether the whole frame must repaint. */
+    private boolean snapshotHasBlinkingText(int[] cells, int columns, int rows) {
+        int count = columns * rows;
+        for (int i = 0; i < count; i++) {
+            int effect = cells[i * TerminalEngine.RENDER_CELL_STRIDE + TerminalEngine.RENDER_CELL_EFFECT];
+            if ((effect & TextStyle.CHARACTER_ATTRIBUTE_BLINK) != 0)
+                return true;
+        }
+        return false;
     }
 
     /** Clear the default framebuffer (screen) for this frame: transparent when

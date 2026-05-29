@@ -3,13 +3,17 @@ package com.termux.app.terminal;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
+import android.os.Build;
 import android.text.TextUtils;
 
 import androidx.annotation.NonNull;
@@ -17,6 +21,8 @@ import androidx.annotation.Nullable;
 
 import com.termux.R;
 import com.termux.shared.interact.ShareUtils;
+import com.termux.shared.notification.NotificationUtils;
+import com.termux.shared.termux.notification.TermuxNotificationUtils;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.shared.termux.interact.TextInputDialogUtils;
 import com.termux.app.TermuxActivity;
@@ -44,6 +50,10 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     private final TermuxActivity mActivity;
 
     private static final int MAX_SESSIONS = 8;
+
+    /** Channel for desktop notifications raised by terminal programs via OSC 9 / OSC 777. */
+    private static final String OSC_NOTIFICATION_CHANNEL_ID = "termuxplus_terminal_notification";
+    private static final String OSC_NOTIFICATION_CHANNEL_NAME = "Terminal notifications";
 
     private SoundPool mBellSoundPool;
 
@@ -209,6 +219,37 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         String text = ShareUtils.getTextStringFromClipboardIfSet(mActivity, true);
         if (text != null)
             mActivity.getTerminalView().mTerminalEngine.paste(text);
+    }
+
+    /** Post a desktop notification requested by the terminal program via OSC 9 /
+     * OSC 777 (recovered from the PTY byte stream by the engine). Shown even when
+     * the activity is not visible — that is the point of such a notification. On
+     * Android 13+ it appears only if the user has granted POST_NOTIFICATIONS. */
+    @Override
+    public void onShowNotification(@NonNull TerminalSession session, @Nullable String title, @NonNull String body) {
+        if (body.isEmpty()) return;
+
+        CharSequence contentTitle = (title != null && !title.isEmpty()) ? title
+            : mActivity.getString(R.string.application_name);
+
+        NotificationUtils.setupNotificationChannel(mActivity, OSC_NOTIFICATION_CHANNEL_ID,
+            OSC_NOTIFICATION_CHANNEL_NAME, android.app.NotificationManager.IMPORTANCE_DEFAULT);
+
+        Intent contentIntent = new Intent(mActivity, TermuxActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            piFlags |= PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pendingIntent = PendingIntent.getActivity(mActivity, 0, contentIntent, piFlags);
+
+        Notification.Builder builder = TermuxNotificationUtils.getTermuxOrPluginAppNotificationBuilder(
+            mActivity, mActivity, OSC_NOTIFICATION_CHANNEL_ID, Notification.PRIORITY_DEFAULT,
+            contentTitle, body, body, pendingIntent, null, NotificationUtils.NOTIFICATION_MODE_SOUND);
+        if (builder == null) return;
+
+        android.app.NotificationManager notificationManager = NotificationUtils.getNotificationManager(mActivity);
+        if (notificationManager != null)
+            notificationManager.notify(TermuxNotificationUtils.getNextNotificationId(mActivity), builder.build());
     }
 
     @Override

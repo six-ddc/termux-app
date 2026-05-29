@@ -40,6 +40,9 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
 
     private final TerminalOutput mSession;
     private TerminalSessionClient mClient;
+    /** Recovers OSC 52 (clipboard) and OSC 9/777 (notification) from the raw PTY
+     * byte stream, which libghostty-vt parses but does not surface via its API. */
+    private final TermuxPlusOscInterceptor mOscInterceptor = new TermuxPlusOscInterceptor();
     private final int mTranscriptRows;
     private final TerminalColors mColors = new TerminalColors();
     private volatile long mNativeContext;
@@ -125,8 +128,12 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
     public void append(byte[] buffer, int length) {
         if (mNativeContext != 0) {
             int scrollbackRowsBefore = getScrollbackRows();
+            // Observe the same bytes for OSC 52/9/777 before handing them to the
+            // engine; the engine consumes them but exposes no payload for these.
+            mOscInterceptor.feed(buffer, 0, length);
             JNI.ghosttyWrite(mNativeContext, buffer, 0, length);
             drainGhosttyEffects();
+            drainOscEffects();
             syncScreenSnapshot();
             int scrollbackRowsAfter = getScrollbackRows();
             if (scrollbackRowsAfter > scrollbackRowsBefore)
@@ -138,6 +145,7 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
     public void reset() {
         if (mNativeContext != 0) {
             JNI.ghosttyReset(mNativeContext);
+            mOscInterceptor.reset();
             applyDefaultColors();
             syncScreenSnapshot();
         }
@@ -242,6 +250,17 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
             syncTitleChangedEffect();
 
         maybeReplayFocusOnModeTransition();
+    }
+
+    /** Dispatch OSC 52 clipboard writes and OSC 9/777 notifications recovered by
+     * {@link #mOscInterceptor} to the session client. */
+    private void drainOscEffects() {
+        TermuxPlusOscInterceptor.ClipboardWrite clipboard;
+        while ((clipboard = mOscInterceptor.pollClipboard()) != null)
+            mSession.onCopyTextToClipboard(clipboard.text);
+        TermuxPlusOscInterceptor.Notification notification;
+        while ((notification = mOscInterceptor.pollNotification()) != null)
+            mSession.onShowNotification(notification.title, notification.body);
     }
 
     private void syncTitleChangedEffect() {

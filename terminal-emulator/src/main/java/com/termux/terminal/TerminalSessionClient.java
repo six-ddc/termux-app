@@ -20,6 +20,12 @@ public interface TerminalSessionClient {
 
     void onPasteTextFromClipboard(@Nullable TerminalSession session);
 
+    /** The program requested a desktop notification via OSC 9 / OSC 777.
+     * Default no-op so clients that do not surface notifications (service,
+     * mirror views) are unaffected. {@code title} may be null for OSC 9. */
+    default void onShowNotification(@NonNull TerminalSession session, @Nullable String title, @NonNull String body) {
+    }
+
     void onBell(@NonNull TerminalSession session);
 
     void onColorsChanged(@NonNull TerminalSession session);

@@ -297,6 +297,11 @@ public final class TerminalSession extends TerminalOutput {
     }
 
     @Override
+    public void onShowNotification(String title, String body) {
+        mClient.onShowNotification(this, title, body);
+    }
+
+    @Override
     public void onBell() {
         mClient.onBell(this);
     }

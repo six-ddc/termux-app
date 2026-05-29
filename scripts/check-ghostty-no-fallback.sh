@@ -48,15 +48,41 @@ for arg in "$@"; do
     esac
 done
 
+# Feeding a missing path to rg yields exit code 2 (error). The old `if rg ...`
+# conflated that with exit 1 (no match): in a multi-file reject check, one
+# deleted sibling made rg exit 2 and masked a real match in a file that DID
+# contain the forbidden pattern. We instead run rg only over the targets that
+# exist and interpret its exit code explicitly (0 = match, 1 = no match,
+# >=2 = error). For reject checks a deleted target is the strongest possible
+# compliance (the forbidden code is simply gone), so missing targets are
+# skipped; for require checks at least one listed target must exist and match.
+existing_targets=()
+collect_existing_targets() {
+    existing_targets=()
+    local path
+    for path in "$@"; do
+        if [[ -e "$path" ]]; then
+            existing_targets+=("$path")
+        fi
+    done
+}
+
 require_match() {
     local description="$1"
     local pattern="$2"
     shift 2
-    if rg -n "$pattern" "$@" >/tmp/termux-ghostty-check-match.$$; then
-        printf 'OK: %s\n' "$description"
-    else
-        mark_fail "$description"
+    collect_existing_targets "$@"
+    if [[ ${#existing_targets[@]} -eq 0 ]]; then
+        mark_fail "$description (no target files present)"
+        return
     fi
+    local rc=0
+    rg -n "$pattern" "${existing_targets[@]}" >/tmp/termux-ghostty-check-match.$$ 2>/dev/null || rc=$?
+    case "$rc" in
+        0) printf 'OK: %s\n' "$description" ;;
+        1) mark_fail "$description (pattern not found)" ;;
+        *) mark_fail "$description (rg error: exit $rc)" ;;
+    esac
     rm -f /tmp/termux-ghostty-check-match.$$
 }
 
@@ -64,12 +90,20 @@ reject_match() {
     local description="$1"
     local pattern="$2"
     shift 2
-    if rg -n "$pattern" "$@" >/tmp/termux-ghostty-check-match.$$; then
-        cat /tmp/termux-ghostty-check-match.$$ >&2
-        mark_fail "$description"
-    else
+    collect_existing_targets "$@"
+    if [[ ${#existing_targets[@]} -eq 0 ]]; then
+        # Every target was deleted: the forbidden pattern definitionally cannot
+        # be present. That is the desired end state for the legacy-VT checks.
         printf 'OK: %s\n' "$description"
+        return
     fi
+    local rc=0
+    rg -n "$pattern" "${existing_targets[@]}" >/tmp/termux-ghostty-check-match.$$ 2>/dev/null || rc=$?
+    case "$rc" in
+        0) cat /tmp/termux-ghostty-check-match.$$ >&2; mark_fail "$description" ;;
+        1) printf 'OK: %s\n' "$description" ;;
+        *) mark_fail "$description (rg error: exit $rc)" ;;
+    esac
     rm -f /tmp/termux-ghostty-check-match.$$
 }
 

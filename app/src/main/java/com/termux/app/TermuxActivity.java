@@ -213,6 +213,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mProperties = TermuxAppSharedProperties.getProperties();
         reloadProperties();
 
+        // When background transparency is enabled, swap in a translucent
+        // wallpaper-showing theme before the window is created so the wallpaper
+        // composites behind the translucent terminal surface. Must happen before
+        // super.onCreate()/setContentView().
+        if (mProperties.getTerminalTransparency() > 0)
+            setTheme(R.style.Theme_TermuxActivity_DayNight_NoActionBar_Transparent);
+
         setActivityTheme();
 
         super.onCreate(savedInstanceState);
@@ -510,6 +517,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         // Set termux terminal view
         mTerminalView = findViewById(R.id.terminal_view);
         mTerminalView.setTerminalViewClient(mTermuxTerminalViewClient);
+        // Apply the configured background transparency before the GL surface is
+        // first drawn so it is created translucent when requested.
+        mTerminalView.setTerminalTransparency(mProperties.getTerminalTransparency());
 
         if (mTermuxTerminalViewClient != null)
             mTermuxTerminalViewClient.onCreate();

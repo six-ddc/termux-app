@@ -112,6 +112,15 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private int mLastRows = -1;
     private float mLastCellWidth = -1f;
     private float mLastCellHeight = -1f;
+    /** Default-background alpha for this frame, mirrored from
+     * {@link TerminalView#getBackgroundAlpha()} at the top of every frame.
+     * 1 = opaque (default). When < 1 the default terminal background is rendered
+     * translucent and the FBO is composited over the wallpaper; explicit cell
+     * background colours stay opaque. */
+    private float mBackgroundAlpha = 1f;
+    /** Background alpha the framebuffer content was last drawn with; a change
+     * forces a full redraw so the FBO is re-cleared at the new alpha. */
+    private float mLastBackgroundAlpha = 1f;
 
     TerminalGpuRenderer(TerminalView view) {
         mView = view;
@@ -200,15 +209,17 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private void drawFrameGuarded(GL10 gl) {
         TerminalEngine engine = mView.mTerminalEngine;
         TerminalRenderer renderer = mView.mRenderer;
+        // Mirror the view's background alpha for this frame. Read once up front so
+        // even the degenerate early-return clears below let the wallpaper through
+        // instead of flashing opaque black when transparency is enabled.
+        mBackgroundAlpha = mView.getBackgroundAlpha();
         if (engine == null || renderer == null || mWidth <= 0 || mHeight <= 0) {
-            GLES20.glClearColor(0, 0, 0, 1);
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            clearScreenBackground();
             return;
         }
         if (!engine.isGhosttyBacked()) {
             Log.e(LOG_TAG, "Refusing to render non-Ghostty terminal engine on GPU path");
-            GLES20.glClearColor(0, 0, 0, 1);
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            clearScreenBackground();
             return;
         }
 
@@ -221,8 +232,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 Log.e(LOG_TAG, "Ghostty render-state snapshot is unavailable; refusing TerminalBuffer fallback");
                 mLoggedMissingDirectRenderState = true;
             }
-            GLES20.glClearColor(0, 0, 0, 1);
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            clearScreenBackground();
             return;
         }
         beginFrameStats();
@@ -267,14 +277,18 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 mLoggedDirectRenderPath = true;
             }
             boolean geometryChanged = columns != mLastColumns || rows != mLastRows ||
-                cellWidth != mLastCellWidth || cellHeight != mLastCellHeight;
+                cellWidth != mLastCellWidth || cellHeight != mLastCellHeight ||
+                mBackgroundAlpha != mLastBackgroundAlpha;
             boolean fullRedraw = engineChanged || geometryChanged || !mFramebufferContentValid || topRow != mLastTopRow ||
                 mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL ||
                 (kittyPlacements != null && kittyPlacements.length > 0);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
             GLES20.glViewport(0, 0, mWidth, mHeight);
             if (fullRedraw) {
-                setClearColor(background);
+                // Clear the FBO to the default background with the configured
+                // alpha; glClear replaces, so the alpha channel is set exactly
+                // (no blend) for the whole surface in one shot.
+                setClearColor(background, mBackgroundAlpha);
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
             }
             drawGhosttyRenderStateFrame(snapshot.cursorStyle, snapshot.reverseVideo, renderer, renderCells,
@@ -287,13 +301,16 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             mLastRows = rows;
             mLastCellWidth = cellWidth;
             mLastCellHeight = cellHeight;
+            mLastBackgroundAlpha = mBackgroundAlpha;
             mLastCursorRow = cursorRow;
             mLastTopRow = topRow;
             System.arraycopy(mSelection, 0, mLastSelection, 0, mSelection.length);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
             GLES20.glViewport(0, 0, mWidth, mHeight);
-            GLES20.glClearColor(0, 0, 0, 1);
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            // Clear the screen transparent when transparency is on so the
+            // wallpaper shows where the blit writes a translucent pixel, then
+            // composite the FBO over it (premultiplied).
+            clearScreenBackground();
             drawFramebufferToScreen();
             finishFrameStats("ghostty-render-state", columns, rows);
             return;
@@ -303,8 +320,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             Log.e(LOG_TAG, "Ghostty render-state cells are unavailable; refusing TerminalBuffer fallback");
             mLoggedMissingDirectRenderState = true;
         }
-        GLES20.glClearColor(0, 0, 0, 1);
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        clearScreenBackground();
         finishFrameStats("missing-ghostty-render-state", columns, rows);
     }
 
@@ -320,7 +336,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
                 continue;
             if (!fullRedraw)
-                drawRect(0, row * cellHeight, columns * cellWidth, cellHeight, defaultBackground);
+                fillDefaultBackground(0, row * cellHeight, columns * cellWidth, cellHeight, defaultBackground);
             for (int column = 0; column < columns; column++) {
                 int base = renderCellBase(row, column, columns);
                 int effect = renderCells[base + TerminalEngine.RENDER_CELL_EFFECT];
@@ -943,10 +959,10 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     }
 
     private void drawFramebufferToScreen() {
-        drawTextureToScreen(mFramebufferTexture, 0, 1, 1, 0);
+        drawTextureToScreen(mFramebufferTexture, 0, 1, 1, 0, mBackgroundAlpha < 1f);
     }
 
-    private void drawTextureToScreen(int texture, float u1, float v1, float u2, float v2) {
+    private void drawTextureToScreen(int texture, float u1, float v1, float u2, float v2, boolean premultiply) {
         mVertexBuffer.clear();
         putVertex(mVertexBuffer, -1f, 1f, u1, v1);
         putVertex(mVertexBuffer, -1f, -1f, u1, v2);
@@ -956,7 +972,17 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
 
         GLES20.glUseProgram(mProgram);
         GLES20.glUniform4f(mColorLocation, 1f, 1f, 1f, 1f);
-        GLES20.glUniform1f(mTexturedLocation, 2f);
+        // uTextured 3 = premultiply the (straight-alpha) FBO before writing it to
+        // the screen, paired with a GL_ONE/GL_ZERO replace so SurfaceFlinger gets
+        // the premultiplied pixels it expects for a translucent surface and
+        // composites them correctly over the wallpaper (any default bg colour,
+        // not just black). 2 = plain copy for the fully opaque path.
+        if (premultiply) {
+            GLES20.glUniform1f(mTexturedLocation, 3f);
+            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ZERO);
+        } else {
+            GLES20.glUniform1f(mTexturedLocation, 2f);
+        }
         GLES20.glUniform1i(mTextureLocation, 0);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture);
@@ -969,10 +995,38 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         GLES20.glEnableVertexAttribArray(mTexCoordLocation);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
         mFrameDrawCalls++;
+        if (premultiply)
+            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    private void setClearColor(int color) {
-        GLES20.glClearColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, 1f);
+    /** Clear the default framebuffer (screen) for this frame: transparent when
+     * background transparency is enabled (so the window/wallpaper shows through),
+     * opaque black otherwise. */
+    private void clearScreenBackground() {
+        GLES20.glClearColor(0, 0, 0, mBackgroundAlpha < 1f ? 0f : 1f);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+    }
+
+    /** Fill an area of the FBO with the default terminal background, honoring
+     * background transparency. When translucent we must REPLACE the destination
+     * (including its alpha) rather than blend, otherwise the previous frame's
+     * content bleeds through and the alpha never settles; so blending is disabled
+     * for the fill and restored afterwards. */
+    private void fillDefaultBackground(float x, float y, float width, float height, int color) {
+        if (mBackgroundAlpha >= 1f) {
+            drawRect(x, y, width, height, color);
+            return;
+        }
+        int alpha = Math.round(mBackgroundAlpha * 255f);
+        int translucent = (alpha << 24) | (color & 0x00ffffff);
+        flushGlyphBatch();
+        GLES20.glDisable(GLES20.GL_BLEND);
+        drawRect(x, y, width, height, translucent);
+        GLES20.glEnable(GLES20.GL_BLEND);
+    }
+
+    private void setClearColor(int color, float alpha) {
+        GLES20.glClearColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, alpha);
     }
 
     private static int createProgram() {
@@ -987,7 +1041,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             "uniform float uTextured;\n" +
             "uniform sampler2D uTexture;\n" +
             "varying vec2 vTexCoord;\n" +
-            "void main(){ if (uTextured > 1.5) { gl_FragColor = texture2D(uTexture, vTexCoord); } else { float a = uTextured > 0.5 ? texture2D(uTexture, vTexCoord).a : 1.0; gl_FragColor = vec4(uColor.rgb, uColor.a * a); } }";
+            "void main(){ if (uTextured > 2.5) { vec4 c = texture2D(uTexture, vTexCoord); gl_FragColor = vec4(c.rgb * c.a, c.a); } else if (uTextured > 1.5) { gl_FragColor = texture2D(uTexture, vTexCoord); } else { float a = uTextured > 0.5 ? texture2D(uTexture, vTexCoord).a : 1.0; gl_FragColor = vec4(uColor.rgb, uColor.a * a); } }";
         int program = GLES20.glCreateProgram();
         GLES20.glAttachShader(program, compileShader(GLES20.GL_VERTEX_SHADER, vertexShader));
         GLES20.glAttachShader(program, compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentShader));

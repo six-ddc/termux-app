@@ -41,4 +41,14 @@
         <item name="extraKeysButtonActiveBackgroundColor">@color/grey_500</item>
     </style>
 
+    <!-- Applied at runtime (before super.onCreate) when the terminal-transparency
+         property is enabled: a translucent window that lets the system wallpaper
+         show behind the translucent terminal surface. Inherits everything else
+         from the base theme so day/night colours are unchanged. -->
+    <style name="Theme.TermuxActivity.DayNight.NoActionBar.Transparent" parent="Theme.TermuxActivity.DayNight.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+    </style>
+
 </resources>

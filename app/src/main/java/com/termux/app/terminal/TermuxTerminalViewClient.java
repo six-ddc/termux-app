@@ -133,6 +133,11 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
      */
     public void onReloadProperties() {
         setSessionShortcuts();
+        // Live-update the background transparency amount. Toggling transparency
+        // on/off (0 <-> >0) only takes full effect after a restart because the
+        // wallpaper-showing window theme is chosen in onCreate, but adjusting the
+        // amount while already translucent applies immediately.
+        mActivity.getTerminalView().setTerminalTransparency(mActivity.getProperties().getTerminalTransparency());
     }
 
     /**

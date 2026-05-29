@@ -18,7 +18,13 @@ android {
         }
 
         ndk {
-            abiFilters 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
+            // Only the ABIs we ship a prebuilt libghostty-vt.so for
+            // (src/main/jniLibs/<abi>/). Listing x86/armeabi-v7a here used to
+            // build libtermux for ABIs that have no libghostty-vt, producing APKs
+            // that crash at runtime with UnsatisfiedLinkError. The :app preBuild
+            // assertGhosttyNativeLibsPresent task enforces the same invariant for
+            // whatever ABIs a build actually packages.
+            abiFilters 'arm64-v8a', 'x86_64'
         }
     }
 

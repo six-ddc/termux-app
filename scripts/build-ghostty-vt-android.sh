@@ -8,6 +8,47 @@ GHOSTTY_REPO="${GHOSTTY_VT_REPO:-https://github.com/ghostty-org/ghostty.git}"
 GHOSTTY_REF="${GHOSTTY_VT_REF:-90175950d5004382abd3b0b9528e7be81b0b52ec}"
 LIB_VERSION="${GHOSTTY_VT_LIB_VERSION:-1.3.1}"
 
+require_tool() {
+    command -v "$1" >/dev/null 2>&1 || { echo "Required tool not found on PATH: $1" >&2; exit 1; }
+}
+require_tool git
+require_tool curl
+require_tool tar
+
+# Pinned SHA-256 of the official Zig release tarballs (from
+# https://ziglang.org/download/index.json), mirroring how the project pins the
+# Termux bootstrap zips. Keyed by "<version>-<host>"; unknown keys (e.g. a custom
+# GHOSTTY_VT_ZIG_VERSION) skip verification with a warning.
+expected_zig_sha256() {
+    case "$1" in
+        0.15.2-aarch64-macos) echo "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b" ;;
+        0.15.2-x86_64-macos)  echo "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f" ;;
+        0.15.2-aarch64-linux) echo "958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f" ;;
+        0.15.2-x86_64-linux)  echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239" ;;
+        *) echo "" ;;
+    esac
+}
+
+verify_sha256() {
+    local file="$1" expected="$2" actual
+    if command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+    elif command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$file" | awk '{print $1}')"
+    else
+        echo "Neither shasum nor sha256sum is available to verify $file" >&2
+        exit 1
+    fi
+    if [ "$actual" != "$expected" ]; then
+        echo "SHA-256 mismatch for $file" >&2
+        echo "  expected: $expected" >&2
+        echo "  actual:   $actual" >&2
+        rm -f "$file"
+        exit 1
+    fi
+    echo "Verified SHA-256 of $(basename "$file")"
+}
+
 if [ "$#" -gt 0 ]; then
   ABIS=("$@")
 elif [ -n "${GHOSTTY_VT_ABIS:-}" ]; then
@@ -35,6 +76,12 @@ ZIG_BIN="$ZIG_DIR/${ZIG_ARCHIVE%.tar.xz}/zig"
 if [ ! -x "$ZIG_BIN" ]; then
   mkdir -p "$ZIG_DIR"
   curl -fL "https://ziglang.org/download/$ZIG_VERSION/$ZIG_ARCHIVE" -o "$ZIG_DIR/$ZIG_ARCHIVE"
+  ZIG_EXPECTED_SHA="$(expected_zig_sha256 "$ZIG_VERSION-$ZIG_HOST")"
+  if [ -n "$ZIG_EXPECTED_SHA" ]; then
+    verify_sha256 "$ZIG_DIR/$ZIG_ARCHIVE" "$ZIG_EXPECTED_SHA"
+  else
+    echo "WARNING: no pinned SHA-256 for Zig $ZIG_VERSION/$ZIG_HOST; skipping toolchain verification" >&2
+  fi
   tar -C "$ZIG_DIR" -xf "$ZIG_DIR/$ZIG_ARCHIVE"
 fi
 

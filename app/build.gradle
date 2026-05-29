@@ -306,6 +306,27 @@ task downloadBootstraps() {
     }
 }
 
+// Fail the build (rather than ship an APK that crashes at runtime with
+// UnsatisfiedLinkError) if any ABI we are about to package has no prebuilt
+// libghostty-vt.so. The terminal core has no Java VT fallback, so a missing
+// native library is fatal. Build the missing ABIs with
+// scripts/build-ghostty-vt-android.sh, or restrict TERMUX_BOOTSTRAP_ARCHS to the
+// shipped set (aarch64, x86_64).
+tasks.register("assertGhosttyNativeLibsPresent") {
+    description = "Assert libghostty-vt.so exists for every ABI this build packages"
+    doLast {
+        def missing = termuxBootstrapAbis.findAll { abi ->
+            !rootProject.file("terminal-emulator/src/main/jniLibs/${abi}/libghostty-vt.so").isFile()
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                "libghostty-vt.so is missing for ABI(s) ${missing}. " +
+                "Shipped ABIs are arm64-v8a and x86_64. Build the missing ones with " +
+                "scripts/build-ghostty-vt-android.sh, or set TERMUX_BOOTSTRAP_ARCHS to the supported subset.")
+        }
+    }
+}
+
 afterEvaluate {
     android.applicationVariants.all { variant ->
         def autoTermuxVariantName = variant.name.capitalize()
@@ -426,7 +447,7 @@ afterEvaluate {
             dependsOn(copyTermuxPlusCliAssetTask)
             dependsOn(copyTermuxPlusHomeAssetTask)
         }
-        variant.preBuildProvider.configure { dependsOn(downloadBootstraps) }
+        variant.preBuildProvider.configure { dependsOn(downloadBootstraps); dependsOn("assertGhosttyNativeLibsPresent") }
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
     }
 }

@@ -2298,6 +2298,25 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeKey(
     return resultArray;
 }
 
+// Safety net for Ctrl+letter: emit the legacy C0 control byte (a→0x01 .. z→0x1a)
+// when the Ghostty key encoder declines to produce anything. Returns NULL when
+// the input is not a Ctrl+lowercase-letter combo. Prepends ESC for Alt
+// (Meta-prefix convention).
+static jbyteArray ctrl_letter_c0_fallback(JNIEnv* env, jint codepoint, jboolean controlDown, jboolean altDown)
+{
+    if (controlDown != JNI_TRUE || codepoint < 'a' || codepoint > 'z')
+        return NULL;
+    jsize n = (altDown == JNI_TRUE) ? 2 : 1;
+    jbyteArray arr = (*env)->NewByteArray(env, n);
+    if (arr == NULL) return NULL;
+    jbyte buf[2];
+    jsize idx = 0;
+    if (altDown == JNI_TRUE) buf[idx++] = (jbyte) 0x1b;
+    buf[idx++] = (jbyte) (codepoint - 'a' + 1);
+    (*env)->SetByteArrayRegion(env, arr, 0, n, buf);
+    return arr;
+}
+
 JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeCodePoint(
         JNIEnv* env,
         jclass TERMUX_UNUSED(clazz),
@@ -2309,12 +2328,14 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeCodePoint
     GhosttyBridgeContext* bridge = require_context(env, context);
     if (bridge == NULL) return NULL;
 
-    // TerminalView.inputCodePoint() already maps Ctrl-X → C0 / Ctrl-? → DEL
-    // (legacy Termux convention covers Ctrl-Space, Ctrl-2..8, Ctrl-/ that
-    // libghostty-vt's encoder does not). Routing those pre-transformed
-    // bytes back through the encoder drops them on the floor because the
-    // encoder rejects raw C0. Emit the byte directly; prepend ESC if Alt
-    // was also held (Meta-prefix convention).
+    // TerminalView.inputCodePoint() pre-maps the special Ctrl combos that
+    // libghostty-vt's encoder does not cover (Ctrl-Space→NUL, Ctrl-2..8,
+    // Ctrl-[/\/]/^/_, Ctrl-/) straight to their C0 byte. Routing those raw C0
+    // bytes back through the encoder drops them (it rejects raw C0), so emit the
+    // byte directly; prepend ESC if Alt was also held (Meta-prefix convention).
+    // Ctrl+letter is NOT pre-mapped anymore — it arrives as the bare letter +
+    // controlDown and goes through the encoder below so the kitty keyboard
+    // protocol / modifyOtherKeys can produce CSI-u, with a C0 fallback.
     if ((codepoint >= 0 && codepoint <= 0x1f) || codepoint == 0x7f) {
         jsize n = (altDown == JNI_TRUE) ? 2 : 1;
         jbyteArray arr = (*env)->NewByteArray(env, n);
@@ -2329,7 +2350,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeCodePoint
 
     GhosttyKey key = GHOSTTY_KEY_UNIDENTIFIED;
     if (!ghostty_key_from_codepoint(codepoint, &key))
-        return NULL;
+        return ctrl_letter_c0_fallback(env, codepoint, controlDown, altDown);
 
     char utf8[4];
     size_t utf8_len = 0;
@@ -2395,6 +2416,10 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyEncodeCodePoint
         throw_runtime_exception(env, "Failed to encode libghostty-vt text input");
         return NULL;
     }
+    // Encoder produced nothing (e.g. a build/mode where Ctrl+letter isn't
+    // encoded): fall back to the legacy C0 byte so the key is never dropped.
+    if (resultArray == NULL)
+        resultArray = ctrl_letter_c0_fallback(env, codepoint, controlDown, altDown);
     return resultArray;
 }
 

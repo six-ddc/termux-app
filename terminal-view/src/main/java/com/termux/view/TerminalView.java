@@ -898,9 +898,13 @@ public final class TerminalView extends GLSurfaceView {
 
         if (controlDown) {
             if (codePoint >= 'a' && codePoint <= 'z') {
-                codePoint = codePoint - 'a' + 1;
+                // Don't pre-map Ctrl+letter to a C0 byte here: that bypassed the
+                // Ghostty key encoder. Forward the letter + controlDown so the
+                // encoder applies Ctrl — producing the legacy C0 byte in normal
+                // mode and the CSI-u form under the kitty keyboard protocol /
+                // modifyOtherKeys (so soft-keyboard Ctrl matches hardware keys).
             } else if (codePoint >= 'A' && codePoint <= 'Z') {
-                codePoint = codePoint - 'A' + 1;
+                codePoint = codePoint - 'A' + 'a'; // normalize; encoder applies Ctrl
             } else if (codePoint == ' ' || codePoint == '2') {
                 codePoint = 0;
             } else if (codePoint == '[' || codePoint == '3') {

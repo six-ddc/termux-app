@@ -98,6 +98,11 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     /** Identity of the snapshot last fully rendered into the framebuffer; a repeat
      * frame of the same snapshot (e.g. cursor blink) needs no dirty-row redraw. */
     private TerminalRenderSnapshot mLastRenderedSnapshot;
+    /** Engine whose content currently lives in the framebuffer. The FBO is shared
+     * across sessions, so when the engine changes (tab switch) the FBO holds the
+     * previous session's pixels and a full redraw is mandatory — incremental
+     * dirty-row drawing would leave the old session showing through. */
+    private TerminalEngine mLastRenderedEngine;
 
     TerminalGpuRenderer(TerminalView view) {
         mView = view;
@@ -210,7 +215,11 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         // A repeat frame of an already-rendered snapshot (cursor blink, selection
         // tweak) is treated as CLEAN so only cursor/selection rows redraw — this
         // replaces the old GL-thread clearRenderDirtyState() call.
-        boolean snapshotConsumed = snapshot == mLastRenderedSnapshot;
+        // The framebuffer is shared across sessions; if the engine changed since
+        // the last frame (tab switch) its pixels are stale and we must repaint in
+        // full, never incrementally.
+        boolean engineChanged = engine != mLastRenderedEngine;
+        boolean snapshotConsumed = !engineChanged && snapshot == mLastRenderedSnapshot;
         mFrameDirtyState = snapshotConsumed ? TerminalEngine.RENDER_DIRTY_CLEAN : snapshot.dirtyState;
         int[] dirtyRows = snapshotConsumed ? null : snapshot.dirtyRows;
         mFrameDirtyRows = countDirtyRows(dirtyRows, rows);
@@ -226,7 +235,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 Log.i(LOG_TAG, "Rendering Ghostty render-state cells with OpenGL ES; size=" + columns + "x" + rows);
                 mLoggedDirectRenderPath = true;
             }
-            boolean fullRedraw = !mFramebufferContentValid || topRow != mLastTopRow ||
+            boolean fullRedraw = engineChanged || !mFramebufferContentValid || topRow != mLastTopRow ||
                 mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL ||
                 (kittyPlacements != null && kittyPlacements.length > 0);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
@@ -240,6 +249,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 cellWidth, cellHeight, background, fullRedraw, dirtyRows, kittyPlacements);
             mFramebufferContentValid = true;
             mLastRenderedSnapshot = snapshot;
+            mLastRenderedEngine = engine;
             mLastCursorRow = cursorRow;
             mLastTopRow = topRow;
             System.arraycopy(mSelection, 0, mLastSelection, 0, mSelection.length);

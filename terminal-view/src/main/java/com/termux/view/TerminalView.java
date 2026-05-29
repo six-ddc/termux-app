@@ -619,7 +619,12 @@ public final class TerminalView extends GLSurfaceView {
                     mTerminalEngine.scrollViewport(mTopRow - oldTopRow);
                     mTopRow = mTerminalEngine.getViewportTopRow();
                 }
-                if (!awakenScrollBars()) invalidate();
+                // Always request a render: awakenScrollBars()'s own invalidation
+                // doesn't reliably route through requestRender() on the
+                // GLSurfaceView (RENDERMODE_WHEN_DIRTY), which made scrolling drop
+                // frames / feel stuttery.
+                awakenScrollBars();
+                invalidate();
             }
         }
     }

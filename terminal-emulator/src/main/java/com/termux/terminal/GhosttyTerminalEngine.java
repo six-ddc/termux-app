@@ -11,7 +11,7 @@ import java.util.Objects;
  * cells are exposed directly to the Android GPU renderer, and text extraction
  * paths use Ghostty selection/formatter APIs.
  */
-final class GhosttyTerminalEngine implements TerminalEngine {
+final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
 
     private static final int DATA_COLS = 1;
     private static final int DATA_ROWS = 2;
@@ -42,12 +42,14 @@ final class GhosttyTerminalEngine implements TerminalEngine {
     private TerminalSessionClient mClient;
     private final int mTranscriptRows;
     private final TerminalColors mColors = new TerminalColors();
-    private long mNativeContext;
+    private volatile long mNativeContext;
     private volatile int[] mRenderCells;
     private volatile String[] mRenderCellText;
     private volatile TerminalKittyGraphicsPlacement[] mKittyGraphicsPlacements = new TerminalKittyGraphicsPlacement[0];
     private volatile int mRenderDirtyState = RENDER_DIRTY_FULL;
     private volatile int[] mRenderDirtyRows;
+    /** Single publication point consumed by the GL render thread (P0 thread safety). */
+    private volatile TerminalRenderSnapshot mRenderSnapshot;
     private int mColumns;
     private int mRows;
     private int mCellWidthPixels;
@@ -61,7 +63,7 @@ final class GhosttyTerminalEngine implements TerminalEngine {
     private boolean mRenderStateCursorVisible = true;
     private boolean mRenderStateCursorBlinking = true;
     private boolean mCursorBlinkingEnabled;
-    private boolean mCursorBlinkState = true;
+    private volatile boolean mCursorBlinkState = true;
     private int mScrollCounter;
     private int mViewportTopRow;
     private String mLastTitle;
@@ -148,6 +150,7 @@ final class GhosttyTerminalEngine implements TerminalEngine {
             mRenderCells = null;
             mRenderDirtyState = RENDER_DIRTY_FULL;
             mRenderDirtyRows = null;
+            mRenderSnapshot = null;
             return;
         }
         parseDirtyMetadata(cells, cellCount);
@@ -157,6 +160,50 @@ final class GhosttyTerminalEngine implements TerminalEngine {
         mRenderCellText = JNI.ghosttySnapshotCellText(mNativeContext, mColumns, mRows);
         syncKittyGraphicsPlacements();
         syncViewportTopRow();
+        publishRenderSnapshotAndClearNativeDirty();
+    }
+
+    /**
+     * Build the immutable {@link TerminalRenderSnapshot} from the just-captured
+     * state (main thread) and publish it for the GL render thread. Everything the
+     * renderer needs — including values that used to be live JNI reads
+     * (columns/rows/reverse-video/cursor visibility) — is resolved here so the GL
+     * thread never touches the native context. After capturing, the native dirty
+     * tracking is reset on this (main) thread so the next snapshot only reports
+     * newly-changed rows.
+     */
+    private void publishRenderSnapshotAndClearNativeDirty() {
+        boolean reverseVideo = JNI.ghosttyGetMode(mNativeContext, MODE_REVERSE_COLORS);
+        boolean dectcem = JNI.ghosttyGetBoolean(mNativeContext, DATA_CURSOR_VISIBLE);
+
+        boolean visibleIgnoringBlink;
+        boolean subjectToBlink;
+        if (!mCursorInViewport) {
+            visibleIgnoringBlink = false;
+            subjectToBlink = false;
+        } else if (mCursorPasswordInput) {
+            visibleIgnoringBlink = true;
+            subjectToBlink = false;
+        } else if (!mRenderStateCursorVisible || !dectcem) {
+            visibleIgnoringBlink = false;
+            subjectToBlink = false;
+        } else {
+            visibleIgnoringBlink = true;
+            subjectToBlink = mCursorBlinkingEnabled && mRenderStateCursorBlinking;
+        }
+
+        int cursorStyle = mCursorPasswordInput ? TERMINAL_CURSOR_STYLE_BLOCK : mCursorStyle;
+        int[] colorsCopy = mColors.mCurrentColors.clone();
+
+        mRenderSnapshot = new TerminalRenderSnapshot(mRenderCells, mRenderCellText, mRenderDirtyState,
+            mRenderDirtyRows, mKittyGraphicsPlacements, colorsCopy, mColumns, mRows, reverseVideo,
+            mCursorViewportCol, mCursorViewportRow, cursorStyle, visibleIgnoringBlink, subjectToBlink,
+            mCursorWideTail);
+
+        // Reset native dirty tracking now that the snapshot owns a copy of the
+        // dirty rows; done on the main thread so the GL thread never mutates the
+        // native render-state.
+        JNI.ghosttyClearRenderDirtyState(mNativeContext);
     }
 
     private void syncKittyGraphicsPlacements() {
@@ -223,13 +270,15 @@ final class GhosttyTerminalEngine implements TerminalEngine {
         int[] colors = JNI.ghosttySnapshotColors(mNativeContext);
         if (colors == null || colors.length < TextStyle.NUM_INDEXED_COLORS)
             return;
-        int foreground = colors[TextStyle.COLOR_INDEX_FOREGROUND];
-        int background = colors[TextStyle.COLOR_INDEX_BACKGROUND];
-        if (foreground == background || (foreground & 0xff000000) != 0xff000000 || (background & 0xff000000) != 0xff000000)
-            return;
         // Detect OSC 4 / 10 / 11 / 12 runtime palette changes by diffing against
         // the previous snapshot; fire onColorsChanged so the Activity can repaint
         // its surrounding chrome (background, status bar) to match.
+        //
+        // The palette is always updated unconditionally before any diff: a
+        // previous guard that bailed out when foreground==background or when any
+        // entry was not fully opaque silently dropped legitimate updates. With
+        // terminal transparency, non-0xff alpha on the default background is the
+        // normal case, so such a guard must never gate the copy.
         boolean changed = false;
         for (int i = 0; i < TextStyle.NUM_INDEXED_COLORS; i++) {
             if (mColors.mCurrentColors[i] != colors[i]) {
@@ -307,6 +356,11 @@ final class GhosttyTerminalEngine implements TerminalEngine {
 
     @Override
     public void clearRenderDirtyState() {
+        // Native dirty tracking is now reset on the main thread inside
+        // publishRenderSnapshotAndClearNativeDirty(); the GL render thread no
+        // longer calls this. Kept for the TerminalEngine contract and any
+        // main-thread caller; must not be invoked off the main thread because it
+        // mutates the native render-state.
         if (mNativeContext != 0)
             JNI.ghosttyClearRenderDirtyState(mNativeContext);
         mRenderDirtyState = RENDER_DIRTY_CLEAN;
@@ -315,6 +369,16 @@ final class GhosttyTerminalEngine implements TerminalEngine {
             for (int i = 0; i < dirtyRows.length; i++)
                 dirtyRows[i] = 0;
         }
+    }
+
+    @Override
+    public TerminalRenderSnapshot getRenderSnapshot() {
+        return mRenderSnapshot;
+    }
+
+    @Override
+    public boolean isCursorBlinkOn() {
+        return mCursorBlinkState;
     }
 
     @Override
@@ -643,13 +707,29 @@ final class GhosttyTerminalEngine implements TerminalEngine {
             throw new IllegalStateException("Failed to apply Termux colors to libghostty-vt");
     }
 
+    /**
+     * Explicitly release the native libghostty-vt context. Idempotent and
+     * thread-safe. Should be called from {@link TerminalSession} when the
+     * session is finished rather than relying on the GC finalizer, so the (up to
+     * 128 MiB) native Kitty image storage is not held until an arbitrary future
+     * GC. The native handle is zeroed before being freed so any concurrent
+     * guard (`mNativeContext != 0`) short-circuits instead of touching freed
+     * memory.
+     */
+    @Override
+    public synchronized void close() {
+        long ctx = mNativeContext;
+        if (ctx != 0) {
+            mNativeContext = 0;
+            mRenderSnapshot = null;
+            JNI.ghosttyFree(ctx);
+        }
+    }
+
     @Override
     protected void finalize() throws Throwable {
         try {
-            if (mNativeContext != 0) {
-                JNI.ghosttyFree(mNativeContext);
-                mNativeContext = 0;
-            }
+            close();
         } finally {
             super.finalize();
         }

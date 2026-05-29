@@ -12,6 +12,7 @@ import android.util.Log;
 
 import com.termux.terminal.TerminalEngine;
 import com.termux.terminal.TerminalKittyGraphicsPlacement;
+import com.termux.terminal.TerminalRenderSnapshot;
 import com.termux.terminal.TextStyle;
 
 import java.nio.ByteBuffer;
@@ -94,6 +95,9 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private int mGlyphBatchColor;
     private int mLastCursorRow = -1;
     private int mLastTopRow;
+    /** Identity of the snapshot last fully rendered into the framebuffer; a repeat
+     * frame of the same snapshot (e.g. cursor blink) needs no dirty-row redraw. */
+    private TerminalRenderSnapshot mLastRenderedSnapshot;
 
     TerminalGpuRenderer(TerminalView view) {
         mView = view;
@@ -106,6 +110,20 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         // with the context.
         mKittyTextures.clear();
         mKittyTexturesByteCount = 0;
+        // The glyph atlas texture and every cached glyph's atlas coordinates are
+        // gone with the old context too. Drop the glyph caches and reset the
+        // atlas cursor; otherwise after the atlas is recreated below we'd sample
+        // stale coordinates and render garbage/misplaced glyphs until a font
+        // change happened to flush the cache.
+        mGlyphs.clear();
+        mCodepointGlyphs.clear();
+        mAtlasX = 0;
+        mAtlasY = 0;
+        mAtlasRowHeight = 0;
+        mGlyphCacheTypeface = null;
+        mGlyphCacheTextSize = 0;
+        mFramebufferContentValid = false;
+        mLastRenderedSnapshot = null;
         mProgram = createProgram();
         mPositionLocation = GLES20.glGetAttribLocation(mProgram, "aPosition");
         mTexCoordLocation = GLES20.glGetAttribLocation(mProgram, "aTexCoord");
@@ -157,33 +175,53 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
             return;
         }
+
+        // P0 thread safety: the GL render thread reads ONLY this immutable
+        // snapshot (built and published on the main thread). No native context
+        // access, no live JNI, no render-state mutation happens here.
+        TerminalRenderSnapshot snapshot = engine.getRenderSnapshot();
+        if (snapshot == null || snapshot.cells == null) {
+            if (!mLoggedMissingDirectRenderState) {
+                Log.e(LOG_TAG, "Ghostty render-state snapshot is unavailable; refusing TerminalBuffer fallback");
+                mLoggedMissingDirectRenderState = true;
+            }
+            GLES20.glClearColor(0, 0, 0, 1);
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            return;
+        }
         beginFrameStats();
 
         renderer.copyGlyphPaintTo(mGlyphPaint);
         ensureGlyphCacheForRenderer(renderer);
         mView.copyRenderSelectors(mSelection);
 
-        int[] palette = engine.getCurrentColors();
-        int background = palette[engine.isReverseVideo() ? TextStyle.COLOR_INDEX_FOREGROUND : TextStyle.COLOR_INDEX_BACKGROUND];
+        int[] palette = snapshot.colors;
+        int background = palette[snapshot.reverseVideo ? TextStyle.COLOR_INDEX_FOREGROUND : TextStyle.COLOR_INDEX_BACKGROUND];
 
-        int columns = engine.getColumns();
-        int rows = engine.getRows();
+        int columns = snapshot.columns;
+        int rows = snapshot.rows;
         int topRow = mView.mTopRow;
         mFrameTopRow = topRow;
-        int cursorCol = engine.getCursorCol();
-        int cursorRow = engine.getCursorRow();
-        boolean cursorVisible = engine.shouldCursorBeVisible();
-        boolean cursorWideTail = engine.isCursorWideTail();
-        mFrameDirtyState = engine.getRenderDirtyState();
-        mFrameDirtyRows = countDirtyRows(engine.getRenderDirtyRows(), rows);
+        int cursorCol = snapshot.cursorCol;
+        int cursorRow = snapshot.cursorRow;
+        boolean cursorVisible = snapshot.cursorVisibleIgnoringBlink
+            && (!snapshot.cursorSubjectToBlink || engine.isCursorBlinkOn());
+        boolean cursorWideTail = snapshot.cursorWideTail;
+        // A repeat frame of an already-rendered snapshot (cursor blink, selection
+        // tweak) is treated as CLEAN so only cursor/selection rows redraw — this
+        // replaces the old GL-thread clearRenderDirtyState() call.
+        boolean snapshotConsumed = snapshot == mLastRenderedSnapshot;
+        mFrameDirtyState = snapshotConsumed ? TerminalEngine.RENDER_DIRTY_CLEAN : snapshot.dirtyState;
+        int[] dirtyRows = snapshotConsumed ? null : snapshot.dirtyRows;
+        mFrameDirtyRows = countDirtyRows(dirtyRows, rows);
         float cellWidth = renderer.mFontWidth;
         float cellHeight = renderer.mFontLineSpacing;
-        int[] renderCells = engine.getRenderCells();
-        String[] renderCellText = engine.getRenderCellText();
-        TerminalKittyGraphicsPlacement[] kittyPlacements = sortedKittyPlacements(engine.getKittyGraphicsPlacements());
+        int[] renderCells = snapshot.cells;
+        String[] renderCellText = snapshot.cellText;
+        TerminalKittyGraphicsPlacement[] kittyPlacements = sortedKittyPlacements(snapshot.kittyPlacements);
         int requiredRenderCells = columns * rows * TerminalEngine.RENDER_CELL_STRIDE;
 
-        if (renderCells != null && renderCells.length >= requiredRenderCells) {
+        if (renderCells.length >= requiredRenderCells) {
             if (!mLoggedDirectRenderPath) {
                 Log.i(LOG_TAG, "Rendering Ghostty render-state cells with OpenGL ES; size=" + columns + "x" + rows);
                 mLoggedDirectRenderPath = true;
@@ -197,11 +235,11 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 setClearColor(background);
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
             }
-            drawGhosttyRenderStateFrame(engine, renderer, renderCells, renderCellText, palette, columns, rows,
-                topRow, cursorCol, cursorRow, cursorVisible, cursorWideTail, cellWidth, cellHeight, background,
-                fullRedraw, engine.getRenderDirtyRows(), kittyPlacements);
+            drawGhosttyRenderStateFrame(snapshot.cursorStyle, snapshot.reverseVideo, renderer, renderCells,
+                renderCellText, palette, columns, rows, topRow, cursorCol, cursorRow, cursorVisible, cursorWideTail,
+                cellWidth, cellHeight, background, fullRedraw, dirtyRows, kittyPlacements);
             mFramebufferContentValid = true;
-            engine.clearRenderDirtyState();
+            mLastRenderedSnapshot = snapshot;
             mLastCursorRow = cursorRow;
             mLastTopRow = topRow;
             System.arraycopy(mSelection, 0, mLastSelection, 0, mSelection.length);
@@ -223,14 +261,12 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         finishFrameStats("missing-ghostty-render-state", columns, rows);
     }
 
-    private void drawGhosttyRenderStateFrame(TerminalEngine engine, TerminalRenderer renderer, int[] renderCells,
-                                             String[] renderCellText,
+    private void drawGhosttyRenderStateFrame(int cursorShape, boolean reverseVideo, TerminalRenderer renderer,
+                                             int[] renderCells, String[] renderCellText,
                                              int[] palette, int columns, int rows, int topRow, int cursorCol, int cursorRow,
                                              boolean cursorVisible, boolean cursorWideTail, float cellWidth, float cellHeight,
                                              int defaultBackground, boolean fullRedraw, int[] dirtyRows,
                                              TerminalKittyGraphicsPlacement[] kittyPlacements) {
-        int cursorShape = engine.getCursorStyle();
-        boolean reverseVideo = engine.isReverseVideo();
         int cursorRenderCol = cursorWideTail ? Math.max(0, cursorCol - 1) : cursorCol;
 
         for (int row = 0; row < rows; row++) {
@@ -524,21 +560,68 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         mAtlasCanvas.restoreToCount(saveCount);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
         Bitmap glyphBitmap = Bitmap.createBitmap(mAtlasBitmap, mAtlasX, mAtlasY, glyphWidth, glyphHeight);
+        boolean colored = bitmapHasColor(glyphBitmap);
         GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasX, mAtlasY, glyphBitmap);
         glyphBitmap.recycle();
 
-        Glyph glyph = new Glyph(mAtlasX, mAtlasY, glyphWidth, glyphHeight);
+        Glyph glyph = new Glyph(mAtlasX, mAtlasY, glyphWidth, glyphHeight, colored);
         mAtlasX += glyphWidth;
         mAtlasRowHeight = Math.max(mAtlasRowHeight, glyphHeight);
         return glyph;
     }
 
+    /**
+     * Detect whether a freshly rasterized glyph carries its own color. Monochrome
+     * text is drawn with a white paint, so every opaque pixel is gray
+     * (R==G==B) and only alpha varies; color emoji / color-font glyphs ignore the
+     * paint color and produce chromatic pixels. Any opaque chromatic pixel marks
+     * the glyph as colored. Runs once per newly-cached glyph only.
+     */
+    private boolean bitmapHasColor(Bitmap bitmap) {
+        int w = bitmap.getWidth();
+        int h = bitmap.getHeight();
+        if (w <= 0 || h <= 0)
+            return false;
+        int[] pixels = new int[w * h];
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h);
+        for (int pixel : pixels) {
+            if ((pixel >>> 24) == 0)
+                continue;
+            int r = (pixel >> 16) & 0xff;
+            int g = (pixel >> 8) & 0xff;
+            int b = pixel & 0xff;
+            if (r != g || g != b)
+                return true;
+        }
+        return false;
+    }
+
     private void drawGlyph(Glyph glyph, float x, float y, int color) {
         mFrameGlyphs++;
-        drawTexturedQuadBatched(x, y, glyph.width, glyph.height,
-            (float) glyph.x / ATLAS_SIZE, (float) glyph.y / ATLAS_SIZE,
-            (float) (glyph.x + glyph.width) / ATLAS_SIZE, (float) (glyph.y + glyph.height) / ATLAS_SIZE,
-            color);
+        float u1 = (float) glyph.x / ATLAS_SIZE;
+        float v1 = (float) glyph.y / ATLAS_SIZE;
+        float u2 = (float) (glyph.x + glyph.width) / ATLAS_SIZE;
+        float v2 = (float) (glyph.y + glyph.height) / ATLAS_SIZE;
+        if (glyph.colored) {
+            drawColorGlyph(x, y, glyph.width, glyph.height, u1, v1, u2, v2);
+            return;
+        }
+        drawTexturedQuadBatched(x, y, glyph.width, glyph.height, u1, v1, u2, v2, color);
+    }
+
+    /**
+     * Draw a color glyph (emoji / color font) using the full-RGBA texture branch
+     * so its real colors survive instead of being flattened to the cell
+     * foreground. The atlas is uploaded by GLUtils as premultiplied alpha, so
+     * this quad blends with premultiplied factors (GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+     * to avoid darkened edges; the default straight-alpha blend is restored after.
+     */
+    private void drawColorGlyph(float x, float y, float width, float height,
+                                float u1, float v1, float u2, float v2) {
+        flushGlyphBatch();
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        drawTextureQuad(mAtlasTexture, x, y, width, height, u1, v1, u2, v2);
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
     }
 
     private void drawRect(float x, float y, float width, float height, int color) {
@@ -878,12 +961,17 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         final int y;
         final int width;
         final int height;
+        /** True when the rasterized glyph carries its own color (emoji / color
+         * fonts) and must be drawn via the full-RGBA path instead of being tinted
+         * by the cell foreground through the alpha-coverage path. */
+        final boolean colored;
 
-        Glyph(int x, int y, int width, int height) {
+        Glyph(int x, int y, int width, int height, boolean colored) {
             this.x = x;
             this.y = y;
             this.width = width;
             this.height = height;
+            this.colored = colored;
         }
     }
 

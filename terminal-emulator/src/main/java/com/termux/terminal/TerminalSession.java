@@ -220,6 +220,23 @@ public final class TerminalSession extends TerminalOutput {
         return mTerminalEngine;
     }
 
+    /**
+     * Permanently release the native terminal engine (libghostty-vt context and
+     * its up-to-128 MiB Kitty image storage). Call this when the session is being
+     * removed from the UI/service for good rather than waiting for the GC
+     * finalizer. Idempotent; after this the session must not be rendered again.
+     */
+    public void releaseEngine() {
+        TerminalEngine engine = mTerminalEngine;
+        if (engine instanceof AutoCloseable) {
+            try {
+                ((AutoCloseable) engine).close();
+            } catch (Exception e) {
+                Logger.logWarn(mClient, LOG_TAG, "Failed releasing terminal engine: " + e.getMessage());
+            }
+        }
+    }
+
     /** Notify the {@link #mClient} that the screen has changed. */
     protected void notifyScreenUpdate() {
         mClient.onTextChanged(this);

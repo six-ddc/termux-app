@@ -65,6 +65,16 @@ public interface TerminalEngine {
 
     void clearRenderDirtyState();
 
+    /**
+     * Immutable, self-consistent render snapshot for the GL thread. Built on the
+     * main thread; consumed without any native access. See
+     * {@link TerminalRenderSnapshot}.
+     */
+    TerminalRenderSnapshot getRenderSnapshot();
+
+    /** Current cursor blink phase (true = cursor "on"). Volatile-safe to read off-thread. */
+    boolean isCursorBlinkOn();
+
     TerminalKittyGraphicsPlacement[] getKittyGraphicsPlacements();
 
     int getColumns();

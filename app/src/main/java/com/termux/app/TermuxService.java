@@ -293,8 +293,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             ExecutionCommand executionCommand = termuxSessions.get(i).getExecutionCommand();
             processResult = mWantsToStop || executionCommand.isPluginExecutionCommandWithPendingResult();
             termuxSessions.get(i).killIfExecuting(this, processResult);
-            if (!processResult)
-                mShellManager.mTermuxSessions.remove(termuxSessions.get(i));
+            if (!processResult) {
+                TermuxSession removed = termuxSessions.get(i);
+                mShellManager.mTermuxSessions.remove(removed);
+                // Service is tearing down; release the native terminal engine now.
+                if (removed.getTerminalSession() != null)
+                    removed.getTerminalSession().releaseEngine();
+            }
         }
 
 
@@ -651,6 +656,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         if (index >= 0)
             mShellManager.mTermuxSessions.get(index).finish();
 
+        // The session is being removed for good; release its native terminal
+        // engine deterministically (libghostty-vt context + Kitty image storage)
+        // instead of waiting for the GC finalizer. Callers switch away from or
+        // finish the session right after this, so it is no longer rendered.
+        if (sessionToRemove != null)
+            sessionToRemove.releaseEngine();
+
         return index;
     }
 
@@ -1002,6 +1014,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     public void hideFloatingTerminal() {
         if (mFloatingTerminalController != null)
             mFloatingTerminalController.hide();
+    }
+
+    /** Event-driven refresh for the floating terminal, driven by session output
+     * (see {@link TermuxTerminalSessionServiceClient#onTextChanged}). */
+    public void notifyFloatingTerminalOutput() {
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.refreshFromOutput();
     }
 
 }

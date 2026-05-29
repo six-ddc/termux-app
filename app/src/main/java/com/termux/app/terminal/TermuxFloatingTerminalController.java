@@ -32,7 +32,10 @@ import com.termux.view.TerminalView;
 public final class TermuxFloatingTerminalController {
 
     private static final String LOG_TAG = "TermuxFloatingTerminal";
-    private static final int REFRESH_INTERVAL_MS = 250;
+    // Low-frequency safety fallback only. Per-output refresh is event-driven via
+    // refreshFromOutput() (called from the session service client); this timer
+    // just catches anything not tied to terminal output (e.g. title changes).
+    private static final int REFRESH_INTERVAL_MS = 1000;
 
     private final TermuxService mService;
     private final WindowManager mWindowManager;
@@ -53,14 +56,29 @@ public final class TermuxFloatingTerminalController {
         public void run() {
             if (!mAttached) return;
 
-            attachCurrentSession();
-            if (mTerminalView != null)
-                mTerminalView.onScreenUpdated();
-            updateTitle();
+            refreshNow();
 
             mHandler.postDelayed(this, REFRESH_INTERVAL_MS);
         }
     };
+
+    /** Refresh the floating terminal once. */
+    private void refreshNow() {
+        attachCurrentSession();
+        if (mTerminalView != null)
+            mTerminalView.onScreenUpdated();
+        updateTitle();
+    }
+
+    /**
+     * Event-driven refresh hook: called from the session service client when the
+     * shared session produces output while the app is backgrounded (the only
+     * time the floating terminal is shown). Replaces the old 250 ms busy poll.
+     */
+    public void refreshFromOutput() {
+        if (!mAttached) return;
+        mHandler.post(this::refreshNow);
+    }
 
     public TermuxFloatingTerminalController(TermuxService service) {
         mService = service;
@@ -244,8 +262,12 @@ public final class TermuxFloatingTerminalController {
             dp(34)));
 
         mTerminalView = new TerminalView(mService, null);
+        // Mirror view: it reuses the activity's current session, so it must not
+        // reshape the shared PTY (would fight the main view / thrash SIGWINCH).
+        mTerminalView.setDrivesSessionResize(false);
         mTerminalView.setTerminalViewClient(mTerminalViewClient);
         mTerminalView.setTextSize(getFloatingTerminalFontSize());
+        mTerminalView.setTypeface(TermuxTerminalFontManager.loadTerminalTypeface(mService));
         mTerminalView.setFocusable(true);
         mTerminalView.setFocusableInTouchMode(true);
         mTerminalView.setBackgroundColor(Color.rgb(0, 0, 0));

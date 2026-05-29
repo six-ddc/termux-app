@@ -69,9 +69,19 @@ public final class TerminalView extends GLSurfaceView {
     public static final int TERMINAL_CURSOR_BLINK_RATE_MIN = 100;
     public static final int TERMINAL_CURSOR_BLINK_RATE_MAX = 2000;
 
-    /** The top row of text to display. Ranges from -activeTranscriptRows to 0. */
-    int mTopRow;
+    /** The top row of text to display. Ranges from -activeTranscriptRows to 0.
+     * Written on the main thread, read on the GL render thread, so volatile. */
+    volatile int mTopRow;
     int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
+
+    /**
+     * Whether this view is allowed to reshape (resize) the attached session's
+     * PTY/engine from its own dimensions. The primary activity view owns the
+     * session size; a secondary mirror view (e.g. the floating terminal that
+     * reuses the current session) must set this to {@code false} so the two views
+     * don't fight over the single shared PTY size (SIGWINCH ping-pong / reflow
+     * thrash). A mirror simply renders the session at its current size. */
+    private boolean mDrivesSessionResize = true;
 
     float mScaleFactor = 1.f;
     final GestureAndScaleRecognizer mGestureRecognizer;
@@ -1023,11 +1033,25 @@ public final class TerminalView extends GLSurfaceView {
         updateSize();
     }
 
+    /** Allow/disallow this view to drive the attached session's PTY size. See
+     * {@link #mDrivesSessionResize}. Secondary mirror views (floating terminal)
+     * pass {@code false}. */
+    public void setDrivesSessionResize(boolean drivesSessionResize) {
+        mDrivesSessionResize = drivesSessionResize;
+    }
+
     /** Check if the terminal size in rows and columns should be updated. */
     public void updateSize() {
         int viewWidth = getWidth();
         int viewHeight = getHeight();
         if (viewWidth == 0 || viewHeight == 0 || mTermSession == null) return;
+
+        if (!mDrivesSessionResize) {
+            // Mirror view: never reshape the shared session — just bind to its
+            // current engine and render at the session's existing size.
+            bindEngineFromSession();
+            return;
+        }
 
         // Set to 80 and 24 if you want to enable vttest.
         int newColumns = Math.max(4, (int) (viewWidth / mRenderer.mFontWidth));
@@ -1035,19 +1059,25 @@ public final class TerminalView extends GLSurfaceView {
 
         if (mTerminalEngine == null || (newColumns != mTerminalEngine.getColumns() || newRows != mTerminalEngine.getRows())) {
             mTermSession.updateSize(newColumns, newRows, (int) mRenderer.getFontWidth(), mRenderer.getFontLineSpacing());
-            mTerminalEngine = mTermSession.getTerminalEngine();
-            if (mTerminalEngine == null || !mTerminalEngine.isGhosttyBacked())
-                throw new IllegalStateException("TerminalView requires a Ghostty-backed terminal engine");
-            mClient.onTerminalEngineSet();
-
-            // Update mTerminalCursorBlinkerRunnable inner class terminal engine on session change
-            if (mTerminalCursorBlinkerRunnable != null)
-                mTerminalCursorBlinkerRunnable.setTerminalEngine(mTerminalEngine);
-
-            mTopRow = 0;
-            scrollTo(0, 0);
-            invalidate();
+            bindEngineFromSession();
         }
+    }
+
+    /** Bind {@link #mTerminalEngine} to the attached session's current engine and
+     * reset scroll/cursor wiring. Used by both the resizing and mirror paths. */
+    private void bindEngineFromSession() {
+        mTerminalEngine = mTermSession.getTerminalEngine();
+        if (mTerminalEngine == null || !mTerminalEngine.isGhosttyBacked())
+            throw new IllegalStateException("TerminalView requires a Ghostty-backed terminal engine");
+        mClient.onTerminalEngineSet();
+
+        // Update mTerminalCursorBlinkerRunnable inner class terminal engine on session change
+        if (mTerminalCursorBlinkerRunnable != null)
+            mTerminalCursorBlinkerRunnable.setTerminalEngine(mTerminalEngine);
+
+        mTopRow = 0;
+        scrollTo(0, 0);
+        invalidate();
     }
 
     @Override

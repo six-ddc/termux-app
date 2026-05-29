@@ -28,4 +28,12 @@ public class TermuxTerminalSessionServiceClient extends TermuxTerminalSessionCli
             termuxSession.getExecutionCommand().mPid = pid;
     }
 
+    @Override
+    public void onTextChanged(@NonNull TerminalSession changedSession) {
+        // This client is only the active session client while the app is
+        // backgrounded, which is exactly when the floating terminal is shown.
+        // Drive its refresh from real output instead of a 250 ms busy poll.
+        mService.notifyFloatingTerminalOutput();
+    }
+
 }

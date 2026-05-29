@@ -516,7 +516,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void checkForFontAndColors() {
         try {
             File colorsFile = TermuxConstants.TERMUX_COLOR_PROPERTIES_FILE;
-            File fontFile = TermuxConstants.TERMUX_FONT_FILE;
 
             final Properties props = new Properties();
             if (colorsFile.isFile()) {
@@ -540,7 +539,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             }
             updateBackgroundColor();
 
-            final Typeface newTypeface = (fontFile.exists() && fontFile.length() > 0) ? Typeface.createFromFile(fontFile) : Typeface.MONOSPACE;
+            final Typeface newTypeface = TermuxTerminalFontManager.loadTerminalTypeface(mActivity);
             mActivity.getTerminalView().setTypeface(newTypeface);
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error in checkForFontAndColors()", e);

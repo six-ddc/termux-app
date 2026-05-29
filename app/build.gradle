@@ -447,7 +447,12 @@ afterEvaluate {
             dependsOn(copyTermuxPlusCliAssetTask)
             dependsOn(copyTermuxPlusHomeAssetTask)
         }
-        variant.preBuildProvider.configure { dependsOn(downloadBootstraps); dependsOn("assertGhosttyNativeLibsPresent") }
+        variant.preBuildProvider.configure { dependsOn(downloadBootstraps) }
+        // Gate APK *packaging* (not every task) on the native libs being present,
+        // so non-packaging tasks like `test` still run with the default
+        // multi-ABI TERMUX_BOOTSTRAP_ARCHS, while a real assemble for an ABI
+        // without libghostty-vt fails loudly.
+        variant.packageApplicationProvider.configure { dependsOn("assertGhosttyNativeLibsPresent") }
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
     }
 }

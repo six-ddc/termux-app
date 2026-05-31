@@ -435,13 +435,15 @@ public final class ExtraKeysView extends GridLayout {
                 button.setText(buttonInfo.getDisplay());
                 button.setTextColor(mButtonTextColor);
                 button.setAllCaps(mButtonTextAllCaps);
-                button.setTextSize(12);
+                button.setTextSize(11);
                 button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
                 button.setIncludeFontPadding(false);
                 button.setMinHeight(0);
                 button.setMinWidth(0);
                 button.setMinimumHeight(0);
                 button.setMinimumWidth(0);
+                button.setInsetTop(0);
+                button.setInsetBottom(0);
                 button.setPadding(0, 0, 0, 0);
                 button.setBackgroundColor(mButtonBackgroundColor);
 
@@ -531,7 +533,7 @@ public final class ExtraKeysView extends GridLayout {
                 } else {
                     param.height = 0;
                 }
-                param.setMargins(2, 2, 2, 2);
+                param.setMargins(dp(2), dp(1), dp(2), dp(1));
                 param.columnSpec = GridLayout.spec(col, GridLayout.FILL, 1.f);
                 param.rowSpec = GridLayout.spec(row, GridLayout.FILL, 1.f);
                 button.setLayoutParams(param);

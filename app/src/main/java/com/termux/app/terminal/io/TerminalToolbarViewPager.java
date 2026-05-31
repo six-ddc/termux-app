@@ -9,7 +9,6 @@ import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.LayoutInflater;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -81,11 +80,8 @@ public class TerminalToolbarViewPager {
 
         private View inflateExtraKeysPage(LayoutInflater inflater, ViewGroup collection, int position) {
             View layout = inflater.inflate(R.layout.view_terminal_toolbar_extra_keys, collection, false);
-            View keyActions = layout.findViewById(R.id.terminal_toolbar_key_actions);
-            Button snippetsButton = layout.findViewById(R.id.terminal_toolbar_snippets_button);
             ExtraKeysView extraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys);
             mSnippetsAnchor = collection;
-            setupSnippetsButton(keyActions, snippetsButton, position);
             extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
             extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
             extraKeysView.setButtonColors(
@@ -110,43 +106,6 @@ public class TerminalToolbarViewPager {
                 FullScreenWorkAround.apply(mActivity);
 
             return layout;
-        }
-
-        private void setupSnippetsButton(View keyActions, Button snippetsButton, int position) {
-            if (keyActions == null || snippetsButton == null) return;
-
-            keyActions.setVisibility(position == 0 ? View.VISIBLE : View.INVISIBLE);
-            if (position != 0) return;
-
-            snippetsButton.setOnClickListener(v -> showSnippetsPopup());
-            final float[] downY = new float[1];
-            final boolean[] manageOpened = new boolean[1];
-            snippetsButton.setOnTouchListener((view, event) -> {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downY[0] = event.getRawY();
-                        manageOpened[0] = false;
-                        view.setPressed(true);
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        if (!manageOpened[0] && downY[0] - event.getRawY() > dp(20)) {
-                            manageOpened[0] = true;
-                            view.setPressed(false);
-                            dismissSnippetsPopup();
-                            mActivity.openTermuxPlusSnippetsManager();
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        view.setPressed(false);
-                        if (!manageOpened[0]) view.performClick();
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        view.setPressed(false);
-                        return true;
-                    default:
-                        return true;
-                }
-            });
         }
 
         private void renderSnippets(EditText searchInput, LinearLayout snippetsList) {

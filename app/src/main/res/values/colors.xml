@@ -13,4 +13,30 @@
     <color name="termuxplus_text_secondary">#98A2AD</color>
     <color name="termuxplus_text_muted">#66717C</color>
     <color name="termuxplus_text_error">#FF6B6B</color>
+
+    <!-- Termius-inspired modern chrome palette -->
+    <color name="termuxplus_header_bg">#080B0F</color>
+    <color name="termuxplus_hairline">#171D24</color>
+    <color name="termuxplus_scrim">#B3000000</color>
+
+    <!-- Elevated sheets / cards -->
+    <color name="termuxplus_sheet_bg">#11151B</color>
+    <color name="termuxplus_sheet_border">#232B35</color>
+    <color name="termuxplus_sheet_handle">#3A434F</color>
+    <color name="termuxplus_card_bg">#121821</color>
+    <color name="termuxplus_card_bg_pressed">#19212C</color>
+    <color name="termuxplus_card_border">#232B35</color>
+
+    <!-- Accent: cool blue chrome highlight (matches Termius), green stays for run/active -->
+    <color name="termuxplus_accent">#4C8DFF</color>
+    <color name="termuxplus_accent_pressed">#3E78E0</color>
+    <color name="termuxplus_accent_soft">#16243B</color>
+    <color name="termuxplus_accent_border">#2A4A7A</color>
+    <color name="termuxplus_run">#63C57D</color>
+    <color name="termuxplus_ripple">#1FFFFFFF</color>
+
+    <!-- Tab pill states -->
+    <color name="termuxplus_pill_bg">#0E1318</color>
+    <color name="termuxplus_pill_bg_active">#172230</color>
+    <color name="termuxplus_pill_border">#1E2630</color>
 </resources>

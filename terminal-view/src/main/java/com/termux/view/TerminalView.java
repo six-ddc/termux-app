@@ -610,7 +610,7 @@ public final class TerminalView extends GLSurfaceView {
      */
     public int[] getColumnAndRow(MotionEvent event, boolean relativeToScroll) {
         int column = (int) (event.getX() / mRenderer.mFontWidth);
-        int row = (int) ((event.getY() - mRenderer.mFontLineSpacingAndAscent) / mRenderer.mFontLineSpacing);
+        int row = (int) (event.getY() / mRenderer.mFontLineSpacing);
         if (relativeToScroll) {
             row += mTopRow;
         }
@@ -1098,7 +1098,7 @@ public final class TerminalView extends GLSurfaceView {
 
         // Set to 80 and 24 if you want to enable vttest.
         int newColumns = Math.max(4, (int) (viewWidth / mRenderer.mFontWidth));
-        int newRows = Math.max(4, (viewHeight - mRenderer.mFontLineSpacingAndAscent) / mRenderer.mFontLineSpacing);
+        int newRows = Math.max(4, viewHeight / mRenderer.mFontLineSpacing);
 
         if (mTerminalEngine == null || (newColumns != mTerminalEngine.getColumns() || newRows != mTerminalEngine.getRows())) {
             mTermSession.updateSize(newColumns, newRows, (int) mRenderer.getFontWidth(), mRenderer.getFontLineSpacing());
@@ -1146,7 +1146,7 @@ public final class TerminalView extends GLSurfaceView {
     }
 
     public int getCursorY(float y) {
-        return (int) (((y - 40) / mRenderer.mFontLineSpacing) + mTopRow);
+        return (int) ((y / mRenderer.mFontLineSpacing) + mTopRow);
     }
 
     public int getPointX(int cx) {

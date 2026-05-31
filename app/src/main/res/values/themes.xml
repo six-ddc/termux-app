@@ -28,7 +28,8 @@
         <item name="android:windowActionModeOverlay">true</item>
 
         <item name="android:windowTranslucentStatus">true</item>
-        <item name="android:windowTranslucentNavigation">true</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:navigationBarColor">@color/termuxplus_surface</item>
 
         <!-- https://developer.android.com/training/tv/start/start.html#transition-color -->
         <item name="android:windowAllowReturnTransitionOverlap">true</item>
@@ -49,6 +50,35 @@
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowShowWallpaper">true</item>
         <item name="android:windowIsTranslucent">true</item>
+    </style>
+
+    <!-- ============================================================= -->
+    <!-- Termius-style modern bottom sheet (Material scaffold, custom skin) -->
+    <!-- Used by TermuxPlusActionSheet and TermuxPlusTabOverview.       -->
+    <!-- ============================================================= -->
+    <style name="ShapeAppearance.TermuxPlus.Sheet" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">@dimen/termuxplus_sheet_radius</item>
+        <item name="cornerSizeTopRight">@dimen/termuxplus_sheet_radius</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
+    <style name="Widget.TermuxPlus.BottomSheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@color/termuxplus_sheet_bg</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.TermuxPlus.Sheet</item>
+        <item name="android:elevation">16dp</item>
+    </style>
+
+    <style name="Theme.TermuxPlus.BottomSheet" parent="Theme.Material3.DayNight.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.TermuxPlus.BottomSheet</item>
+        <item name="colorPrimary">@color/termuxplus_accent</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSurface">@color/termuxplus_sheet_bg</item>
+        <item name="colorOnSurface">@color/termuxplus_text_primary</item>
+        <item name="android:backgroundDimAmount">0.55</item>
+        <item name="android:navigationBarColor">@color/termuxplus_sheet_bg</item>
+        <item name="enableEdgeToEdge">false</item>
     </style>
 
 </resources>

@@ -23,25 +23,69 @@
             android:layout_above="@+id/terminal_toolbar_view_pager"
             android:orientation="vertical">
 
-            <HorizontalScrollView
-                android:id="@+id/terminal_sessions_tab_strip_scroll"
+            <!-- Modern header bar: session pills + action buttons -->
+            <LinearLayout
+                android:id="@+id/tp_header_bar"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/termuxplus_session_tab_strip_height"
-                android:background="@color/termuxplus_surface"
-                android:clipToPadding="false"
-                android:fillViewport="false"
+                android:layout_height="@dimen/termuxplus_header_height"
+                android:background="@drawable/tp_header_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:scrollbars="none">
+                android:paddingEnd="4dp">
 
-                <LinearLayout
-                    android:id="@+id/terminal_sessions_tab_strip"
-                    android:layout_width="wrap_content"
+                <HorizontalScrollView
+                    android:id="@+id/terminal_sessions_tab_strip_scroll"
+                    android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal" />
+                    android:layout_weight="1"
+                    android:clipToPadding="false"
+                    android:fillViewport="false"
+                    android:scrollbars="none">
 
-            </HorizontalScrollView>
+                    <LinearLayout
+                        android:id="@+id/terminal_sessions_tab_strip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal" />
+
+                </HorizontalScrollView>
+
+                <ImageButton
+                    android:id="@+id/tp_btn_overview"
+                    android:layout_width="@dimen/termuxplus_header_button_size"
+                    android:layout_height="@dimen/termuxplus_header_button_size"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/tp_header_button_bg"
+                    android:contentDescription="@string/termuxplus_tab_overview"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_tp_grid" />
+
+                <ImageButton
+                    android:id="@+id/tp_btn_fullscreen"
+                    android:layout_width="@dimen/termuxplus_header_button_size"
+                    android:layout_height="@dimen/termuxplus_header_button_size"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/tp_header_button_bg"
+                    android:contentDescription="@string/termuxplus_fullscreen"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_tp_fullscreen" />
+
+                <ImageButton
+                    android:id="@+id/tp_btn_menu"
+                    android:layout_width="@dimen/termuxplus_header_button_size"
+                    android:layout_height="@dimen/termuxplus_header_button_size"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/tp_header_button_bg"
+                    android:contentDescription="@string/termuxplus_menu"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_tp_menu" />
+
+            </LinearLayout>
 
             <com.termux.view.TerminalView
                 android:id="@+id/terminal_view"
@@ -63,6 +107,23 @@
             android:layout_height="@dimen/termuxplus_terminal_toolbar_row_height"
             android:background="@color/termuxplus_surface"
             android:layout_alignParentBottom="true" />
+
+        <!-- Floating icon to leave fullscreen / focus mode -->
+        <ImageButton
+            android:id="@+id/tp_fullscreen_restore"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_alignParentTop="true"
+            android:layout_alignParentEnd="true"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/tp_restore_chip_bg"
+            android:contentDescription="@string/termuxplus_exit_fullscreen"
+            android:elevation="10dp"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_tp_fullscreen_exit"
+            android:visibility="gone" />
 
     </RelativeLayout>
 

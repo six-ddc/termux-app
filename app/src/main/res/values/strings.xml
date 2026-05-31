@@ -88,6 +88,23 @@
     <string name="termuxplus_snippets_disabled">Snippets are disabled.</string>
     <string name="termuxplus_no_snippets">No snippets found.</string>
 
+    <!-- Modern header bar / action center / tab overview -->
+    <string name="termuxplus_menu">Menu</string>
+    <string name="termuxplus_tab_overview">Sessions</string>
+    <string name="termuxplus_fullscreen">Fullscreen</string>
+    <string name="termuxplus_exit_fullscreen">Exit fullscreen</string>
+    <string name="termuxplus_actions_title">Terminal</string>
+    <string name="termuxplus_section_terminal">Terminal</string>
+    <string name="termuxplus_section_view">View &amp; appearance</string>
+    <string name="termuxplus_section_tools">Tools</string>
+    <string name="termuxplus_section_app">App</string>
+    <string name="termuxplus_overview_title">Sessions</string>
+    <string name="termuxplus_overview_new">New session</string>
+    <string name="termuxplus_overview_empty">No output yet</string>
+    <string name="termuxplus_session_running">Running</string>
+    <string name="termuxplus_session_exited">Exited</string>
+    <string name="termuxplus_rename_session">Rename session</string>
+
 
 
     <!-- Terminal Popup -->

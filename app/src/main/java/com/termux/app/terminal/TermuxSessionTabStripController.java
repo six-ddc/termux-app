@@ -22,10 +22,10 @@ import java.util.List;
 
 public class TermuxSessionTabStripController {
 
-    private static final int TAB_HEIGHT_DP = 24;
+    private static final int TAB_HEIGHT_DP = 30;
     private static final int TAB_TITLE_WIDTH_DP = 92;
     private static final int TAB_MIN_WIDTH_DP = 92;
-    private static final int CLOSE_BUTTON_WIDTH_DP = 24;
+    private static final int CLOSE_BUTTON_WIDTH_DP = 26;
 
     private final TermuxActivity mActivity;
     private final LinearLayout mTabStrip;
@@ -76,7 +76,7 @@ public class TermuxSessionTabStripController {
         tab.setActivated(selected);
         tab.setSelected(selected);
         tab.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_tab_bg));
-        tab.setPadding(dp(8), 0, dp(1), 0);
+        tab.setPadding(dp(11), 0, dp(2), 0);
         tab.setMinimumWidth(dp(TAB_MIN_WIDTH_DP));
         tab.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().setCurrentSession(session));
         tab.setOnLongClickListener(v -> {
@@ -85,7 +85,7 @@ public class TermuxSessionTabStripController {
         });
         LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, dp(TAB_HEIGHT_DP));
-        tabParams.setMargins(0, dp(3), dp(4), dp(3));
+        tabParams.setMargins(0, 0, dp(6), 0);
         tab.setLayoutParams(tabParams);
 
         TextView title = new TextView(mActivity);
@@ -156,8 +156,8 @@ public class TermuxSessionTabStripController {
             mActivity.showCreateNamedSessionDialog();
             return true;
         });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(30), dp(TAB_HEIGHT_DP));
-        params.setMargins(0, dp(3), dp(4), dp(3));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(36), dp(TAB_HEIGHT_DP));
+        params.setMargins(0, 0, dp(4), 0);
         add.setLayoutParams(params);
         return add;
     }

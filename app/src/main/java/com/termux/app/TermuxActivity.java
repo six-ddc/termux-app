@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -44,6 +45,8 @@ import com.termux.app.activities.TermuxPlusSnippetsActivity;
 import com.termux.shared.termux.crash.TermuxCrashUtils;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.app.terminal.TermuxSessionTabStripController;
+import com.termux.app.terminal.TermuxPlusActionSheet;
+import com.termux.app.terminal.TermuxPlusTabOverview;
 import com.termux.app.terminal.io.TerminalToolbarViewPager;
 import com.termux.app.terminal.TermuxTerminalViewClient;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
@@ -62,6 +65,9 @@ import com.termux.view.TerminalViewClient;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
@@ -178,6 +184,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private final Handler mFloatingTerminalStopHandler = new Handler(Looper.getMainLooper());
     private boolean mSuppressFloatingTerminalOnStop;
 
+    /** Whether the immersive fullscreen / focus mode is currently active. */
+    private boolean mIsFullscreen;
+
 
     private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
     private static final int CONTEXT_MENU_SHARE_TRANSCRIPT_ID = 1;
@@ -225,6 +234,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_termux);
+        getWindow().setNavigationBarColor(getResources().getColor(R.color.termuxplus_surface));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            getWindow().setNavigationBarContrastEnforced(false);
 
         // Load termux shared preferences
         // This will also fail if TermuxConstants.TERMUX_PACKAGE_NAME does not equal applicationId
@@ -255,6 +267,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setTermuxTerminalViewAndClients();
 
         setTerminalToolbarView(savedInstanceState);
+
+        setupHeaderBar();
 
         registerForContextMenu(mTerminalView);
 
@@ -557,9 +571,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (terminalToolbarViewPager == null) return;
 
         ViewGroup.LayoutParams layoutParams = terminalToolbarViewPager.getLayoutParams();
-        int actionsHeight = mTermuxTerminalExtraKeys != null && mTermuxTerminalExtraKeys.getExtraKeysPageCount() > 0
-            ? getResources().getDimensionPixelSize(R.dimen.termuxplus_terminal_toolbar_actions_height)
-            : 0;
+        int actionsHeight = 0;
         int extraKeysRows = mTermuxTerminalExtraKeys == null ? 0 : mTermuxTerminalExtraKeys.getMaxExtraKeysRows();
         layoutParams.height = Math.round((actionsHeight + (mTerminalToolbarDefaultHeight * extraKeysRows)) *
             mProperties.getTerminalToolbarHeightScaleFactor());
@@ -606,6 +618,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @SuppressLint({"RtlHardcoded", "MissingSuperCall"})
     @Override
     public void onBackPressed() {
+        if (mIsFullscreen) {
+            exitFullscreen();
+            return;
+        }
         finishActivityIfNotFinishing();
     }
 
@@ -669,10 +685,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_REPORT_ID, Menu.NONE, R.string.action_report_issue);
     }
 
-    /** Hook system menu to show context menu instead. */
+    /** Hook the hardware/system menu key to open the modern action sheet. */
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        mTerminalView.showContextMenu();
+        showActionSheet();
         return false;
     }
 
@@ -785,6 +801,199 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTerminalView.setKeepScreenOn(true);
             mPreferences.setKeepScreenOn(true);
         }
+    }
+
+
+
+    // ============================================================= //
+    //  TermuxPlus modern UI: header bar, action sheet, fullscreen,  //
+    //  and tab overview. These replace the legacy ContextMenu flow. //
+    // ============================================================= //
+
+    private void setupHeaderBar() {
+        View overview = findViewById(R.id.tp_btn_overview);
+        View fullscreen = findViewById(R.id.tp_btn_fullscreen);
+        View menu = findViewById(R.id.tp_btn_menu);
+        View restore = findViewById(R.id.tp_fullscreen_restore);
+        if (overview != null) overview.setOnClickListener(v -> showTabOverview());
+        if (fullscreen != null) fullscreen.setOnClickListener(v -> toggleFullscreen());
+        if (menu != null) menu.setOnClickListener(v -> showActionSheet());
+        if (restore != null) restore.setOnClickListener(v -> exitFullscreen());
+    }
+
+    public void showActionSheet() {
+        if (getCurrentSession() == null) return;
+        try {
+            new TermuxPlusActionSheet(this).show();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to show action sheet", e);
+        }
+    }
+
+    public void showTabOverview() {
+        if (mTermuxService == null || getCurrentSession() == null) return;
+        try {
+            new TermuxPlusTabOverview(this).show();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to show tab overview", e);
+        }
+    }
+
+    public boolean isFullscreen() {
+        return mIsFullscreen;
+    }
+
+    public void toggleFullscreen() {
+        setFullscreen(!mIsFullscreen);
+    }
+
+    public void exitFullscreen() {
+        if (mIsFullscreen) setFullscreen(false);
+    }
+
+    private void setFullscreen(boolean fullscreen) {
+        mIsFullscreen = fullscreen;
+
+        View header = findViewById(R.id.tp_header_bar);
+        View restore = findViewById(R.id.tp_fullscreen_restore);
+        ViewPager toolbar = getTerminalToolbarViewPager();
+
+        if (fullscreen)
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        else
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        if (fullscreen) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+                | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        } else {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            getWindow().setNavigationBarColor(getResources().getColor(R.color.termuxplus_surface));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                getWindow().setNavigationBarContrastEnforced(false);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams attrs = getWindow().getAttributes();
+            attrs.layoutInDisplayCutoutMode = fullscreen
+                ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            getWindow().setAttributes(attrs);
+        }
+
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), !fullscreen);
+        if (mTermuxActivityRootView != null) {
+            mTermuxActivityRootView.setFitsSystemWindows(!fullscreen);
+            if (fullscreen)
+                mTermuxActivityRootView.setPadding(0, 0, 0, 0);
+            mTermuxActivityRootView.requestApplyInsets();
+        }
+
+        if (header != null) header.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (restore != null) restore.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
+        if (mTermuxActivityBottomSpaceView != null)
+            mTermuxActivityBottomSpaceView.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (toolbar != null)
+            toolbar.setVisibility(fullscreen ? View.GONE
+                : (mPreferences.shouldShowTerminalToolbar() ? View.VISIBLE : View.GONE));
+
+        View decorView = getWindow().getDecorView();
+        decorView.setSystemUiVisibility(fullscreen
+            ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            : View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+
+        WindowInsetsControllerCompat controller =
+            WindowCompat.getInsetsController(getWindow(), decorView);
+        if (controller != null) {
+            if (fullscreen) {
+                controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                controller.hide(WindowInsetsCompat.Type.systemBars());
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars());
+            }
+        }
+
+        if (mTerminalView != null) mTerminalView.requestFocus();
+    }
+
+    // ---- Action-sheet callbacks (mirror the legacy context menu items) ----
+
+    public boolean tpHasSelectedText() {
+        return mTerminalView != null && !DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText());
+    }
+
+    public boolean tpIsAutoFillEnabled() {
+        return mTerminalView != null && mTerminalView.isAutoFillEnabled();
+    }
+
+    public boolean tpIsKeepScreenOn() {
+        return mPreferences.shouldKeepScreenOn();
+    }
+
+    public void tpSelectUrl() {
+        if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.showUrlSelection();
+    }
+
+    public void tpShareTranscript() {
+        if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.shareSessionTranscript();
+    }
+
+    public void tpShareSelectedText() {
+        if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.shareSelectedText();
+    }
+
+    public void tpAutofillUsername() {
+        if (mTerminalView != null) mTerminalView.requestAutoFillUsername();
+    }
+
+    public void tpAutofillPassword() {
+        if (mTerminalView != null) mTerminalView.requestAutoFillPassword();
+    }
+
+    public void tpResetTerminal() {
+        onResetTerminalSession(getCurrentSession());
+    }
+
+    public void tpKillProcess() {
+        showKillSessionDialog(getCurrentSession());
+    }
+
+    public void tpStyle() {
+        showStylingDialog();
+    }
+
+    public void tpToggleKeepScreenOn() {
+        toggleKeepScreenOn();
+    }
+
+    public void tpFloatingTerminal() {
+        if (!PermissionUtils.checkDisplayOverOtherAppsPermission(this)) {
+            PermissionUtils.requestDisplayOverOtherAppsPermission(this);
+        } else if (mTermuxService != null) {
+            mTermuxService.showFloatingTerminalExpandedIfAllowed();
+        }
+    }
+
+    public void tpSnippets() {
+        TermuxPlusSnippetsActivity.start(this);
+    }
+
+    public void tpHelp() {
+        ActivityUtils.startActivity(this, new Intent(this, HelpActivity.class));
+    }
+
+    public void tpSettings() {
+        ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
+    }
+
+    public void tpReport() {
+        if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.reportIssueFromTranscript();
     }
 
 

@@ -23,12 +23,14 @@ import java.util.List;
 
 public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
 
-    private static final String TERMUXPLUS_SYMBOL_EXTRA_KEYS =
-        "[[\"~\",\"`\",\"|\",\"\\\\\",\"$\",\"&\",\"*\",\"(\",\")\"]," +
-            "[\"=\",\"+\",\"_\",\"-\",\"[\",\"]\",\"{\",\"}\",\";\"]]";
-
     private static final String KEY_SNIPPETS = "SNIPPETS";
     private static final String KEY_SNIPPETS_MANAGE = "SNIPPETS_MANAGE";
+    private static final String TERMUXPLUS_DEFAULT_EXTRA_KEYS =
+        "[[\"LEFT\",\"UP\",\"DOWN\",\"RIGHT\",{\"key\":\"SNIPPETS\",\"display\":\"{}\"},\"PASTE\",\"KEYBOARD\",\"HOME\",\"PGUP\",\"END\",\"'\",\":\",\";\",\"!\",\"^\",\"%\",\"=\",\"`\",\"{\",\"}\",\"[\",\"]\",\"F1\",\"F2\",\"F3\",\"F4\",{\"macro\":\"CTRL _\",\"display\":\"^_\"},{\"macro\":\"CTRL W\",\"display\":\"^W\"},{\"macro\":\"CTRL R\",\"display\":\"^R\"},{\"macro\":\"CTRL X CTRL X\",\"display\":\"^XX\"},{\"macro\":\"CTRL C\",\"display\":\"^C\"},{\"macro\":\"CTRL L\",\"display\":\"^L\"}]," +
+            "[{\"macro\":\"SHIFT TAB\",\"display\":\"S-TAB\"},\"CTRL\",\"ESC\",\"/\",\"ALT\",\"TAB\",\"INS\",\"DEL\",\"PGDN\",\"|\",\"\\\\\",\"?\",\"-\",\"~\",\"@\",\"$\",\"*\",\"<\",\">\",\"(\",\")\",\"F5\",\"F6\",\"F7\",\"F8\",\"F9\",\"F10\",\"F11\",\"F12\",{\"macro\":\"CTRL S\",\"display\":\"^S\"},{\"macro\":\"CTRL Z\",\"display\":\"^Z\"},{\"macro\":\"CTRL X\",\"display\":\"^X\"},{\"macro\":\"CTRL G\",\"display\":\"^G\"},{\"macro\":\"CTRL N\",\"display\":\"^N\"},{\"macro\":\"CTRL P\",\"display\":\"^P\"}]]";
+    private static final String FALLBACK_EXTRA_KEYS =
+        "[[\"ESC\",\"/\",{\"key\":\"-\",\"popup\":\"|\"},\"HOME\",\"UP\",\"END\",\"PGUP\"]," +
+            "[\"TAB\",\"CTRL\",\"ALT\",\"LEFT\",\"DOWN\",\"RIGHT\",\"PGDN\"]]";
 
     private final List<ExtraKeysInfo> mExtraKeysInfos = new ArrayList<>();
     private int mCurrentExtraKeysPage;
@@ -58,12 +60,15 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
     private void setExtraKeys() {
         mExtraKeysInfos.clear();
 
+        String extraKeysStyle = TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS_STYLE;
         try {
             // The mMap stores the extra key and style string values while loading properties
             // Check {@link #getExtraKeysInternalPropertyValueFromValue(String)} and
             // {@link #getExtraKeysStyleInternalPropertyValueFromValue(String)}
             String extrakeys = (String) mActivity.getProperties().getInternalPropertyValue(TermuxPropertyConstants.KEY_EXTRA_KEYS, true);
-            String extraKeysStyle = (String) mActivity.getProperties().getInternalPropertyValue(TermuxPropertyConstants.KEY_EXTRA_KEYS_STYLE, true);
+            extraKeysStyle = (String) mActivity.getProperties().getInternalPropertyValue(TermuxPropertyConstants.KEY_EXTRA_KEYS_STYLE, true);
+            if (extrakeys == null || extrakeys.trim().isEmpty() || TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS.equals(extrakeys))
+                extrakeys = TERMUXPLUS_DEFAULT_EXTRA_KEYS;
 
             ExtraKeysConstants.ExtraKeyDisplayMap extraKeyDisplayMap = ExtraKeysInfo.getCharDisplayMapForStyle(extraKeysStyle);
             if (ExtraKeysConstants.EXTRA_KEY_DISPLAY_MAPS.DEFAULT_CHAR_DISPLAY.equals(extraKeyDisplayMap) && !TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS_STYLE.equals(extraKeysStyle)) {
@@ -72,17 +77,20 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
             }
 
             mExtraKeysInfos.add(new ExtraKeysInfo(extrakeys, extraKeysStyle, ExtraKeysConstants.CONTROL_CHARS_ALIASES));
-            mExtraKeysInfos.add(new ExtraKeysInfo(TERMUXPLUS_SYMBOL_EXTRA_KEYS, extraKeysStyle, ExtraKeysConstants.CONTROL_CHARS_ALIASES));
-        } catch (JSONException e) {
+        } catch (Exception e) {
             Logger.showToast(mActivity, "Could not load and set the \"" + TermuxPropertyConstants.KEY_EXTRA_KEYS + "\" property from the properties file: " + e.toString(), true);
             Logger.logStackTraceWithMessage(LOG_TAG, "Could not load and set the \"" + TermuxPropertyConstants.KEY_EXTRA_KEYS + "\" property from the properties file: ", e);
 
             try {
-                mExtraKeysInfos.add(new ExtraKeysInfo(TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS, TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS_STYLE, ExtraKeysConstants.CONTROL_CHARS_ALIASES));
-                mExtraKeysInfos.add(new ExtraKeysInfo(TERMUXPLUS_SYMBOL_EXTRA_KEYS, TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS_STYLE, ExtraKeysConstants.CONTROL_CHARS_ALIASES));
-            } catch (JSONException e2) {
+                mExtraKeysInfos.add(new ExtraKeysInfo(TERMUXPLUS_DEFAULT_EXTRA_KEYS, extraKeysStyle, ExtraKeysConstants.CONTROL_CHARS_ALIASES));
+            } catch (Exception e2) {
                 Logger.showToast(mActivity, "Can't create default extra keys",true);
                 Logger.logStackTraceWithMessage(LOG_TAG, "Could create default extra keys: ", e2);
+                try {
+                    mExtraKeysInfos.add(new ExtraKeysInfo(FALLBACK_EXTRA_KEYS, TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS_STYLE, ExtraKeysConstants.CONTROL_CHARS_ALIASES));
+                } catch (JSONException e3) {
+                    Logger.logStackTraceWithMessage(LOG_TAG, "Could create fallback extra keys: ", e3);
+                }
             }
         }
 

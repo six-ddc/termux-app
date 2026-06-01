@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<com.termux.app.terminal.io.TermuxPlusExtraKeysScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/terminal_toolbar_extra_keys_scroll"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/tp_terminal_toolbar_bg"
-    android:orientation="vertical">
+    android:fillViewport="false"
+    android:overScrollMode="ifContentScrolls"
+    android:scrollbars="none">
 
     <com.termux.shared.termux.extrakeys.ExtraKeysView
         android:id="@+id/terminal_toolbar_extra_keys"
         style="?android:attr/buttonBarStyle"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:orientation="horizontal"
         android:paddingStart="3dp"
@@ -16,4 +19,4 @@
         android:paddingTop="1dp"
         android:paddingBottom="1dp" />
 
-</LinearLayout>
+</com.termux.app.terminal.io.TermuxPlusExtraKeysScrollView>

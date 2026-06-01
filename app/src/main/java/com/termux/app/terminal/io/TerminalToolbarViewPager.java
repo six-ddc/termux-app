@@ -27,6 +27,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.activities.TermuxPlusSnippetsActivity;
+import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
 import com.termux.terminal.TerminalSession;
 
@@ -38,6 +39,8 @@ public class TerminalToolbarViewPager {
 
     public static final String MODE_NAME_KEYS = "keys";
     private static final String EXTRA_KEYS_VIEW_TAG_PREFIX = "termuxplus_extra_keys_page_";
+    private static final int EXTRA_KEY_COLUMN_WIDTH_DP = 56;
+    private static final int EXTRA_KEY_BUTTON_WIDTH_DP = 52;
 
     public static class PageAdapter extends PagerAdapter {
 
@@ -90,20 +93,38 @@ public class TerminalToolbarViewPager {
             extraKeysView.setTag(getExtraKeysViewTag(position));
             if (position == mActivity.getTerminalToolbarViewPager().getCurrentItem())
                 mActivity.setExtraKeysView(extraKeysView);
-            extraKeysView.setOnHorizontalSwipeListener(direction -> {
-                TermuxTerminalExtraKeys extraKeys = mActivity.getTermuxTerminalExtraKeys();
-                ViewPager toolbarPager = mActivity.getTerminalToolbarViewPager();
-                if (extraKeys == null || toolbarPager == null) return;
-                if (extraKeys.switchExtraKeysPage(direction))
-                    toolbarPager.setCurrentItem(extraKeys.getCurrentExtraKeysPage(), true);
-            });
-            extraKeysView.reload(mActivity.getTermuxTerminalExtraKeys().getExtraKeysInfo(position),
-                mActivity.getTerminalToolbarDefaultHeight());
+            ExtraKeysInfo extraKeysInfo = mActivity.getTermuxTerminalExtraKeys().getExtraKeysInfo(position);
+            configureExtraKeysStrip(layout, extraKeysView, extraKeysInfo);
+            extraKeysView.reload(extraKeysInfo, mActivity.getTerminalToolbarDefaultHeight());
 
             if (mActivity.getProperties().isUsingFullScreen() && mActivity.getProperties().isUsingFullScreenWorkAround())
                 FullScreenWorkAround.apply(mActivity);
 
             return layout;
+        }
+
+        private void configureExtraKeysStrip(View layout, ExtraKeysView extraKeysView, ExtraKeysInfo extraKeysInfo) {
+            TermuxPlusExtraKeysScrollView scrollView = layout.findViewById(R.id.terminal_toolbar_extra_keys_scroll);
+            if (scrollView == null || extraKeysView == null) return;
+
+            int columns = getColumns(extraKeysInfo);
+            int columnWidth = dp(EXTRA_KEY_COLUMN_WIDTH_DP);
+            int targetWidth = Math.max(
+                mActivity.getResources().getDisplayMetrics().widthPixels,
+                columns * columnWidth + dp(6));
+
+            ViewGroup.LayoutParams params = extraKeysView.getLayoutParams();
+            params.width = targetWidth;
+            extraKeysView.setLayoutParams(params);
+            extraKeysView.setFixedButtonWidthPx(dp(EXTRA_KEY_BUTTON_WIDTH_DP));
+            scrollView.setSnapColumnWidth(columnWidth);
+            scrollView.post(scrollView::snapToNearestColumn);
+        }
+
+        private int getColumns(ExtraKeysInfo extraKeysInfo) {
+            if (extraKeysInfo == null || extraKeysInfo.getMatrix() == null)
+                return 1;
+            return Math.max(1, ExtraKeysView.maximumLength(extraKeysInfo.getMatrix()));
         }
 
         private void renderSnippets(EditText searchInput, LinearLayout snippetsList) {

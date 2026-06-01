@@ -188,6 +188,9 @@ public final class ExtraKeysView extends GridLayout {
      * {@link #DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR}. */
     protected int mButtonActiveBackgroundColor;
 
+    /** Fixed button width in pixels. If 0, buttons share the available grid width by weight. */
+    protected int mFixedButtonWidthPx;
+
     /** Defines whether text for the extra keys button should be all capitalized automatically. */
     protected boolean mButtonTextAllCaps = true;
 
@@ -302,6 +305,11 @@ public final class ExtraKeysView extends GridLayout {
         mButtonActiveTextColor = buttonActiveTextColor;
         mButtonBackgroundColor = buttonBackgroundColor;
         mButtonActiveBackgroundColor = buttonActiveBackgroundColor;
+    }
+
+    /** Set a fixed button width in pixels. Pass 0 to use weighted columns. */
+    public void setFixedButtonWidthPx(int fixedButtonWidthPx) {
+        mFixedButtonWidthPx = Math.max(0, fixedButtonWidthPx);
     }
 
 
@@ -467,7 +475,7 @@ public final class ExtraKeysView extends GridLayout {
                         case MotionEvent.ACTION_MOVE:
                             float dx = event.getRawX() - mTouchDownRawX;
                             float dy = event.getRawY() - mTouchDownRawY;
-                            if (!mHorizontalSwipeConsumed && isHorizontalSwipe(dx, dy)) {
+                            if (mOnHorizontalSwipeListener != null && !mHorizontalSwipeConsumed && isHorizontalSwipe(dx, dy)) {
                                 mHorizontalSwipeConsumed = true;
                                 stopScheduledExecutors();
                                 dismissPopup();
@@ -527,14 +535,16 @@ public final class ExtraKeysView extends GridLayout {
                 });
 
                 LayoutParams param = new GridLayout.LayoutParams();
-                param.width = 0;
+                param.width = mFixedButtonWidthPx > 0 ? mFixedButtonWidthPx : 0;
                 if(Build.VERSION.SDK_INT == Build.VERSION_CODES.LOLLIPOP) {
                    param.height = (int)(heightPx + 0.5);
                 } else {
                     param.height = 0;
                 }
                 param.setMargins(dp(2), dp(1), dp(2), dp(1));
-                param.columnSpec = GridLayout.spec(col, GridLayout.FILL, 1.f);
+                param.columnSpec = mFixedButtonWidthPx > 0
+                    ? GridLayout.spec(col, GridLayout.FILL)
+                    : GridLayout.spec(col, GridLayout.FILL, 1.f);
                 param.rowSpec = GridLayout.spec(row, GridLayout.FILL, 1.f);
                 button.setLayoutParams(param);
 

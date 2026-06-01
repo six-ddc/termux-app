@@ -50,6 +50,7 @@ public final class TerminalView extends GLSurfaceView {
 
     /** Log terminal view key and IME events. */
     private static boolean TERMINAL_VIEW_KEY_LOGGING_ENABLED = false;
+    private static final int RENDER_EDGE_PADDING_DP = 2;
 
     /** The currently displayed terminal session, whose engine is {@link #mTerminalEngine}. */
     public TerminalSession mTermSession;
@@ -615,7 +616,7 @@ public final class TerminalView extends GLSurfaceView {
      */
     public int[] getColumnAndRow(MotionEvent event, boolean relativeToScroll) {
         int column = (int) (event.getX() / mRenderer.mFontWidth);
-        int row = (int) (event.getY() / mRenderer.mFontLineSpacing) + getRenderRowOffset();
+        int row = (int) ((event.getY() - getRenderTopInset()) / mRenderer.mFontLineSpacing) + getRenderRowOffset();
         if (relativeToScroll) {
             row += mTopRow;
         }
@@ -702,7 +703,10 @@ public final class TerminalView extends GLSurfaceView {
                     ClipData.Item clipItem = clipData.getItemAt(0);
                     if (clipItem != null) {
                         CharSequence text = clipItem.coerceToText(getContext());
-                        if (!TextUtils.isEmpty(text)) mTerminalEngine.paste(text.toString());
+                        if (!TextUtils.isEmpty(text)) {
+                            scrollToBottomForInput();
+                            mTerminalEngine.paste(text.toString());
+                        }
                     }
                 }
             } else if (mTerminalEngine.isMouseTrackingActive()) { // BUTTON_PRIMARY.
@@ -931,6 +935,7 @@ public final class TerminalView extends GLSurfaceView {
 
         if (mTermSession == null) return;
 
+        scrollToBottomForInput();
         showCursorAndRequestRender();
 
         final boolean controlDown = controlDownFromEvent || mClient.readControlKey();
@@ -1012,6 +1017,7 @@ public final class TerminalView extends GLSurfaceView {
 
     /** Input the specified keyCode if applicable and return if the input was consumed. */
     public boolean handleKeyCode(int keyCode, int keyMod) {
+        scrollToBottomForInput();
         showCursorAndRequestRender();
 
         if (handleKeyCodeAction(keyCode, keyMod))
@@ -1106,7 +1112,7 @@ public final class TerminalView extends GLSurfaceView {
 
         // Set to 80 and 24 if you want to enable vttest.
         int newColumns = Math.max(4, (int) (viewWidth / mRenderer.mFontWidth));
-        int newRows = Math.max(4, viewHeight / mRenderer.mFontLineSpacing);
+        int newRows = Math.max(4, getRenderAvailableHeight() / mRenderer.mFontLineSpacing);
 
         if (mTerminalEngine == null || (newColumns != mTerminalEngine.getColumns() || newRows != mTerminalEngine.getRows())) {
             mTermSession.updateSize(newColumns, newRows, (int) mRenderer.getFontWidth(), mRenderer.getFontLineSpacing());
@@ -1154,7 +1160,7 @@ public final class TerminalView extends GLSurfaceView {
     }
 
     public int getCursorY(float y) {
-        return (int) ((y / mRenderer.mFontLineSpacing) + getRenderRowOffset() + mTopRow);
+        return (int) (((y - getRenderTopInset()) / mRenderer.mFontLineSpacing) + getRenderRowOffset() + mTopRow);
     }
 
     public int getPointX(int cx) {
@@ -1165,7 +1171,20 @@ public final class TerminalView extends GLSurfaceView {
     }
 
     public int getPointY(int cy) {
-        return Math.round((cy - mTopRow - getRenderRowOffset()) * mRenderer.mFontLineSpacing);
+        return Math.round(getRenderTopInset() + ((cy - mTopRow - getRenderRowOffset()) * mRenderer.mFontLineSpacing));
+    }
+
+    public int getRenderTopInset() {
+        if (mTerminalEngine == null || mRenderer == null)
+            return 0;
+
+        int edgePadding = getRenderEdgePadding();
+        int availableHeight = getRenderAvailableHeight();
+        int renderedHeight = mTerminalEngine.getRows() * mRenderer.mFontLineSpacing;
+        if (renderedHeight > availableHeight)
+            return 0;
+
+        return edgePadding + Math.max(0, (availableHeight - renderedHeight) / 2);
     }
 
     int getRenderRowOffset() {
@@ -1173,12 +1192,20 @@ public final class TerminalView extends GLSurfaceView {
             return 0;
 
         int lineSpacing = Math.max(1, mRenderer.mFontLineSpacing);
-        int visibleRows = Math.max(1, (int) Math.ceil(getHeight() / (float) lineSpacing));
+        int visibleRows = Math.max(1, (int) Math.ceil(getRenderAvailableHeight() / (float) lineSpacing));
         int maxOffset = Math.max(0, mTerminalEngine.getRows() - visibleRows);
         int anchorRow = findLastRenderedContentRow();
         if (anchorRow < 0)
             anchorRow = mTerminalEngine.getCursorRow();
         return Math.max(0, Math.min(maxOffset, anchorRow - visibleRows + 1));
+    }
+
+    private int getRenderAvailableHeight() {
+        return Math.max(1, getHeight() - (2 * getRenderEdgePadding()));
+    }
+
+    private int getRenderEdgePadding() {
+        return Math.round(RENDER_EDGE_PADDING_DP * getResources().getDisplayMetrics().density);
     }
 
     private int findLastRenderedContentRow() {
@@ -1248,6 +1275,29 @@ public final class TerminalView extends GLSurfaceView {
         }
     }
 
+    public boolean isScrolledToBottom() {
+        return mTerminalEngine == null || mTopRow == 0;
+    }
+
+    public void scrollToBottomAndRender() {
+        scrollToBottom();
+        requestTerminalRender();
+    }
+
+    private void scrollToBottomForInput() {
+        if (mTerminalEngine == null || mTerminalEngine.isAutoScrollDisabled())
+            return;
+        scrollToBottom();
+    }
+
+    private void scrollToBottom() {
+        if (mTerminalEngine == null)
+            return;
+        mTerminalEngine.scrollViewportToBottom();
+        mTopRow = mTerminalEngine.getViewportTopRow();
+        scrollTo(0, 0);
+    }
+
 
 
     /**
@@ -1256,8 +1306,10 @@ public final class TerminalView extends GLSurfaceView {
     @RequiresApi(api = Build.VERSION_CODES.O)
     @Override
     public void autofill(AutofillValue value) {
-        if (value.isText() && mTerminalEngine != null)
+        if (value.isText() && mTerminalEngine != null) {
+            scrollToBottomForInput();
             mTerminalEngine.paste(value.getTextValue().toString());
+        }
 
         resetAutoFill();
     }

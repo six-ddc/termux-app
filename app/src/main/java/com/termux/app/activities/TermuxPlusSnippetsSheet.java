@@ -1,13 +1,7 @@
 package com.termux.app.activities;
 
 import android.app.AlertDialog;
-import android.content.Context;
-import android.content.Intent;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
-import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -17,7 +11,6 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -37,8 +30,6 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.termux.R;
 import com.termux.app.terminal.io.TermuxPlusSnippet;
 import com.termux.app.terminal.io.TermuxPlusSnippetRepository;
-import com.termux.shared.activity.media.AppCompatActivityUtils;
-import com.termux.shared.theme.NightMode;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -46,62 +37,32 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-public class TermuxPlusSnippetsActivity extends AppCompatActivity {
+public class TermuxPlusSnippetsSheet {
 
+    private final AppCompatActivity mActivity;
+    private BottomSheetDialog mDialog;
     private LinearLayout mSnippetList;
     private EditText mSearchInput;
-    private BottomSheetDialog mDialog;
+    private String mState = "list";
 
-    public static void start(Context context) {
-        if (context == null) return;
-        if (context instanceof AppCompatActivity) {
-            TermuxPlusSnippetsSheet.show((AppCompatActivity) context);
-            return;
-        }
-        context.startActivity(new Intent(context, TermuxPlusSnippetsActivity.class));
+    public static void show(AppCompatActivity activity) {
+        if (activity == null || activity.isFinishing()) return;
+        new TermuxPlusSnippetsSheet(activity).showSnippetList();
     }
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        AppCompatActivityUtils.setNightMode(this, NightMode.getAppNightMode().getName(), true);
-        configureSheetWindow();
-        showSnippetList();
-    }
-
-    @Override
-    protected void onDestroy() {
-        if (mDialog != null) {
-            mDialog.setOnDismissListener(null);
-            if (mDialog.isShowing()) mDialog.dismiss();
-            mDialog = null;
-        }
-        super.onDestroy();
-    }
-
-    @Override
-    public void onBackPressed() {
-        Object tag = getWindow().getDecorView().getTag();
-        if ("editor".equals(tag)) {
-            showSnippetList();
-            return;
-        }
-        if (mDialog != null && mDialog.isShowing()) {
-            mDialog.dismiss();
-            return;
-        }
-        super.onBackPressed();
+    private TermuxPlusSnippetsSheet(AppCompatActivity activity) {
+        mActivity = activity;
     }
 
     private void showSnippetList() {
-        getWindow().getDecorView().setTag("list");
+        mState = "list";
 
         LinearLayout root = createRootLayout();
-        root.addView(createTopBar(getString(R.string.termuxplus_snippets_title),
-            getString(R.string.termuxplus_back), v -> finish(),
-            getString(R.string.termuxplus_add), v -> showSnippetEditor(null)));
+        root.addView(createTopBar(mActivity.getString(R.string.termuxplus_snippets_title),
+            mActivity.getString(R.string.termuxplus_back), v -> dismiss(),
+            mActivity.getString(R.string.termuxplus_add), v -> showSnippetEditor(null)));
 
-        mSearchInput = new EditText(this);
+        mSearchInput = new EditText(mActivity);
         mSearchInput.setHint(R.string.termuxplus_snippet_search_hint);
         mSearchInput.setSingleLine(true);
         mSearchInput.setInputType(InputType.TYPE_CLASS_TEXT);
@@ -111,13 +72,12 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         searchParams.setMargins(dp(8), dp(6), dp(8), dp(6));
         root.addView(mSearchInput, searchParams);
 
-        ScrollView scrollView = new ScrollView(this);
+        ScrollView scrollView = new ScrollView(mActivity);
         scrollView.setFillViewport(false);
         scrollView.setClipToPadding(false);
         scrollView.setPadding(0, 0, 0, dp(8));
-        scrollView.setBackgroundColor(Color.TRANSPARENT);
 
-        mSnippetList = new LinearLayout(this);
+        mSnippetList = new LinearLayout(mActivity);
         mSnippetList.setOrientation(LinearLayout.VERTICAL);
         scrollView.addView(mSnippetList, new ScrollView.LayoutParams(
             ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
@@ -141,7 +101,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
 
         String query = mSearchInput == null ? "" : mSearchInput.getText().toString();
         int count = 0;
-        for (TermuxPlusSnippet snippet : TermuxPlusSnippetRepository.getSnippets(this)) {
+        for (TermuxPlusSnippet snippet : TermuxPlusSnippetRepository.getSnippets(mActivity)) {
             if (!snippet.matches(query)) continue;
 
             mSnippetList.addView(createSnippetRow(snippet));
@@ -149,25 +109,25 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         }
 
         if (count == 0)
-            mSnippetList.addView(createMessageView(getString(R.string.termuxplus_no_snippets)));
+            mSnippetList.addView(createMessageView(mActivity.getString(R.string.termuxplus_no_snippets)));
     }
 
     private View createSnippetRow(TermuxPlusSnippet snippet) {
-        LinearLayout row = new LinearLayout(this);
+        LinearLayout row = new LinearLayout(mActivity);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(76));
         row.setPadding(dp(10), dp(9), dp(10), dp(9));
-        row.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_overview_card_bg));
+        row.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_overview_card_bg));
         row.setOnClickListener(v -> showSnippetEditor(snippet));
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         rowParams.setMargins(dp(4), 0, dp(4), dp(8));
         row.setLayoutParams(rowParams);
 
-        FrameLayout tile = new FrameLayout(this);
-        tile.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_icon_tile_bg));
-        ImageView icon = new ImageView(this);
+        FrameLayout tile = new FrameLayout(mActivity);
+        tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
+        ImageView icon = new ImageView(mActivity);
         icon.setImageResource(R.drawable.ic_tp_braces);
         icon.setColorFilter(color(R.color.termuxplus_text_primary));
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
@@ -177,22 +137,22 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         tileParams.setMarginEnd(dp(12));
         row.addView(tile, tileParams);
 
-        LinearLayout textColumn = new LinearLayout(this);
+        LinearLayout textColumn = new LinearLayout(mActivity);
         textColumn.setOrientation(LinearLayout.VERTICAL);
-        textColumn.addView(createText(snippet.getTitle(), R.color.termuxplus_text_primary, 14, Typeface.BOLD, true));
-        textColumn.addView(createText(snippet.getCommand(), R.color.termuxplus_text_secondary, 11, Typeface.NORMAL, true));
+        textColumn.addView(createText(snippet.getTitle(), R.color.termuxplus_text_primary, 14, android.graphics.Typeface.BOLD, true));
+        textColumn.addView(createText(snippet.getCommand(), R.color.termuxplus_text_secondary, 11, android.graphics.Typeface.NORMAL, true));
         if (!TextUtils.isEmpty(snippet.getDescription()))
-            textColumn.addView(createText(snippet.getDescription(), R.color.termuxplus_text_secondary, 11, Typeface.NORMAL, true));
+            textColumn.addView(createText(snippet.getDescription(), R.color.termuxplus_text_secondary, 11, android.graphics.Typeface.NORMAL, true));
         String metaText = buildSnippetMetaText(snippet);
         if (!TextUtils.isEmpty(metaText))
-            textColumn.addView(createText(metaText, R.color.termuxplus_text_muted, 10, Typeface.NORMAL, true));
+            textColumn.addView(createText(metaText, R.color.termuxplus_text_muted, 10, android.graphics.Typeface.NORMAL, true));
         row.addView(textColumn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-        Button edit = createActionButton(getString(R.string.termuxplus_edit), false, false);
+        Button edit = createActionButton(mActivity.getString(R.string.termuxplus_edit), false, false);
         edit.setOnClickListener(v -> showSnippetEditor(snippet));
         row.addView(edit, createActionLayoutParams(58));
 
-        Button delete = createActionButton(getString(R.string.termuxplus_delete), false, true);
+        Button delete = createActionButton(mActivity.getString(R.string.termuxplus_delete), false, true);
         delete.setOnClickListener(v -> showDeleteConfirmation(snippet, true));
         row.addView(delete, createActionLayoutParams(72));
 
@@ -200,19 +160,19 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
     }
 
     private void showSnippetEditor(@Nullable TermuxPlusSnippet snippet) {
-        getWindow().getDecorView().setTag("editor");
+        mState = "editor";
 
         LinearLayout root = createRootLayout();
-        root.addView(createTopBar(snippet == null ? getString(R.string.termuxplus_new_snippet_title) : getString(R.string.termuxplus_edit_snippet_title),
-            getString(R.string.termuxplus_back), v -> showSnippetList(),
-            getString(R.string.termuxplus_save), null));
+        root.addView(createTopBar(snippet == null ? mActivity.getString(R.string.termuxplus_new_snippet_title) : mActivity.getString(R.string.termuxplus_edit_snippet_title),
+            mActivity.getString(R.string.termuxplus_back), v -> showSnippetList(),
+            mActivity.getString(R.string.termuxplus_save), null));
 
-        ScrollView scrollView = new ScrollView(this);
+        ScrollView scrollView = new ScrollView(mActivity);
         scrollView.setFillViewport(false);
         scrollView.setClipToPadding(false);
         scrollView.setPadding(dp(8), dp(8), dp(8), dp(12));
 
-        LinearLayout form = new LinearLayout(this);
+        LinearLayout form = new LinearLayout(mActivity);
         form.setOrientation(LinearLayout.VERTICAL);
 
         EditText title = addFormField(form, R.string.termuxplus_snippet_field_title,
@@ -226,11 +186,11 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         EditText tags = addFormField(form, R.string.termuxplus_snippet_field_tags,
             snippet == null ? "" : formatTags(snippet.getTags()), false);
 
-        CheckBox runByDefault = new CheckBox(this);
+        CheckBox runByDefault = new CheckBox(mActivity);
         runByDefault.setText(R.string.termuxplus_snippet_run_by_default);
         runByDefault.setTextColor(color(R.color.termuxplus_text_secondary));
         runByDefault.setTextSize(12);
-        runByDefault.setTypeface(Typeface.DEFAULT);
+        runByDefault.setTypeface(android.graphics.Typeface.DEFAULT);
         runByDefault.setIncludeFontPadding(false);
         runByDefault.setChecked(snippet != null && snippet.shouldRunByDefault());
         LinearLayout.LayoutParams checkParams = new LinearLayout.LayoutParams(
@@ -239,7 +199,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         form.addView(runByDefault, checkParams);
 
         if (snippet != null) {
-            Button delete = createActionButton(getString(R.string.termuxplus_delete), false, true);
+            Button delete = createActionButton(mActivity.getString(R.string.termuxplus_delete), false, true);
             delete.setOnClickListener(v -> showDeleteConfirmation(snippet, false));
             LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(36));
@@ -263,7 +223,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         String titleText = title.getText().toString().trim();
         String commandText = command.getText().toString().trim();
         if (TextUtils.isEmpty(titleText) || TextUtils.isEmpty(commandText)) {
-            showToast(getString(R.string.termuxplus_snippet_required_fields));
+            showToast(mActivity.getString(R.string.termuxplus_snippet_required_fields));
             return;
         }
 
@@ -272,27 +232,27 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
             commandText, category.getText().toString().trim(), parseTags(tags.getText().toString()),
             runByDefault.isChecked() ? "run" : "insert");
 
-        if (TermuxPlusSnippetRepository.saveUserSnippet(this, snippet)) {
-            showToast(getString(R.string.termuxplus_snippet_saved));
+        if (TermuxPlusSnippetRepository.saveUserSnippet(mActivity, snippet)) {
+            showToast(mActivity.getString(R.string.termuxplus_snippet_saved));
             showSnippetList();
         } else {
-            showToast(getString(R.string.termuxplus_snippet_save_failed));
+            showToast(mActivity.getString(R.string.termuxplus_snippet_save_failed));
         }
     }
 
     private void showDeleteConfirmation(TermuxPlusSnippet snippet, boolean stayOnList) {
         if (snippet == null) return;
 
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(mActivity)
             .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.termuxplus_snippet_delete_confirm, snippet.getTitle()))
+            .setMessage(mActivity.getString(R.string.termuxplus_snippet_delete_confirm, snippet.getTitle()))
             .setPositiveButton(android.R.string.yes, (dialog, which) -> {
                 dialog.dismiss();
-                if (TermuxPlusSnippetRepository.deleteSnippet(this, snippet.getId())) {
-                    showToast(getString(R.string.termuxplus_snippet_deleted));
+                if (TermuxPlusSnippetRepository.deleteSnippet(mActivity, snippet.getId())) {
+                    showToast(mActivity.getString(R.string.termuxplus_snippet_deleted));
                     showSnippetList();
                 } else {
-                    showToast(getString(R.string.termuxplus_snippet_delete_failed));
+                    showToast(mActivity.getString(R.string.termuxplus_snippet_delete_failed));
                     if (!stayOnList) showSnippetEditor(snippet);
                 }
             })
@@ -301,9 +261,8 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
     }
 
     private LinearLayout createRootLayout() {
-        LinearLayout root = new LinearLayout(this);
+        LinearLayout root = new LinearLayout(mActivity);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_sheet_bg));
         root.setPadding(dp(8), dp(8), dp(8), dp(12));
         root.setLayoutParams(new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, getSheetHeight()));
@@ -312,8 +271,8 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
     }
 
     private View createSheetHandle() {
-        View handle = new View(this);
-        handle.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_sheet_handle));
+        View handle = new View(mActivity);
+        handle.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_sheet_handle));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(36), dp(4));
         params.gravity = Gravity.CENTER_HORIZONTAL;
         params.topMargin = dp(4);
@@ -324,7 +283,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
 
     private View createTopBar(String titleText, String backText, View.OnClickListener backListener,
                               String actionText, @Nullable View.OnClickListener actionListener) {
-        LinearLayout topBar = new LinearLayout(this);
+        LinearLayout topBar = new LinearLayout(mActivity);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(dp(4), 0, dp(4), dp(8));
@@ -335,7 +294,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         back.setOnClickListener(backListener);
         topBar.addView(back, new LinearLayout.LayoutParams(dp(74), dp(34)));
 
-        TextView title = createText(titleText, R.color.termuxplus_text_primary, 14, Typeface.BOLD, true);
+        TextView title = createText(titleText, R.color.termuxplus_text_primary, 14, android.graphics.Typeface.BOLD, true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1);
         titleParams.setMargins(dp(8), 0, dp(8), 0);
@@ -351,15 +310,15 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
     }
 
     private EditText addFormField(LinearLayout form, int labelResId, String value, boolean multiLine) {
-        LinearLayout wrapper = new LinearLayout(this);
+        LinearLayout wrapper = new LinearLayout(mActivity);
         wrapper.setOrientation(LinearLayout.VERTICAL);
 
-        TextView label = createText(getString(labelResId), R.color.termuxplus_text_muted, 10, Typeface.BOLD, true);
+        TextView label = createText(mActivity.getString(labelResId), R.color.termuxplus_text_muted, 10, android.graphics.Typeface.BOLD, true);
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(18));
         wrapper.addView(label, labelParams);
 
-        EditText field = new EditText(this);
+        EditText field = new EditText(mActivity);
         field.setText(value);
         styleTextInput(field);
         if (multiLine) {
@@ -382,12 +341,8 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         return field;
     }
 
-    private Button createActionButton(String text) {
-        return createActionButton(text, false, false);
-    }
-
     private Button createActionButton(String text, boolean primary, boolean danger) {
-        Button button = new Button(this);
+        Button button = new Button(mActivity);
         button.setText(text);
         button.setAllCaps(false);
         button.setGravity(Gravity.CENTER);
@@ -401,19 +356,19 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         button.setTextSize(12);
         button.setTextColor(color(danger ? R.color.termuxplus_text_error :
             (primary ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary)));
-        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        button.setBackground(ContextCompat.getDrawable(this,
+        button.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        button.setBackground(ContextCompat.getDrawable(mActivity,
             primary ? R.drawable.tp_accent_button_bg : R.drawable.tp_chip_bg));
         return button;
     }
 
     private TextView createText(String text, int colorResId, int textSize, int typefaceStyle, boolean singleLine) {
-        TextView textView = new TextView(this);
+        TextView textView = new TextView(mActivity);
         textView.setText(text);
         textView.setTextColor(color(colorResId));
         textView.setTextSize(textSize);
         textView.setIncludeFontPadding(false);
-        textView.setTypeface(Typeface.DEFAULT, typefaceStyle);
+        textView.setTypeface(android.graphics.Typeface.DEFAULT, typefaceStyle);
         textView.setSingleLine(singleLine);
         if (singleLine)
             textView.setEllipsize(TextUtils.TruncateAt.END);
@@ -421,7 +376,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
     }
 
     private TextView createMessageView(String text) {
-        TextView textView = createText(text, R.color.termuxplus_text_secondary, 12, Typeface.NORMAL, true);
+        TextView textView = createText(text, R.color.termuxplus_text_secondary, 12, android.graphics.Typeface.NORMAL, true);
         textView.setPadding(dp(12), dp(8), dp(12), dp(8));
         return textView;
     }
@@ -431,8 +386,8 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         editText.setIncludeFontPadding(false);
         editText.setTextColor(color(R.color.termuxplus_text_primary));
         editText.setHintTextColor(color(R.color.termuxplus_text_muted));
-        editText.setTypeface(Typeface.MONOSPACE);
-        editText.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_sheet_input_bg));
+        editText.setTypeface(android.graphics.Typeface.MONOSPACE);
+        editText.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_sheet_input_bg));
         editText.setPadding(dp(12), 0, dp(12), 0);
     }
 
@@ -450,26 +405,19 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         configureBottomSheet();
     }
 
-    private void configureSheetWindow() {
-        getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        getWindow().setDimAmount(0f);
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-        applyDarkSystemBars(getWindow());
-    }
-
     private void ensureDialog() {
         if (mDialog != null) return;
 
-        mDialog = new BottomSheetDialog(this, R.style.Theme_TermuxPlus_BottomSheet);
-        mDialog.setOnDismissListener(dialog -> finish());
+        mDialog = new BottomSheetDialog(mActivity, R.style.Theme_TermuxPlus_BottomSheet);
         mDialog.setOnKeyListener((dialog, keyCode, event) -> {
             if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP &&
-                "editor".equals(getWindow().getDecorView().getTag())) {
+                "editor".equals(mState)) {
                 showSnippetList();
                 return true;
             }
             return false;
         });
+        mDialog.setOnDismissListener(dialog -> clearReferences());
         mDialog.setOnShowListener(dialog -> configureBottomSheet());
     }
 
@@ -507,8 +455,18 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
             window.setNavigationBarContrastEnforced(false);
     }
 
+    private void dismiss() {
+        if (mDialog != null) mDialog.dismiss();
+    }
+
+    private void clearReferences() {
+        mDialog = null;
+        mSnippetList = null;
+        mSearchInput = null;
+    }
+
     private int getSheetHeight() {
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        int screenHeight = mActivity.getResources().getDisplayMetrics().heightPixels;
         int desiredHeight = Math.round(screenHeight * 0.88f);
         int minimumHeight = Math.min(dp(520), screenHeight);
         return Math.max(minimumHeight, desiredHeight);
@@ -533,7 +491,7 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
             base = "snippet";
 
         Set<String> existingIds = new HashSet<>();
-        for (TermuxPlusSnippet snippet : TermuxPlusSnippetRepository.getSnippets(this))
+        for (TermuxPlusSnippet snippet : TermuxPlusSnippetRepository.getSnippets(mActivity))
             existingIds.add(snippet.getId());
 
         String id = base;
@@ -570,15 +528,15 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
     }
 
     private void showToast(String text) {
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+        Toast.makeText(mActivity, text, Toast.LENGTH_SHORT).show();
     }
 
     private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
+        return Math.round(value * mActivity.getResources().getDisplayMetrics().density);
     }
 
     private int color(int colorResId) {
-        return ContextCompat.getColor(this, colorResId);
+        return ContextCompat.getColor(mActivity, colorResId);
     }
 
     private abstract static class SimpleTextWatcher implements TextWatcher {

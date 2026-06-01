@@ -71,8 +71,10 @@ public class TerminalExtraKeys implements ExtraKeysView.IExtraKeysView {
                 });
             } else {
                 TerminalSession session = mTerminalView.getCurrentSession();
-                if (session != null && key.length() > 0)
+                if (session != null && key.length() > 0) {
+                    mTerminalView.scrollToBottomAndRender();
                     session.write(key);
+                }
             }
         }
     }

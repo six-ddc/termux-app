@@ -113,6 +113,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private float mLastCellWidth = -1f;
     private float mLastCellHeight = -1f;
     private int mLastRenderRowOffset = -1;
+    private int mLastRenderTopInset = -1;
     /** Default-background alpha for this frame, mirrored from
      * {@link TerminalView#getBackgroundAlpha()} at the top of every frame.
      * 1 = opaque (default). When < 1 the default terminal background is rendered
@@ -253,6 +254,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         int rows = snapshot.rows;
         int topRow = mView.mTopRow;
         int renderRowOffset = mView.getRenderRowOffset();
+        int renderTopInset = mView.getRenderTopInset();
         mFrameTopRow = topRow;
         int cursorCol = snapshot.cursorCol;
         int cursorRow = snapshot.cursorRow;
@@ -286,14 +288,21 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             boolean geometryChanged = columns != mLastColumns || rows != mLastRows ||
                 cellWidth != mLastCellWidth || cellHeight != mLastCellHeight ||
                 renderRowOffset != mLastRenderRowOffset ||
+                renderTopInset != mLastRenderTopInset ||
                 mBackgroundAlpha != mLastBackgroundAlpha;
             // When the blink phase flips, blinking text must repaint everywhere it
             // appears, not just on the cursor row the incremental path would touch.
             boolean blinkForcesRedraw = blinkOn != mLastBlinkOn
                 && snapshotHasBlinkingText(renderCells, columns, rows);
+            // A dirty-row list is not enough to keep a persistent framebuffer
+            // correct when terminal output shifts existing rows upward (linefeed
+            // at the bottom, prompt redraws, etc.). Repaint the whole viewport
+            // for every new content snapshot; repeated frames such as cursor
+            // blink still arrive as CLEAN via snapshotConsumed above.
+            boolean contentSnapshotChanged = mFrameDirtyState != TerminalEngine.RENDER_DIRTY_CLEAN;
             boolean fullRedraw = engineChanged || geometryChanged || blinkForcesRedraw ||
                 !mFramebufferContentValid || topRow != mLastTopRow ||
-                mFrameDirtyState == TerminalEngine.RENDER_DIRTY_FULL ||
+                contentSnapshotChanged ||
                 (kittyPlacements != null && kittyPlacements.length > 0);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFramebuffer);
             GLES20.glViewport(0, 0, mWidth, mHeight);
@@ -306,7 +315,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             }
             drawGhosttyRenderStateFrame(snapshot.cursorStyle, snapshot.reverseVideo, renderer, renderCells,
                 renderCellText, palette, columns, rows, topRow, cursorCol, cursorRow, cursorVisible, cursorWideTail,
-                cellWidth, cellHeight, renderRowOffset, background, fullRedraw, dirtyRows, kittyPlacements, blinkOn);
+                cellWidth, cellHeight, renderRowOffset, renderTopInset, background, fullRedraw, dirtyRows, kittyPlacements, blinkOn);
             mFramebufferContentValid = true;
             mLastRenderedSnapshot = snapshot;
             mLastRenderedEngine = engine;
@@ -315,6 +324,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             mLastCellWidth = cellWidth;
             mLastCellHeight = cellHeight;
             mLastRenderRowOffset = renderRowOffset;
+            mLastRenderTopInset = renderTopInset;
             mLastBackgroundAlpha = mBackgroundAlpha;
             mLastBlinkOn = blinkOn;
             mLastCursorRow = cursorRow;
@@ -343,14 +353,14 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                                              int[] renderCells, String[] renderCellText,
                                              int[] palette, int columns, int rows, int topRow, int cursorCol, int cursorRow,
                                              boolean cursorVisible, boolean cursorWideTail, float cellWidth, float cellHeight,
-                                             int renderRowOffset, int defaultBackground, boolean fullRedraw, int[] dirtyRows,
+                                             int renderRowOffset, int renderTopInset, int defaultBackground, boolean fullRedraw, int[] dirtyRows,
                                              TerminalKittyGraphicsPlacement[] kittyPlacements, boolean blinkTextVisible) {
         int cursorRenderCol = cursorWideTail ? Math.max(0, cursorCol - 1) : cursorCol;
 
         for (int row = 0; row < rows; row++) {
             if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
                 continue;
-            float rowY = (row - renderRowOffset) * cellHeight;
+            float rowY = renderTopInset + ((row - renderRowOffset) * cellHeight);
             if (!fullRedraw)
                 fillDefaultBackground(0, rowY, columns * cellWidth, cellHeight, defaultBackground);
             for (int column = 0; column < columns; ) {
@@ -383,12 +393,12 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             }
         }
 
-        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, renderRowOffset, false);
+        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, renderRowOffset, renderTopInset, false);
 
         for (int row = 0; row < rows; row++) {
             if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
                 continue;
-            float rowY = (row - renderRowOffset) * cellHeight;
+            float rowY = renderTopInset + ((row - renderRowOffset) * cellHeight);
             for (int column = 0; column < columns; ) {
                 int base = renderCellBase(row, column, columns);
                 int codePoint = renderCells[base + TerminalEngine.RENDER_CELL_CODEPOINT];
@@ -435,7 +445,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             }
         }
         flushGlyphBatch();
-        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, renderRowOffset, true);
+        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, renderRowOffset, renderTopInset, true);
     }
 
     private TerminalKittyGraphicsPlacement[] sortedKittyPlacements(TerminalKittyGraphicsPlacement[] placements) {
@@ -447,7 +457,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     }
 
     private void drawKittyGraphicsPlacements(TerminalKittyGraphicsPlacement[] placements, float cellWidth,
-                                             float cellHeight, int renderRowOffset, boolean aboveText) {
+                                             float cellHeight, int renderRowOffset, int renderTopInset, boolean aboveText) {
         if (placements == null)
             return;
         for (TerminalKittyGraphicsPlacement placement : placements) {
@@ -461,7 +471,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 continue;
 
             float x = placement.viewportColumn * cellWidth + placement.xOffset;
-            float y = (placement.viewportRow - renderRowOffset) * cellHeight + placement.yOffset;
+            float y = renderTopInset + ((placement.viewportRow - renderRowOffset) * cellHeight) + placement.yOffset;
             float width = Math.max(1, placement.pixelWidth);
             float height = Math.max(1, placement.pixelHeight);
             float u1 = (float) placement.sourceX / Math.max(1, placement.imageWidth);

@@ -267,6 +267,7 @@ public class TerminalToolbarViewPager {
             if (session.isRunning()) {
                 String textToSend = text == null ? "" : text;
                 if (run) textToSend += "\r";
+                mActivity.getTerminalView().scrollToBottomAndRender();
                 session.write(textToSend);
             } else {
                 mActivity.getTermuxTerminalSessionClient().removeFinishedSession(session);
@@ -450,7 +451,8 @@ public class TerminalToolbarViewPager {
                 ((PageAdapter) adapter).dismissSnippetsPopup();
 
             mActivity.updateTerminalToolbarHeight();
-            mActivity.getTerminalView().requestFocus();
+            if (!mActivity.getTerminalView().hasFocus())
+                mActivity.getTerminalView().requestFocus();
         }
 
     }

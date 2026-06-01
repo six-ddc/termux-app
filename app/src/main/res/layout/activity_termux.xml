@@ -32,8 +32,8 @@
                 android:background="@drawable/tp_header_bg"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp">
+                android:paddingStart="3dp"
+                android:paddingEnd="3dp">
 
                 <HorizontalScrollView
                     android:id="@+id/terminal_sessions_tab_strip_scroll"
@@ -57,10 +57,10 @@
                     android:id="@+id/tp_btn_menu"
                     android:layout_width="@dimen/termuxplus_header_button_size"
                     android:layout_height="@dimen/termuxplus_header_button_size"
-                    android:layout_marginStart="2dp"
+                    android:layout_marginStart="1dp"
                     android:background="@drawable/tp_header_button_bg"
                     android:contentDescription="@string/termuxplus_menu"
-                    android:padding="8dp"
+                    android:padding="@dimen/termuxplus_header_button_padding"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_tp_menu" />
 
@@ -84,22 +84,22 @@
             android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="@dimen/termuxplus_terminal_toolbar_row_height"
-            android:background="@color/termuxplus_surface"
+            android:background="@drawable/tp_terminal_toolbar_bg"
             android:layout_alignParentBottom="true" />
 
         <!-- Floating icon to leave fullscreen / focus mode -->
         <ImageButton
             android:id="@+id/tp_fullscreen_restore"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="@dimen/termuxplus_fullscreen_restore_size"
+            android:layout_height="@dimen/termuxplus_fullscreen_restore_size"
             android:layout_alignParentTop="true"
             android:layout_alignParentEnd="true"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="12dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="8dp"
             android:background="@drawable/tp_restore_chip_bg"
             android:contentDescription="@string/termuxplus_exit_fullscreen"
             android:elevation="10dp"
-            android:padding="12dp"
+            android:padding="@dimen/termuxplus_fullscreen_restore_padding"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_tp_fullscreen_exit"
             android:visibility="gone" />

@@ -579,8 +579,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         ViewGroup.LayoutParams layoutParams = terminalToolbarViewPager.getLayoutParams();
         int actionsHeight = 0;
         int extraKeysRows = mTermuxTerminalExtraKeys == null ? 0 : mTermuxTerminalExtraKeys.getMaxExtraKeysRows();
-        layoutParams.height = Math.round((actionsHeight + (mTerminalToolbarDefaultHeight * extraKeysRows)) *
+        int targetHeight = Math.round((actionsHeight + (mTerminalToolbarDefaultHeight * extraKeysRows)) *
             mProperties.getTerminalToolbarHeightScaleFactor());
+        if (layoutParams.height == targetHeight)
+            return;
+
+        layoutParams.height = targetHeight;
         terminalToolbarViewPager.setLayoutParams(layoutParams);
     }
 
@@ -833,6 +837,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void setFullscreen(boolean fullscreen) {
+        boolean wasTerminalAtBottom = mTerminalView == null || mTerminalView.isScrolledToBottom();
         mIsFullscreen = fullscreen;
 
         View header = findViewById(R.id.tp_header_bar);
@@ -879,10 +884,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (header != null) header.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
         if (restore != null) restore.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
         if (mTermuxActivityBottomSpaceView != null)
-            mTermuxActivityBottomSpaceView.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+            mTermuxActivityBottomSpaceView.setVisibility(View.VISIBLE);
         if (toolbar != null)
-            toolbar.setVisibility(fullscreen ? View.GONE
-                : (mPreferences.shouldShowTerminalToolbar() ? View.VISIBLE : View.GONE));
+            toolbar.setVisibility(mPreferences.shouldShowTerminalToolbar() ? View.VISIBLE : View.GONE);
 
         View decorView = getWindow().getDecorView();
         decorView.setSystemUiVisibility(fullscreen
@@ -906,7 +910,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             }
         }
 
-        if (mTerminalView != null) mTerminalView.requestFocus();
+        if (mTerminalView != null) {
+            mTerminalView.requestFocus();
+            mTerminalView.post(() -> {
+                mTerminalView.updateSize();
+                if (wasTerminalAtBottom)
+                    mTerminalView.scrollToBottomAndRender();
+            });
+        }
     }
 
     private void applyFullscreenSafeInsets(WindowInsets platformInsets) {
@@ -922,14 +933,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         WindowInsetsCompat insets = WindowInsetsCompat.toWindowInsetsCompat(platformInsets, workspace);
         Insets cutout = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.displayCutout());
         Insets gestures = insets.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures());
+        ViewPager toolbar = getTerminalToolbarViewPager();
+        boolean toolbarVisible = toolbar != null && toolbar.getVisibility() == View.VISIBLE;
 
-        int sidePadding = dp(6);
-        int verticalPadding = dp(6);
         int roundedLimit = dp(12);
-        int left = Math.max(sidePadding, cutout.left);
-        int top = Math.max(verticalPadding, cutout.top);
-        int right = Math.max(sidePadding, cutout.right);
-        int bottom = Math.max(verticalPadding, Math.max(cutout.bottom, Math.min(gestures.bottom, roundedLimit)));
+        int left = cutout.left;
+        int top = Math.max(dp(6), cutout.top);
+        int right = cutout.right;
+        int bottom = toolbarVisible ? 0 : Math.max(cutout.bottom, Math.min(gestures.bottom, roundedLimit));
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             left = Math.max(left, Math.min(roundedCornerInset(platformInsets,
@@ -938,19 +949,20 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 RoundedCorner.POSITION_TOP_LEFT, RoundedCorner.POSITION_TOP_RIGHT), roundedLimit));
             right = Math.max(right, Math.min(roundedCornerInset(platformInsets,
                 RoundedCorner.POSITION_TOP_RIGHT, RoundedCorner.POSITION_BOTTOM_RIGHT), roundedLimit));
-            bottom = Math.max(bottom, Math.min(roundedCornerInset(platformInsets,
-                RoundedCorner.POSITION_BOTTOM_LEFT, RoundedCorner.POSITION_BOTTOM_RIGHT), roundedLimit));
+            if (!toolbarVisible)
+                bottom = Math.max(bottom, Math.min(roundedCornerInset(platformInsets,
+                    RoundedCorner.POSITION_BOTTOM_LEFT, RoundedCorner.POSITION_BOTTOM_RIGHT), roundedLimit));
         }
 
         setFullscreenSafePadding(workspace, left, top, right, bottom);
-        setFullscreenRestoreMargins(restore, top + dp(8), right + dp(10));
+        setFullscreenRestoreMargins(restore, top + dp(6), right + dp(6));
     }
 
     private void resetFullscreenSafeInsets() {
         View workspace = findViewById(R.id.terminal_workspace);
         if (workspace != null)
             setFullscreenSafePadding(workspace, 0, 0, 0, 0);
-        setFullscreenRestoreMargins(findViewById(R.id.tp_fullscreen_restore), dp(10), dp(12));
+        setFullscreenRestoreMargins(findViewById(R.id.tp_fullscreen_restore), dp(8), dp(8));
     }
 
     @androidx.annotation.RequiresApi(api = Build.VERSION_CODES.S)

@@ -81,4 +81,14 @@
         <item name="enableEdgeToEdge">false</item>
     </style>
 
+    <style name="Theme.TermuxPlus.SheetActivity" parent="Theme.TermuxActivity.DayNight.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:navigationBarColor">@color/termuxplus_sheet_bg</item>
+    </style>
+
 </resources>

@@ -26,10 +26,10 @@ import java.util.List;
 
 public class TermuxSessionTabStripController {
 
-    private static final int TAB_HEIGHT_DP = 30;
-    private static final int TAB_TITLE_WIDTH_DP = 92;
-    private static final int TAB_MIN_WIDTH_DP = 92;
-    private static final int CLOSE_BUTTON_WIDTH_DP = 26;
+    private static final int TAB_TITLE_MIN_WIDTH_DP = 44;
+    private static final int TAB_TITLE_MAX_WIDTH_DP = 68;
+    private static final int TAB_MIN_WIDTH_DP = 78;
+    private static final int CLOSE_BUTTON_WIDTH_DP = 20;
     private static final int TAB_REORDER_LONG_PRESS_EXTRA_DELAY_MS = 140;
     private static final long TAB_REORDER_ANIMATION_MS = 120L;
 
@@ -115,13 +115,13 @@ public class TermuxSessionTabStripController {
         tab.setActivated(selected);
         tab.setSelected(selected);
         tab.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_tab_bg));
-        tab.setPadding(dp(11), 0, dp(2), 0);
+        setSessionTabPadding(tab, selected);
         tab.setMinimumWidth(dp(TAB_MIN_WIDTH_DP));
         tab.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().setCurrentSession(session));
         tab.setOnTouchListener((v, event) -> onSessionTabTouch(v, session, event));
         LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, dp(TAB_HEIGHT_DP));
-        tabParams.setMargins(0, 0, dp(6), 0);
+            LinearLayout.LayoutParams.WRAP_CONTENT, getTabHeightPx());
+        tabParams.setMargins(0, 0, dp(4), 0);
         tab.setLayoutParams(tabParams);
 
         TextView title = new TextView(mActivity);
@@ -130,13 +130,15 @@ public class TermuxSessionTabStripController {
         title.setText(getTabTitle(index, session));
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setIncludeFontPadding(false);
-        title.setTextSize(11);
+        title.setTextSize(10.5f);
         title.setTypeface(Typeface.MONOSPACE, selected ? Typeface.BOLD : Typeface.NORMAL);
         title.setTextColor(getTabTextColor(selected, session));
+        title.setMinWidth(dp(TAB_TITLE_MIN_WIDTH_DP));
+        title.setMaxWidth(dp(TAB_TITLE_MAX_WIDTH_DP));
         if (!session.isRunning())
             title.setPaintFlags(title.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
         title.setOnTouchListener((v, event) -> onSessionTabTouch(tab, session, event));
-        tab.addView(title, new LinearLayout.LayoutParams(dp(TAB_TITLE_WIDTH_DP), LinearLayout.LayoutParams.MATCH_PARENT));
+        tab.addView(title, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT));
 
         ImageButton close = new ImageButton(mActivity);
         close.setImageResource(R.drawable.ic_termuxplus_close_18);
@@ -144,8 +146,10 @@ public class TermuxSessionTabStripController {
         close.setContentDescription(mActivity.getString(R.string.action_close_session));
         close.setColorFilter(ContextCompat.getColor(mActivity,
             selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
-        close.setPadding(dp(5), dp(5), dp(5), dp(5));
+        close.setPadding(dp(4), dp(4), dp(4), dp(4));
         close.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().closeSession(session));
+        close.setVisibility(selected ? View.VISIBLE : View.GONE);
+        close.setEnabled(selected);
         tab.addView(close, new LinearLayout.LayoutParams(dp(CLOSE_BUTTON_WIDTH_DP), LinearLayout.LayoutParams.MATCH_PARENT));
 
         return tab;
@@ -159,6 +163,7 @@ public class TermuxSessionTabStripController {
         tabView.setSelected(selected);
 
         LinearLayout tab = (LinearLayout) tabView;
+        setSessionTabPadding(tab, selected);
         if (tab.getChildCount() > 0 && tab.getChildAt(0) instanceof TextView) {
             TextView title = (TextView) tab.getChildAt(0);
             title.setText(getTabTitle(index, session));
@@ -175,7 +180,13 @@ public class TermuxSessionTabStripController {
             ImageButton close = (ImageButton) tab.getChildAt(1);
             close.setColorFilter(ContextCompat.getColor(mActivity,
                 selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
+            close.setVisibility(selected ? View.VISIBLE : View.GONE);
+            close.setEnabled(selected);
         }
+    }
+
+    private void setSessionTabPadding(LinearLayout tab, boolean selected) {
+        tab.setPadding(dp(9), 0, selected ? dp(1) : dp(9), 0);
     }
 
     private View createNewSessionTab() {
@@ -183,7 +194,7 @@ public class TermuxSessionTabStripController {
         add.setText("+");
         add.setGravity(Gravity.CENTER);
         add.setIncludeFontPadding(false);
-        add.setTextSize(18);
+        add.setTextSize(16);
         add.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
         add.setTextColor(ContextCompat.getColor(mActivity, R.color.termuxplus_text_secondary));
         add.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_add_bg));
@@ -193,8 +204,8 @@ public class TermuxSessionTabStripController {
             mActivity.showCreateNamedSessionDialog();
             return true;
         });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(36), dp(TAB_HEIGHT_DP));
-        params.setMargins(0, 0, dp(4), 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(30), getTabHeightPx());
+        params.setMargins(0, 0, dp(3), 0);
         add.setLayoutParams(params);
         return add;
     }
@@ -503,6 +514,10 @@ public class TermuxSessionTabStripController {
 
     private int dp(int value) {
         return Math.round(value * mActivity.getResources().getDisplayMetrics().density);
+    }
+
+    private int getTabHeightPx() {
+        return mActivity.getResources().getDimensionPixelSize(R.dimen.termuxplus_session_tab_strip_height);
     }
 
 }

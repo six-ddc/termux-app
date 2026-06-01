@@ -4,6 +4,7 @@ import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -76,6 +77,8 @@ public class TermuxPlusActionSheet {
 
         // ---- Terminal ----
         addSection(list, R.string.termuxplus_section_terminal);
+        addRow(list, R.drawable.ic_tp_grid, string(R.string.termuxplus_tab_overview), null, false,
+            mActivity::showTabOverview);
         addRow(list, R.drawable.ic_tp_link, string(R.string.action_select_url), null, false,
             mActivity::tpSelectUrl);
         addRow(list, R.drawable.ic_tp_share, string(R.string.action_share_transcript), null, false,
@@ -101,12 +104,9 @@ public class TermuxPlusActionSheet {
 
         // ---- Tools ----
         addSection(list, R.string.termuxplus_section_tools);
+        addBackgroundFloatingTerminalRow(list);
         addRow(list, R.drawable.ic_tp_braces, string(R.string.termuxplus_snippets_title), null, false,
             mActivity::tpSnippets);
-        boolean floatReady = PermissionUtils.checkDisplayOverOtherAppsPermission(mActivity);
-        addRow(list, R.drawable.ic_tp_float,
-            string(floatReady ? R.string.action_show_floating_terminal : R.string.action_enable_floating_terminal),
-            null, false, mActivity::tpFloatingTerminal);
         if (mActivity.tpIsAutoFillEnabled()) {
             addRow(list, R.drawable.ic_tp_user, string(R.string.action_autofill_username), null, false,
                 mActivity::tpAutofillUsername);
@@ -214,6 +214,85 @@ public class TermuxPlusActionSheet {
         row.addView(textColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         parent.addView(row);
+    }
+
+    private void addBackgroundFloatingTerminalRow(LinearLayout parent) {
+        addCheckRow(parent, R.drawable.ic_tp_float,
+            string(R.string.termuxplus_background_floating_terminal_title),
+            mActivity.tpIsBackgroundFloatingTerminalEnabled(),
+            desired -> {
+                if (desired && !PermissionUtils.checkDisplayOverOtherAppsPermission(mActivity))
+                    dismiss();
+                return mActivity.tpSetBackgroundFloatingTerminalEnabled(desired);
+            });
+    }
+
+    private void addCheckRow(LinearLayout parent, @DrawableRes int iconRes, String title,
+                             boolean checked, CheckAction action) {
+        LinearLayout row = new LinearLayout(mActivity);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_action_row_bg));
+        row.setPadding(dp(10), dp(8), dp(12), dp(8));
+        row.setMinimumHeight(dp(54));
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.bottomMargin = dp(2);
+        row.setLayoutParams(rowParams);
+
+        FrameLayout tile = new FrameLayout(mActivity);
+        tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
+        ImageView icon = new ImageView(mActivity);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(color(R.color.termuxplus_text_primary));
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
+        iconParams.gravity = Gravity.CENTER;
+        tile.addView(icon, iconParams);
+        LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(dp(38), dp(38));
+        tileParams.setMarginEnd(dp(12));
+        row.addView(tile, tileParams);
+
+        LinearLayout textColumn = new LinearLayout(mActivity);
+        textColumn.setOrientation(LinearLayout.VERTICAL);
+        TextView titleView = new TextView(mActivity);
+        titleView.setText(title);
+        titleView.setTextColor(color(R.color.termuxplus_text_primary));
+        titleView.setTextSize(15);
+        titleView.setTypeface(Typeface.DEFAULT);
+        titleView.setSingleLine(true);
+        textColumn.addView(titleView);
+
+        TextView subView = new TextView(mActivity);
+        subView.setText(backgroundFloatingTerminalSummary(checked));
+        subView.setTextColor(color(R.color.termuxplus_text_secondary));
+        subView.setTextSize(12);
+        subView.setSingleLine(true);
+        textColumn.addView(subView);
+        row.addView(textColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        CheckBox checkBox = new CheckBox(mActivity);
+        checkBox.setChecked(checked);
+        checkBox.setClickable(false);
+        checkBox.setFocusable(false);
+        row.addView(checkBox, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        row.setOnClickListener(v -> {
+            boolean newChecked = action.setChecked(!checkBox.isChecked());
+            checkBox.setChecked(newChecked);
+            subView.setText(backgroundFloatingTerminalSummary(newChecked));
+        });
+
+        parent.addView(row);
+    }
+
+    private String backgroundFloatingTerminalSummary(boolean checked) {
+        return string(checked
+            ? R.string.termuxplus_background_floating_terminal_sheet_on
+            : R.string.termuxplus_background_floating_terminal_sheet_off);
+    }
+
+    private interface CheckAction {
+        boolean setChecked(boolean checked);
     }
 
     private String string(int resId) {

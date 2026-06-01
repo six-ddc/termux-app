@@ -112,6 +112,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private int mLastRows = -1;
     private float mLastCellWidth = -1f;
     private float mLastCellHeight = -1f;
+    private int mLastRenderRowOffset = -1;
     /** Default-background alpha for this frame, mirrored from
      * {@link TerminalView#getBackgroundAlpha()} at the top of every frame.
      * 1 = opaque (default). When < 1 the default terminal background is rendered
@@ -251,6 +252,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         int columns = snapshot.columns;
         int rows = snapshot.rows;
         int topRow = mView.mTopRow;
+        int renderRowOffset = mView.getRenderRowOffset();
         mFrameTopRow = topRow;
         int cursorCol = snapshot.cursorCol;
         int cursorRow = snapshot.cursorRow;
@@ -283,6 +285,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             }
             boolean geometryChanged = columns != mLastColumns || rows != mLastRows ||
                 cellWidth != mLastCellWidth || cellHeight != mLastCellHeight ||
+                renderRowOffset != mLastRenderRowOffset ||
                 mBackgroundAlpha != mLastBackgroundAlpha;
             // When the blink phase flips, blinking text must repaint everywhere it
             // appears, not just on the cursor row the incremental path would touch.
@@ -303,7 +306,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             }
             drawGhosttyRenderStateFrame(snapshot.cursorStyle, snapshot.reverseVideo, renderer, renderCells,
                 renderCellText, palette, columns, rows, topRow, cursorCol, cursorRow, cursorVisible, cursorWideTail,
-                cellWidth, cellHeight, background, fullRedraw, dirtyRows, kittyPlacements, blinkOn);
+                cellWidth, cellHeight, renderRowOffset, background, fullRedraw, dirtyRows, kittyPlacements, blinkOn);
             mFramebufferContentValid = true;
             mLastRenderedSnapshot = snapshot;
             mLastRenderedEngine = engine;
@@ -311,6 +314,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             mLastRows = rows;
             mLastCellWidth = cellWidth;
             mLastCellHeight = cellHeight;
+            mLastRenderRowOffset = renderRowOffset;
             mLastBackgroundAlpha = mBackgroundAlpha;
             mLastBlinkOn = blinkOn;
             mLastCursorRow = cursorRow;
@@ -339,46 +343,59 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                                              int[] renderCells, String[] renderCellText,
                                              int[] palette, int columns, int rows, int topRow, int cursorCol, int cursorRow,
                                              boolean cursorVisible, boolean cursorWideTail, float cellWidth, float cellHeight,
-                                             int defaultBackground, boolean fullRedraw, int[] dirtyRows,
+                                             int renderRowOffset, int defaultBackground, boolean fullRedraw, int[] dirtyRows,
                                              TerminalKittyGraphicsPlacement[] kittyPlacements, boolean blinkTextVisible) {
         int cursorRenderCol = cursorWideTail ? Math.max(0, cursorCol - 1) : cursorCol;
 
         for (int row = 0; row < rows; row++) {
             if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
                 continue;
+            float rowY = (row - renderRowOffset) * cellHeight;
             if (!fullRedraw)
-                fillDefaultBackground(0, row * cellHeight, columns * cellWidth, cellHeight, defaultBackground);
-            for (int column = 0; column < columns; column++) {
+                fillDefaultBackground(0, rowY, columns * cellWidth, cellHeight, defaultBackground);
+            for (int column = 0; column < columns; ) {
                 int base = renderCellBase(row, column, columns);
+                int widthColumns = normalizedCellWidth(renderCells, base, column, columns);
+                if (widthColumns <= 0) {
+                    column++;
+                    continue;
+                }
                 int effect = renderCells[base + TerminalEngine.RENDER_CELL_EFFECT];
                 boolean cursor = cursorVisible && row == cursorRow && cursorRenderCol == column;
+                boolean blockCursor = cursor && cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_BLOCK;
                 boolean selected = renderCells[base + TerminalEngine.RENDER_CELL_SELECTED] != 0;
                 int fg = resolveCellForeground(renderCells[base + TerminalEngine.RENDER_CELL_FOREGROUND], effect, palette);
                 int bg = resolveCellBackground(renderCells[base + TerminalEngine.RENDER_CELL_BACKGROUND], palette);
-                if (shouldSwapColors(reverseVideo, effect, selected, cursor && cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_BLOCK)) {
+                if (shouldSwapColors(reverseVideo, effect, selected, blockCursor)) {
                     int swap = fg;
                     fg = bg;
                     bg = swap;
                 }
-                if (bg != defaultBackground)
-                    drawRect(column * cellWidth, row * cellHeight, cellWidth, cellHeight, bg);
+                float x = column * cellWidth;
+                float cellSpanWidth = widthColumns * cellWidth;
+                if (bg != defaultBackground || selected || blockCursor)
+                    drawRect(x, rowY, cellSpanWidth, cellHeight, bg);
                 if (cursor && cursorShape != TerminalEngine.TERMINAL_CURSOR_STYLE_BLOCK)
-                    drawCursorShape(column * cellWidth, row * cellHeight, cellWidth, cellHeight, cursorShape, palette);
+                    drawCursorShape(x, rowY,
+                        cursorShape == TerminalEngine.TERMINAL_CURSOR_STYLE_UNDERLINE ? cellSpanWidth : cellWidth,
+                        cellHeight, cursorShape, palette);
+                column += widthColumns;
             }
         }
 
-        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, false);
+        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, renderRowOffset, false);
 
         for (int row = 0; row < rows; row++) {
             if (!rowNeedsFramebufferUpdate(row, topRow, fullRedraw, dirtyRows, cursorRow))
                 continue;
+            float rowY = (row - renderRowOffset) * cellHeight;
             for (int column = 0; column < columns; ) {
                 int base = renderCellBase(row, column, columns);
                 int codePoint = renderCells[base + TerminalEngine.RENDER_CELL_CODEPOINT];
                 int cellIndex = row * columns + column;
                 String text = renderCellText != null && cellIndex < renderCellText.length ? renderCellText[cellIndex] : null;
                 int effect = renderCells[base + TerminalEngine.RENDER_CELL_EFFECT];
-                int widthColumns = renderCells[base + TerminalEngine.RENDER_CELL_WIDTH];
+                int widthColumns = normalizedCellWidth(renderCells, base, column, columns);
                 if (widthColumns <= 0) {
                     column++;
                     continue;
@@ -405,20 +422,20 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                     boolean italic = (effect & TextStyle.CHARACTER_ATTRIBUTE_ITALIC) != 0;
                     Glyph glyph = text != null ? getGlyph(renderer, text, bold, italic, widthColumns, cellWidth) :
                         getGlyph(renderer, codePoint, bold, italic, widthColumns, cellWidth);
-                    drawGlyph(glyph, column * cellWidth, row * cellHeight, fg);
+                    drawGlyph(glyph, column * cellWidth, rowY, fg);
                 }
                 if (!blinkHidden) {
                     int underlineColor = resolveUnderlineColor(renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_COLOR], fg, palette);
                     int underlineStyle = renderCells[base + TerminalEngine.RENDER_CELL_UNDERLINE_STYLE];
                     boolean overline = renderCells[base + TerminalEngine.RENDER_CELL_OVERLINE] != 0;
-                    drawTextDecorations(column * cellWidth, row * cellHeight, widthColumns * cellWidth, cellHeight,
+                    drawTextDecorations(column * cellWidth, rowY, widthColumns * cellWidth, cellHeight,
                         fg, effect, underlineColor, underlineStyle, overline);
                 }
                 column += widthColumns;
             }
         }
         flushGlyphBatch();
-        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, true);
+        drawKittyGraphicsPlacements(kittyPlacements, cellWidth, cellHeight, renderRowOffset, true);
     }
 
     private TerminalKittyGraphicsPlacement[] sortedKittyPlacements(TerminalKittyGraphicsPlacement[] placements) {
@@ -430,7 +447,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     }
 
     private void drawKittyGraphicsPlacements(TerminalKittyGraphicsPlacement[] placements, float cellWidth,
-                                             float cellHeight, boolean aboveText) {
+                                             float cellHeight, int renderRowOffset, boolean aboveText) {
         if (placements == null)
             return;
         for (TerminalKittyGraphicsPlacement placement : placements) {
@@ -444,7 +461,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
                 continue;
 
             float x = placement.viewportColumn * cellWidth + placement.xOffset;
-            float y = placement.viewportRow * cellHeight + placement.yOffset;
+            float y = (placement.viewportRow - renderRowOffset) * cellHeight + placement.yOffset;
             float width = Math.max(1, placement.pixelWidth);
             float height = Math.max(1, placement.pixelHeight);
             float u1 = (float) placement.sourceX / Math.max(1, placement.imageWidth);
@@ -533,6 +550,13 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
 
     private int renderCellBase(int row, int column, int columns) {
         return (row * columns + column) * TerminalEngine.RENDER_CELL_STRIDE;
+    }
+
+    private int normalizedCellWidth(int[] renderCells, int base, int column, int columns) {
+        int widthColumns = renderCells[base + TerminalEngine.RENDER_CELL_WIDTH];
+        if (widthColumns <= 0)
+            return 0;
+        return Math.max(1, Math.min(widthColumns, columns - column));
     }
 
     private boolean shouldSwapColors(boolean reverseVideo, int effect, boolean selected, boolean blockCursor) {

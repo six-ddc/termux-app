@@ -14,7 +14,6 @@ import android.graphics.Typeface;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.os.Build;
-import android.text.TextUtils;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -145,7 +144,12 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     @Override
     public void onTextChanged(@NonNull TerminalSession changedSession) {
-        if (!mActivity.isVisible()) return;
+        if (!mActivity.isVisible()) {
+            TermuxService service = mActivity.getTermuxService();
+            if (service != null)
+                service.notifyFloatingTerminalOutput();
+            return;
+        }
 
         if (mActivity.getCurrentSession() == changedSession) mActivity.getTerminalView().onScreenUpdated();
     }
@@ -181,13 +185,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             isPluginExecutionCommandWithPendingResult = termuxSession.getExecutionCommand().isPluginExecutionCommandWithPendingResult();
             if (isPluginExecutionCommandWithPendingResult)
                 Logger.logVerbose(LOG_TAG, "The \"" + finishedSession.mSessionName + "\" session will be force finished automatically since result in pending.");
-        }
-
-        if (mActivity.isVisible() && finishedSession != mActivity.getCurrentSession()) {
-            // Show toast for non-current sessions that exit.
-            // Verify that session was not removed before we got told about it finishing:
-            if (index >= 0)
-                mActivity.showToast(toToastTitle(finishedSession) + " - exited", true);
         }
 
         if (mActivity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
@@ -392,6 +389,16 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             setCurrentSession(termuxSession.getTerminalSession());
     }
 
+    public boolean moveSession(TerminalSession session, int targetIndex) {
+        TermuxService service = mActivity.getTermuxService();
+        if (service == null || session == null) return false;
+
+        boolean moved = service.moveTermuxSession(session, targetIndex);
+        if (moved)
+            termuxSessionListNotifyUpdated();
+        return moved;
+    }
+
     @SuppressLint("InflateParams")
     public void renameSession(final TerminalSession sessionToRename) {
         if (sessionToRename == null) return;
@@ -533,26 +540,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void termuxSessionListNotifyUpdated() {
         mActivity.termuxSessionListNotifyUpdated();
     }
-
-    String toToastTitle(TerminalSession session) {
-        TermuxService service = mActivity.getTermuxService();
-        if (service == null) return null;
-
-        final int indexOfSession = service.getIndexOfSession(session);
-        if (indexOfSession < 0) return null;
-        StringBuilder toastTitle = new StringBuilder("[" + (indexOfSession + 1) + "]");
-        if (!TextUtils.isEmpty(session.mSessionName)) {
-            toastTitle.append(" ").append(session.mSessionName);
-        }
-        String title = session.getTitle();
-        if (!TextUtils.isEmpty(title)) {
-            // Space to "[${NR}] or newline after session name:
-            toastTitle.append(session.mSessionName == null ? " " : "\n");
-            toastTitle.append(title);
-        }
-        return toastTitle.toString();
-    }
-
 
     public void checkForFontAndColors() {
         try {

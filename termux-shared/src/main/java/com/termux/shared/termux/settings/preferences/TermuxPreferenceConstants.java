@@ -1,7 +1,7 @@
 package com.termux.shared.termux.settings.preferences;
 
 /*
- * Version: v0.17.0
+ * Version: v0.18.0
  *
  * Changelog
  *
@@ -73,6 +73,10 @@ package com.termux.shared.termux.settings.preferences;
  * - 0.17.0 (2026-05-20)
  *      - Added following to `TERMUX_APP`:
  *          `KEY_TERMUXPLUS_SNIPPETS_ENABLED`.
+ *
+ * - 0.18.0 (2026-05-31)
+ *      - Added following to `TERMUX_APP`:
+ *          `KEY_TERMUXPLUS_BACKGROUND_FLOATING_TERMINAL_ENABLED`.
  */
 
 import com.termux.shared.shell.command.ExecutionCommand;
@@ -111,6 +115,12 @@ public final class TermuxPreferenceConstants {
          */
         public static final String KEY_TERMUXPLUS_SNIPPETS_ENABLED = "termuxplus_snippets_enabled";
         public static final boolean DEFAULT_VALUE_TERMUXPLUS_SNIPPETS_ENABLED = true;
+
+        /**
+         * Defines the key for whether TermuxPlus may show its TP floating terminal while Termux is in background.
+         */
+        public static final String KEY_TERMUXPLUS_BACKGROUND_FLOATING_TERMINAL_ENABLED = "termuxplus_background_floating_terminal_enabled";
+        public static final boolean DEFAULT_VALUE_TERMUXPLUS_BACKGROUND_FLOATING_TERMINAL_ENABLED = false;
 
 
         /**

@@ -914,6 +914,24 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         return mShellManager.mTermuxSessions;
     }
 
+    public synchronized boolean moveTermuxSession(TerminalSession terminalSession, int targetIndex) {
+        int fromIndex = getIndexOfSession(terminalSession);
+        int sessionCount = mShellManager.mTermuxSessions.size();
+        if (fromIndex < 0 || sessionCount < 2) return false;
+
+        int clampedTargetIndex = Math.max(0, Math.min(targetIndex, sessionCount - 1));
+        if (fromIndex == clampedTargetIndex) return false;
+
+        TermuxSession termuxSession = mShellManager.mTermuxSessions.remove(fromIndex);
+        mShellManager.mTermuxSessions.add(clampedTargetIndex, termuxSession);
+
+        updateNotification();
+        if (mFloatingTerminalController != null)
+            mFloatingTerminalController.onSessionsChanged();
+
+        return true;
+    }
+
     @Nullable
     public synchronized TermuxSession getTermuxSession(int index) {
         if (index >= 0 && index < mShellManager.mTermuxSessions.size())
@@ -1002,6 +1020,9 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     }
 
     public void showFloatingTerminalIfAllowed() {
+        TermuxAppSharedPreferences preferences = TermuxAppSharedPreferences.build(this, false);
+        if (preferences == null || !preferences.isTermuxPlusBackgroundFloatingTerminalEnabled())
+            return;
         if (mFloatingTerminalController != null)
             mFloatingTerminalController.showCollapsedIfAllowed();
     }

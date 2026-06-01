@@ -268,9 +268,11 @@ public final class TermuxFloatingTerminalController {
         mTerminalView.setTerminalViewClient(mTerminalViewClient);
         mTerminalView.setTextSize(getFloatingTerminalFontSize());
         mTerminalView.setTypeface(TermuxTerminalFontManager.loadTerminalTypeface(mService));
+        mTerminalView.setZOrderOnTop(true);
+        mTerminalView.getHolder().setFormat(PixelFormat.TRANSLUCENT);
         mTerminalView.setFocusable(true);
         mTerminalView.setFocusableInTouchMode(true);
-        mTerminalView.setBackgroundColor(Color.rgb(0, 0, 0));
+        mTerminalView.setBackgroundColor(Color.TRANSPARENT);
         panel.addView(mTerminalView, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             0,

@@ -333,9 +333,16 @@ afterEvaluate {
         def autoTermuxBuildTypeName = variant.buildType.name
         def autoTermuxGeneratedAssetsRoot = file("$buildDir/generated/assets/autotermux")
         def autoTermuxAssetDir = file("$buildDir/generated/assets/autotermux/autotermux")
-        def autoTermuxApkFileProvider = project(":autotermux").layout.buildDirectory.file(
-            "outputs/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
-        )
+        def autoTermuxApkCandidates = {
+            [
+                project(":autotermux").layout.buildDirectory.file(
+                    "outputs/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
+                ).get().asFile,
+                project(":autotermux").layout.buildDirectory.file(
+                    "intermediates/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
+                ).get().asFile
+            ]
+        }
         def termuxPlusCliGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-cli")
         def termuxPlusCliAssetDir = file("$buildDir/generated/assets/termuxplus-cli/termuxplus/bin")
         def termuxPlusCliSource = rootProject.file("bootstrap/bin/tp-android")
@@ -374,12 +381,11 @@ afterEvaluate {
         ]
         def copyAutoTermuxAssetTask = tasks.register("copyAutoTermux${autoTermuxVariantName}Asset") {
             dependsOn(":autotermux:assemble${autoTermuxVariantName}")
-            inputs.file(autoTermuxApkFileProvider)
             outputs.dir(autoTermuxGeneratedAssetsRoot)
             doLast {
-                def sourceApk = autoTermuxApkFileProvider.get().asFile
-                if (!sourceApk.isFile()) {
-                    throw new GradleException("AutoTermux APK was not built at ${sourceApk}")
+                def sourceApk = autoTermuxApkCandidates().find { it.isFile() }
+                if (sourceApk == null) {
+                    throw new GradleException("AutoTermux APK was not built at any expected path: ${autoTermuxApkCandidates()}")
                 }
 
                 project.delete(autoTermuxGeneratedAssetsRoot)

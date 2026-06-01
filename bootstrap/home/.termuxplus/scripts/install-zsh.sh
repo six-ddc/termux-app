@@ -43,6 +43,11 @@ if [ -z "\${TERMUXPLUS_ZSHRC_LOADED:-}" ]; then
     source "\$ZSH/oh-my-zsh.sh"
   fi
 
+  # Termux runs as an Android app uid (u0_aNNN), so oh-my-zsh's default
+  # %n@%m:%~ title is noisy. Keep tab titles focused on the current directory.
+  ZSH_THEME_TERM_TAB_TITLE_IDLE="%~"
+  ZSH_THEME_TERM_TITLE_IDLE="%~"
+
   export EDITOR="\${EDITOR:-nano}"
 fi
 EOF

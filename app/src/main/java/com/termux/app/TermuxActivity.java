@@ -17,14 +17,14 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
-import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.RoundedCorner;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.RelativeLayout;
-import android.widget.Toast;
 
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
@@ -64,6 +64,7 @@ import com.termux.view.TerminalViewClient;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.graphics.Insets;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -150,11 +151,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private final BroadcastReceiver mTermuxActivityBroadcastReceiver = new TermuxActivityBroadcastReceiver();
 
     /**
-     * The last toast shown, used cancel current toast before showing new in {@link #showToast(String, boolean)}.
-     */
-    Toast mLastToast;
-
-    /**
      * If between onResume() and onStop(). Note that only one session is in the foreground of the terminal view at the
      * time, so if the session causing a change is not in the foreground it should probably be treated as background.
      */
@@ -186,6 +182,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     /** Whether the immersive fullscreen / focus mode is currently active. */
     private boolean mIsFullscreen;
+    private int mFullscreenSafeLeft;
+    private int mFullscreenSafeTop;
+    private int mFullscreenSafeRight;
+    private int mFullscreenSafeBottom;
 
 
     private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
@@ -201,7 +201,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_SETTINGS_ID = 8;
     private static final int CONTEXT_MENU_REPORT_ID = 9;
     private static final int CONTEXT_MENU_SNIPPETS_ID = 12;
-    private static final int CONTEXT_MENU_FLOATING_TERMINAL_ID = 13;
 
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
@@ -259,6 +258,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mNavBarHeight = insets.getSystemWindowInsetBottom();
             return insets;
         });
+        View relativeLayout = findViewById(R.id.activity_termux_root_relative_layout);
+        if (relativeLayout != null) {
+            relativeLayout.setOnApplyWindowInsetsListener((v, insets) -> {
+                applyFullscreenSafeInsets(insets);
+                return insets;
+            });
+        }
 
         if (mProperties.isUsingFullScreen()) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -636,6 +642,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void maybeShowFloatingTerminalAfterLeavingApp() {
         if (mSuppressFloatingTerminalOnStop || isFinishing() || isChangingConfigurations())
             return;
+        if (mPreferences == null || !mPreferences.isTermuxPlusBackgroundFloatingTerminalEnabled())
+            return;
 
         mFloatingTerminalStopHandler.postDelayed(() -> {
             if (mTermuxService == null || mIsVisible || TermuxApplication.isAppInForeground())
@@ -644,17 +652,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTermuxService.showFloatingTerminalIfAllowed();
         }, 350);
     }
-
-    /** Show a toast and dismiss the last one if still visible. */
-    public void showToast(String text, boolean longDuration) {
-        if (text == null || text.isEmpty()) return;
-        if (mLastToast != null) mLastToast.cancel();
-        mLastToast = Toast.makeText(TermuxActivity.this, text, longDuration ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT);
-        mLastToast.setGravity(Gravity.TOP, 0, 0);
-        mLastToast.show();
-    }
-
-
 
     @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
@@ -675,10 +672,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE, getResources().getString(R.string.action_kill_process, getCurrentSession().getPid())).setEnabled(currentSession.isRunning());
         menu.add(Menu.NONE, CONTEXT_MENU_STYLING_ID, Menu.NONE, R.string.action_style_terminal);
         menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on).setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
-        menu.add(Menu.NONE, CONTEXT_MENU_FLOATING_TERMINAL_ID, Menu.NONE,
-            PermissionUtils.checkDisplayOverOtherAppsPermission(this)
-                ? R.string.action_show_floating_terminal
-                : R.string.action_enable_floating_terminal);
         menu.add(Menu.NONE, CONTEXT_MENU_SNIPPETS_ID, Menu.NONE, R.string.termuxplus_manage_snippets_title);
         menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
         menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
@@ -724,13 +717,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             case CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON:
                 toggleKeepScreenOn();
                 return true;
-            case CONTEXT_MENU_FLOATING_TERMINAL_ID:
-                if (!PermissionUtils.checkDisplayOverOtherAppsPermission(this)) {
-                    PermissionUtils.requestDisplayOverOtherAppsPermission(this);
-                } else if (mTermuxService != null) {
-                    mTermuxService.showFloatingTerminalExpandedIfAllowed();
-                }
-                return true;
             case CONTEXT_MENU_SNIPPETS_ID:
                 TermuxPlusSnippetsActivity.start(this);
                 return true;
@@ -772,7 +758,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void onResetTerminalSession(TerminalSession session) {
         if (session != null) {
             session.reset();
-            showToast(getResources().getString(R.string.msg_terminal_reset), true);
 
             if (mTermuxTerminalSessionActivityClient != null)
                 mTermuxTerminalSessionActivityClient.onResetTerminalSession();
@@ -811,12 +796,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     // ============================================================= //
 
     private void setupHeaderBar() {
-        View overview = findViewById(R.id.tp_btn_overview);
-        View fullscreen = findViewById(R.id.tp_btn_fullscreen);
         View menu = findViewById(R.id.tp_btn_menu);
         View restore = findViewById(R.id.tp_fullscreen_restore);
-        if (overview != null) overview.setOnClickListener(v -> showTabOverview());
-        if (fullscreen != null) fullscreen.setOnClickListener(v -> toggleFullscreen());
         if (menu != null) menu.setOnClickListener(v -> showActionSheet());
         if (restore != null) restore.setOnClickListener(v -> exitFullscreen());
     }
@@ -848,7 +829,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     public void exitFullscreen() {
-        if (mIsFullscreen) setFullscreen(false);
+        setFullscreen(false);
     }
 
     private void setFullscreen(boolean fullscreen) {
@@ -888,6 +869,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 mTermuxActivityRootView.setPadding(0, 0, 0, 0);
             mTermuxActivityRootView.requestApplyInsets();
         }
+        View relativeLayout = findViewById(R.id.activity_termux_root_relative_layout);
+        if (fullscreen) {
+            if (relativeLayout != null) relativeLayout.requestApplyInsets();
+        } else {
+            resetFullscreenSafeInsets();
+        }
 
         if (header != null) header.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
         if (restore != null) restore.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
@@ -920,6 +907,87 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         if (mTerminalView != null) mTerminalView.requestFocus();
+    }
+
+    private void applyFullscreenSafeInsets(WindowInsets platformInsets) {
+        View workspace = findViewById(R.id.terminal_workspace);
+        View restore = findViewById(R.id.tp_fullscreen_restore);
+        if (workspace == null) return;
+
+        if (!mIsFullscreen) {
+            resetFullscreenSafeInsets();
+            return;
+        }
+
+        WindowInsetsCompat insets = WindowInsetsCompat.toWindowInsetsCompat(platformInsets, workspace);
+        Insets cutout = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.displayCutout());
+        Insets gestures = insets.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures());
+
+        int sidePadding = dp(6);
+        int verticalPadding = dp(6);
+        int roundedLimit = dp(12);
+        int left = Math.max(sidePadding, cutout.left);
+        int top = Math.max(verticalPadding, cutout.top);
+        int right = Math.max(sidePadding, cutout.right);
+        int bottom = Math.max(verticalPadding, Math.max(cutout.bottom, Math.min(gestures.bottom, roundedLimit)));
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            left = Math.max(left, Math.min(roundedCornerInset(platformInsets,
+                RoundedCorner.POSITION_TOP_LEFT, RoundedCorner.POSITION_BOTTOM_LEFT), roundedLimit));
+            top = Math.max(top, Math.min(roundedCornerInset(platformInsets,
+                RoundedCorner.POSITION_TOP_LEFT, RoundedCorner.POSITION_TOP_RIGHT), roundedLimit));
+            right = Math.max(right, Math.min(roundedCornerInset(platformInsets,
+                RoundedCorner.POSITION_TOP_RIGHT, RoundedCorner.POSITION_BOTTOM_RIGHT), roundedLimit));
+            bottom = Math.max(bottom, Math.min(roundedCornerInset(platformInsets,
+                RoundedCorner.POSITION_BOTTOM_LEFT, RoundedCorner.POSITION_BOTTOM_RIGHT), roundedLimit));
+        }
+
+        setFullscreenSafePadding(workspace, left, top, right, bottom);
+        setFullscreenRestoreMargins(restore, top + dp(8), right + dp(10));
+    }
+
+    private void resetFullscreenSafeInsets() {
+        View workspace = findViewById(R.id.terminal_workspace);
+        if (workspace != null)
+            setFullscreenSafePadding(workspace, 0, 0, 0, 0);
+        setFullscreenRestoreMargins(findViewById(R.id.tp_fullscreen_restore), dp(10), dp(12));
+    }
+
+    @androidx.annotation.RequiresApi(api = Build.VERSION_CODES.S)
+    private int roundedCornerInset(WindowInsets insets, int firstPosition, int secondPosition) {
+        RoundedCorner first = insets.getRoundedCorner(firstPosition);
+        RoundedCorner second = insets.getRoundedCorner(secondPosition);
+        return Math.max(first == null ? 0 : first.getRadius(), second == null ? 0 : second.getRadius());
+    }
+
+    private void setFullscreenSafePadding(View workspace, int left, int top, int right, int bottom) {
+        if (left == mFullscreenSafeLeft && top == mFullscreenSafeTop &&
+            right == mFullscreenSafeRight && bottom == mFullscreenSafeBottom)
+            return;
+
+        mFullscreenSafeLeft = left;
+        mFullscreenSafeTop = top;
+        mFullscreenSafeRight = right;
+        mFullscreenSafeBottom = bottom;
+        workspace.setPadding(left, top, right, bottom);
+        workspace.requestLayout();
+        if (mTerminalView != null) mTerminalView.post(mTerminalView::updateSize);
+    }
+
+    private void setFullscreenRestoreMargins(View restore, int topMargin, int endMargin) {
+        if (restore == null) return;
+        ViewGroup.LayoutParams rawParams = restore.getLayoutParams();
+        if (!(rawParams instanceof ViewGroup.MarginLayoutParams)) return;
+
+        ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) rawParams;
+        if (params.topMargin == topMargin && params.getMarginEnd() == endMargin) return;
+        params.topMargin = topMargin;
+        params.setMarginEnd(endMargin);
+        restore.setLayoutParams(params);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     // ---- Action-sheet callbacks (mirror the legacy context menu items) ----
@@ -972,16 +1040,28 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         toggleKeepScreenOn();
     }
 
-    public void tpFloatingTerminal() {
-        if (!PermissionUtils.checkDisplayOverOtherAppsPermission(this)) {
+    public boolean tpIsBackgroundFloatingTerminalEnabled() {
+        return mPreferences != null && mPreferences.isTermuxPlusBackgroundFloatingTerminalEnabled();
+    }
+
+    public boolean tpSetBackgroundFloatingTerminalEnabled(boolean enabled) {
+        if (mPreferences == null)
+            return false;
+
+        if (enabled && !PermissionUtils.checkDisplayOverOtherAppsPermission(this)) {
+            Logger.showToast(this, getString(R.string.termuxplus_background_floating_terminal_permission_required), true);
             PermissionUtils.requestDisplayOverOtherAppsPermission(this);
-        } else if (mTermuxService != null) {
-            mTermuxService.showFloatingTerminalExpandedIfAllowed();
+            return false;
         }
+
+        mPreferences.setTermuxPlusBackgroundFloatingTerminalEnabled(enabled);
+        if (!enabled && mTermuxService != null)
+            mTermuxService.hideFloatingTerminal();
+        return enabled;
     }
 
     public void tpSnippets() {
-        TermuxPlusSnippetsActivity.start(this);
+        showTerminalToolbarSnippetsPopup();
     }
 
     public void tpHelp() {

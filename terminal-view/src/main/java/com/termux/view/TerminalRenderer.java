@@ -37,7 +37,7 @@ public final class TerminalRenderer {
         mFontWidth = mTextPaint.measureText("X");
     }
 
-    void copyGlyphPaintTo(Paint paint) {
+    public void copyGlyphPaintTo(Paint paint) {
         paint.set(mTextPaint);
         paint.setColor(0xffffffff);
         paint.setFakeBoldText(false);
@@ -52,5 +52,9 @@ public final class TerminalRenderer {
 
     public int getFontLineSpacing() {
         return mFontLineSpacing;
+    }
+
+    public int getFontLineSpacingAndAscent() {
+        return mFontLineSpacingAndAscent;
     }
 }

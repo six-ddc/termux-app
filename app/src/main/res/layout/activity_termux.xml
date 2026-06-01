@@ -21,9 +21,10 @@
             android:layout_height="match_parent"
             android:layout_alignParentTop="true"
             android:layout_above="@+id/terminal_toolbar_view_pager"
+            android:background="@android:color/black"
             android:orientation="vertical">
 
-            <!-- Modern header bar: session pills + action buttons -->
+            <!-- Modern header bar: session pills + compact action menu -->
             <LinearLayout
                 android:id="@+id/tp_header_bar"
                 android:layout_width="match_parent"
@@ -51,28 +52,6 @@
                         android:orientation="horizontal" />
 
                 </HorizontalScrollView>
-
-                <ImageButton
-                    android:id="@+id/tp_btn_overview"
-                    android:layout_width="@dimen/termuxplus_header_button_size"
-                    android:layout_height="@dimen/termuxplus_header_button_size"
-                    android:layout_marginStart="2dp"
-                    android:background="@drawable/tp_header_button_bg"
-                    android:contentDescription="@string/termuxplus_tab_overview"
-                    android:padding="8dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_tp_grid" />
-
-                <ImageButton
-                    android:id="@+id/tp_btn_fullscreen"
-                    android:layout_width="@dimen/termuxplus_header_button_size"
-                    android:layout_height="@dimen/termuxplus_header_button_size"
-                    android:layout_marginStart="2dp"
-                    android:background="@drawable/tp_header_button_bg"
-                    android:contentDescription="@string/termuxplus_fullscreen"
-                    android:padding="8dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_tp_fullscreen" />
 
                 <ImageButton
                     android:id="@+id/tp_btn_menu"

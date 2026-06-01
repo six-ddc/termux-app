@@ -91,6 +91,15 @@ public class TermuxAppSharedPreferences extends AppSharedPreferences {
         SharedPreferenceUtils.setBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMUXPLUS_SNIPPETS_ENABLED, value, false);
     }
 
+    public boolean isTermuxPlusBackgroundFloatingTerminalEnabled() {
+        return SharedPreferenceUtils.getBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMUXPLUS_BACKGROUND_FLOATING_TERMINAL_ENABLED,
+            TERMUX_APP.DEFAULT_VALUE_TERMUXPLUS_BACKGROUND_FLOATING_TERMINAL_ENABLED);
+    }
+
+    public void setTermuxPlusBackgroundFloatingTerminalEnabled(boolean value) {
+        SharedPreferenceUtils.setBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMUXPLUS_BACKGROUND_FLOATING_TERMINAL_ENABLED, value, false);
+    }
+
     public boolean isTerminalMarginAdjustmentEnabled() {
         return SharedPreferenceUtils.getBoolean(mSharedPreferences, TERMUX_APP.KEY_TERMINAL_MARGIN_ADJUSTMENT, TERMUX_APP.DEFAULT_TERMINAL_MARGIN_ADJUSTMENT);
     }

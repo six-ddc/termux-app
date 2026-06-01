@@ -1,8 +1,5 @@
 package com.termux.app.terminal.io;
 
-import android.graphics.Color;
-import android.graphics.drawable.ColorDrawable;
-import android.os.Build;
 import android.graphics.Typeface;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -11,18 +8,21 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupWindow;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
+import androidx.core.widget.NestedScrollView;
 import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
+
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
@@ -42,11 +42,10 @@ public class TerminalToolbarViewPager {
     public static class PageAdapter extends PagerAdapter {
 
         final TermuxActivity mActivity;
-        PopupWindow mSnippetsPopupWindow;
-        View mSnippetsPopupContent;
+        BottomSheetDialog mSnippetsSheetDialog;
+        View mSnippetsSheetContent;
         LinearLayout mSnippetsPopupList;
         EditText mSnippetSearchInput;
-        View mSnippetsAnchor;
 
         public PageAdapter(TermuxActivity activity) {
             this.mActivity = activity;
@@ -81,7 +80,6 @@ public class TerminalToolbarViewPager {
         private View inflateExtraKeysPage(LayoutInflater inflater, ViewGroup collection, int position) {
             View layout = inflater.inflate(R.layout.view_terminal_toolbar_extra_keys, collection, false);
             ExtraKeysView extraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys);
-            mSnippetsAnchor = collection;
             extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
             extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
             extraKeysView.setButtonColors(
@@ -133,38 +131,52 @@ public class TerminalToolbarViewPager {
             LinearLayout row = new LinearLayout(mActivity);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setMinimumHeight(dp(40));
-            row.setPadding(dp(8), dp(4), dp(4), dp(4));
-            row.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_snippet_row_bg));
+            row.setMinimumHeight(dp(62));
+            row.setPadding(dp(10), dp(8), dp(12), dp(8));
+            row.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_action_row_bg));
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            rowParams.setMargins(dp(6), dp(2), dp(6), dp(4));
+            rowParams.setMargins(0, 0, 0, dp(2));
             row.setLayoutParams(rowParams);
+
+            FrameLayout tile = new FrameLayout(mActivity);
+            tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
+            ImageView icon = new ImageView(mActivity);
+            icon.setImageResource(R.drawable.ic_tp_braces);
+            icon.setColorFilter(color(R.color.termuxplus_text_primary));
+            FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
+            iconParams.gravity = Gravity.CENTER;
+            tile.addView(icon, iconParams);
+            LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(dp(38), dp(38));
+            tileParams.setMarginEnd(dp(12));
+            row.addView(tile, tileParams);
 
             LinearLayout textColumn = new LinearLayout(mActivity);
             textColumn.setOrientation(LinearLayout.VERTICAL);
-            TextView title = createSnippetText(snippet.getTitle(), color(R.color.termuxplus_text_primary), 12, Typeface.BOLD);
-            TextView description = createSnippetText(snippet.getDescription(), color(R.color.termuxplus_text_secondary), 10, Typeface.NORMAL);
+            TextView title = createSnippetText(snippet.getTitle(), color(R.color.termuxplus_text_primary), 14, Typeface.NORMAL, false);
+            TextView command = createSnippetText(snippet.getCommand(), color(R.color.termuxplus_text_secondary), 11, Typeface.NORMAL, true);
+            TextView description = createSnippetText(snippet.getDescription(), color(R.color.termuxplus_text_secondary), 11, Typeface.NORMAL, false);
             String metaText = buildSnippetMetaText(snippet);
-            TextView meta = createSnippetText(metaText, color(R.color.termuxplus_text_muted), 10, Typeface.NORMAL);
+            TextView meta = createSnippetText(metaText, color(R.color.termuxplus_text_muted), 10, Typeface.NORMAL, false);
             textColumn.addView(title);
+            if (!TextUtils.isEmpty(snippet.getCommand())) textColumn.addView(command);
             if (!TextUtils.isEmpty(snippet.getDescription())) textColumn.addView(description);
             if (!TextUtils.isEmpty(metaText)) textColumn.addView(meta);
             row.addView(textColumn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-            Button insert = createToolbarButton(mActivity.getString(R.string.termuxplus_insert));
+            Button insert = createSnippetActionButton(mActivity.getString(R.string.termuxplus_insert), false);
             insert.setOnClickListener(v -> sendSnippetText(snippet.getCommand(), false));
-            row.addView(insert, createSnippetActionLayoutParams(58));
+            row.addView(insert, createSnippetActionLayoutParams(60));
 
-            Button run = createToolbarButton(mActivity.getString(R.string.termuxplus_run));
+            Button run = createSnippetActionButton(mActivity.getString(R.string.termuxplus_run), true);
             run.setOnClickListener(v -> sendSnippetText(snippet.getCommand(), true));
-            row.addView(run, createSnippetActionLayoutParams(50));
+            row.addView(run, createSnippetActionLayoutParams(54));
 
             row.setOnClickListener(v -> sendSnippetText(snippet.getCommand(), snippet.shouldRunByDefault()));
             return row;
         }
 
-        private TextView createSnippetText(String text, int color, int textSize, int typefaceStyle) {
+        private TextView createSnippetText(String text, int color, int textSize, int typefaceStyle, boolean monospace) {
             TextView textView = new TextView(mActivity);
             textView.setText(text);
             textView.setTextColor(color);
@@ -172,7 +184,7 @@ public class TerminalToolbarViewPager {
             textView.setIncludeFontPadding(false);
             textView.setSingleLine(true);
             textView.setEllipsize(TextUtils.TruncateAt.END);
-            textView.setTypeface(Typeface.MONOSPACE, typefaceStyle);
+            textView.setTypeface(monospace ? Typeface.MONOSPACE : Typeface.DEFAULT, typefaceStyle);
             return textView;
         }
 
@@ -189,7 +201,14 @@ public class TerminalToolbarViewPager {
         private Button createToolbarButton(String text) {
             Button button = new Button(mActivity);
             button.setText(text);
-            styleActionButton(button);
+            styleActionButton(button, false);
+            return button;
+        }
+
+        private Button createSnippetActionButton(String text, boolean primary) {
+            Button button = new Button(mActivity);
+            button.setText(text);
+            styleActionButton(button, primary);
             return button;
         }
 
@@ -201,7 +220,7 @@ public class TerminalToolbarViewPager {
             editText.setTypeface(Typeface.MONOSPACE);
         }
 
-        private void styleActionButton(Button button) {
+        private void styleActionButton(Button button, boolean primary) {
             button.setAllCaps(false);
             button.setGravity(Gravity.CENTER);
             button.setIncludeFontPadding(false);
@@ -209,16 +228,17 @@ public class TerminalToolbarViewPager {
             button.setMinimumHeight(0);
             button.setMinWidth(0);
             button.setMinimumWidth(0);
-            button.setPadding(dp(5), 0, dp(5), 0);
+            button.setPadding(dp(8), 0, dp(8), 0);
             button.setSingleLine(true);
-            button.setTextSize(11);
-            button.setTextColor(color(R.color.termuxplus_text_primary));
-            button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-            button.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_toolbar_action_button));
+            button.setTextSize(12);
+            button.setTextColor(color(primary ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
+            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            button.setBackground(ContextCompat.getDrawable(mActivity,
+                primary ? R.drawable.tp_accent_button_bg : R.drawable.tp_chip_bg));
         }
 
         private LinearLayout.LayoutParams createSnippetActionLayoutParams(int widthDp) {
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(widthDp), dp(30));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(widthDp), dp(34));
             params.setMargins(dp(4), 0, 0, 0);
             return params;
         }
@@ -254,58 +274,61 @@ public class TerminalToolbarViewPager {
         }
 
         public void showSnippetsPopup() {
-            View anchor = mSnippetsAnchor != null ? mSnippetsAnchor : mActivity.getTerminalToolbarViewPager();
-            if (anchor == null || !anchor.isAttachedToWindow()) return;
+            View decorView = mActivity.getWindow().getDecorView();
+            if (decorView == null || !decorView.isAttachedToWindow()) return;
 
-            int popupHeight = getSnippetsPopupHeight(anchor);
-            int popupWidth = anchor.getWidth() > 0 ? anchor.getWidth() : mActivity.getResources().getDisplayMetrics().widthPixels;
-            if (mSnippetsPopupWindow == null) {
-                mSnippetsPopupContent = createSnippetsPopupContent();
-                mSnippetsPopupWindow = new PopupWindow(mSnippetsPopupContent, popupWidth, popupHeight, true);
-                mSnippetsPopupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                mSnippetsPopupWindow.setOutsideTouchable(true);
-                mSnippetsPopupWindow.setInputMethodMode(PopupWindow.INPUT_METHOD_NEEDED);
-                mSnippetsPopupWindow.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
-                    mSnippetsPopupWindow.setElevation(dp(8));
+            if (mSnippetsSheetDialog == null) {
+                mSnippetsSheetContent = createSnippetsSheetContent();
+                mSnippetsSheetDialog = new BottomSheetDialog(mActivity, R.style.Theme_TermuxPlus_BottomSheet);
+                mSnippetsSheetDialog.setContentView(mSnippetsSheetContent);
+                mSnippetsSheetDialog.setOnDismissListener(dialog -> clearSnippetsPopupReferences());
+                mSnippetsSheetDialog.setOnShowListener(dialog -> configureSnippetsSheet());
             }
 
             renderSnippets(mSnippetSearchInput, mSnippetsPopupList);
-            if (mSnippetsPopupWindow.isShowing()) {
-                mSnippetsPopupWindow.update(anchor, 0, -popupHeight - anchor.getHeight(), popupWidth, popupHeight);
-            } else {
-                mSnippetsPopupWindow.setWidth(popupWidth);
-                mSnippetsPopupWindow.setHeight(popupHeight);
-                mSnippetsPopupWindow.showAsDropDown(anchor, 0, -popupHeight - anchor.getHeight());
-            }
+            if (!mSnippetsSheetDialog.isShowing())
+                mSnippetsSheetDialog.show();
+            else
+                configureSnippetsSheet();
         }
 
         public void dismissSnippetsPopup() {
-            if (mSnippetsPopupWindow == null) return;
-            mSnippetsPopupWindow.setContentView(null);
-            mSnippetsPopupWindow.dismiss();
-            mSnippetsPopupWindow = null;
-            mSnippetsPopupContent = null;
+            BottomSheetDialog dialog = mSnippetsSheetDialog;
+            if (dialog == null) return;
+
+            dialog.setOnDismissListener(null);
+            dialog.dismiss();
+            clearSnippetsPopupReferences();
+        }
+
+        private void clearSnippetsPopupReferences() {
+            mSnippetsSheetDialog = null;
+            mSnippetsSheetContent = null;
             mSnippetsPopupList = null;
             mSnippetSearchInput = null;
         }
 
-        private View createSnippetsPopupContent() {
+        private View createSnippetsSheetContent() {
             LinearLayout root = new LinearLayout(mActivity);
             root.setOrientation(LinearLayout.VERTICAL);
-            root.setPadding(0, dp(6), 0, dp(8));
-            root.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_snippets_popup_bg));
+            root.setPadding(dp(8), dp(8), dp(8), dp(12));
+            root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, getSnippetsSheetHeight()));
+
+            root.addView(createSnippetsSheetHandle());
+            root.addView(createSnippetsSheetTitleRow(), new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
 
             LinearLayout searchRow = new LinearLayout(mActivity);
             searchRow.setOrientation(LinearLayout.HORIZONTAL);
             searchRow.setGravity(Gravity.CENTER_VERTICAL);
-            searchRow.setPadding(dp(6), 0, dp(6), dp(6));
+            searchRow.setPadding(dp(4), 0, dp(4), dp(8));
 
             mSnippetSearchInput = new EditText(mActivity);
             mSnippetSearchInput.setHint(R.string.termuxplus_snippet_search_hint);
             mSnippetSearchInput.setSingleLine(true);
-            mSnippetSearchInput.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_toolbar_input_bg));
-            mSnippetSearchInput.setPadding(dp(10), 0, dp(10), 0);
+            mSnippetSearchInput.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_sheet_input_bg));
+            mSnippetSearchInput.setPadding(dp(12), 0, dp(12), 0);
             styleTextInput(mSnippetSearchInput);
             mSnippetSearchInput.addTextChangedListener(new SimpleTextWatcher() {
                 @Override
@@ -314,40 +337,81 @@ public class TerminalToolbarViewPager {
                 }
             });
             searchRow.addView(mSnippetSearchInput, new LinearLayout.LayoutParams(0, dp(36), 1));
-
-            Button manageButton = createToolbarButton(mActivity.getString(R.string.termuxplus_manage));
-            manageButton.setOnClickListener(v -> {
-                dismissSnippetsPopup();
-                TermuxPlusSnippetsActivity.start(mActivity);
-            });
-            LinearLayout.LayoutParams manageParams = new LinearLayout.LayoutParams(dp(72), dp(36));
-            manageParams.setMargins(dp(4), 0, 0, 0);
-            searchRow.addView(manageButton, manageParams);
             root.addView(searchRow, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-            ScrollView scrollView = new ScrollView(mActivity);
+            NestedScrollView scrollView = new NestedScrollView(mActivity);
             scrollView.setFillViewport(false);
             scrollView.setClipToPadding(false);
             scrollView.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
 
             mSnippetsPopupList = new LinearLayout(mActivity);
             mSnippetsPopupList.setOrientation(LinearLayout.VERTICAL);
-            scrollView.addView(mSnippetsPopupList, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+            scrollView.addView(mSnippetsPopupList, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             root.addView(scrollView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
             return root;
         }
 
-        private int getSnippetsPopupHeight(View anchor) {
-            int screenHeight = mActivity.getResources().getDisplayMetrics().heightPixels;
-            int availableHeight = anchor.getTop() - dp(8);
-            if (availableHeight <= 0) availableHeight = Math.round(screenHeight * 0.45f);
+        private View createSnippetsSheetHandle() {
+            View handle = new View(mActivity);
+            handle.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_sheet_handle));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(36), dp(4));
+            params.gravity = Gravity.CENTER_HORIZONTAL;
+            params.topMargin = dp(4);
+            params.bottomMargin = dp(10);
+            handle.setLayoutParams(params);
+            return handle;
+        }
 
-            int desiredHeight = Math.min(dp(280), Math.round(screenHeight * 0.42f));
-            int minimumHeight = Math.min(dp(132), availableHeight);
-            return Math.max(minimumHeight, Math.min(desiredHeight, availableHeight));
+        private View createSnippetsSheetTitleRow() {
+            LinearLayout titleRow = new LinearLayout(mActivity);
+            titleRow.setOrientation(LinearLayout.HORIZONTAL);
+            titleRow.setGravity(Gravity.CENTER_VERTICAL);
+            titleRow.setPadding(dp(12), 0, dp(4), dp(8));
+
+            TextView title = new TextView(mActivity);
+            title.setText(R.string.termuxplus_snippets_title);
+            title.setTextColor(color(R.color.termuxplus_text_primary));
+            title.setTextSize(17);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setSingleLine(true);
+            titleRow.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1));
+
+            Button manageButton = createToolbarButton(mActivity.getString(R.string.termuxplus_manage));
+            manageButton.setOnClickListener(v -> {
+                dismissSnippetsPopup();
+                TermuxPlusSnippetsActivity.start(mActivity);
+            });
+            titleRow.addView(manageButton, new LinearLayout.LayoutParams(dp(76), dp(34)));
+            return titleRow;
+        }
+
+        private void configureSnippetsSheet() {
+            if (mSnippetsSheetDialog == null) return;
+
+            int sheetHeight = getSnippetsSheetHeight();
+            FrameLayout bottomSheet = mSnippetsSheetDialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                ViewGroup.LayoutParams params = bottomSheet.getLayoutParams();
+                params.height = sheetHeight;
+                bottomSheet.setLayoutParams(params);
+            }
+
+            BottomSheetBehavior<FrameLayout> behavior = mSnippetsSheetDialog.getBehavior();
+            if (behavior != null) {
+                behavior.setPeekHeight(sheetHeight);
+                behavior.setSkipCollapsed(true);
+                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+        }
+
+        private int getSnippetsSheetHeight() {
+            int screenHeight = mActivity.getResources().getDisplayMetrics().heightPixels;
+            int desiredHeight = Math.min(dp(420), Math.round(screenHeight * 0.62f));
+            int minimumHeight = Math.min(dp(220), screenHeight);
+            return Math.max(minimumHeight, desiredHeight);
         }
 
         private int dp(int value) {

@@ -15,11 +15,13 @@ TERMUX_ANDROID_NDK_VERSION="${TERMUX_ANDROID_NDK_VERSION:-29.0.14206865}"
 TERMUX_ANDROID_COMPILE_SDK_VERSION="${TERMUX_ANDROID_COMPILE_SDK_VERSION:-34}"
 TERMUX_ANDROID_BUILD_ABI="${TERMUX_ANDROID_BUILD_ABI:-arm64-v8a}"
 TERMUX_ANDROID_BOOTSTRAP_ARCHS="${TERMUX_ANDROID_BOOTSTRAP_ARCHS:-aarch64}"
+TERMUX_ANDROID_NDK_API_LEVELS="${TERMUX_ANDROID_NDK_API_LEVELS:-21 23 24 26 29 34 35}"
 TERMUX_ANDROID_BUILD_TOOLS_VERSIONS="${TERMUX_ANDROID_BUILD_TOOLS_VERSIONS:-35.0.0 36.0.0}"
 TERMUX_ANDROID_PLATFORM_TOOLS_REVISION="${TERMUX_ANDROID_PLATFORM_TOOLS_REVISION:-37.0.0}"
 TERMUX_ANDROID_PROJECT_DIR="${TERMUX_ANDROID_PROJECT_DIR:-${1:-$PWD}}"
 TERMUX_ANDROID_WRITE_LOCAL_PROPERTIES="${TERMUX_ANDROID_WRITE_LOCAL_PROPERTIES:-true}"
 TERMUX_ANDROID_DOWNLOAD_SDK_PACKAGES="${TERMUX_ANDROID_DOWNLOAD_SDK_PACKAGES:-true}"
+TERMUX_ANDROID_ACCEPT_SDK_LICENSES="${TERMUX_ANDROID_ACCEPT_SDK_LICENSES:-true}"
 TERMUX_ANDROID_APT_PACKAGES="${TERMUX_ANDROID_APT_PACKAGES:-openjdk-21 git clang make zip unzip coreutils findutils aapt aapt2 aidl android-tools apksigner d8 ndk-multilib ndk-sysroot}"
 
 if [ -d "$TERMUX_ANDROID_PROJECT_DIR" ]; then
@@ -127,6 +129,36 @@ install_platform_tools_shim() {
     "$ANDROID_HOME/platform-tools/source.properties" \
     "Android SDK Platform-Tools" \
     "$TERMUX_ANDROID_PLATFORM_TOOLS_REVISION"
+}
+
+install_sdk_license_files() {
+  case "$TERMUX_ANDROID_ACCEPT_SDK_LICENSES" in
+    true) ;;
+    false) return 0 ;;
+    *) tp_die "TERMUX_ANDROID_ACCEPT_SDK_LICENSES must be true or false" ;;
+  esac
+
+  temp_dir="$(tp_mktemp_dir)"
+  license_dir="$ANDROID_HOME/licenses"
+  sdk_license="$temp_dir/android-sdk-license"
+  preview_license="$temp_dir/android-sdk-preview-license"
+
+  # These are the standard Android SDK license hashes recognized by the
+  # Android Gradle Plugin when it auto-downloads platform/build-tools packages.
+  cat > "$sdk_license" <<'EOF'
+24333f8a63b6825ea9c5514f83c2829b004d1fee
+d56f5187479451eabf01fb78af6dfcb131a6481e
+8933bad161af4178b1185d1a37fbf41ea5269c55
+EOF
+
+  cat > "$preview_license" <<'EOF'
+84831b9409646a918e30573bab4c9c91346d8abd
+EOF
+
+  tp_replace_file "$sdk_license" "$license_dir/android-sdk-license" 644
+  tp_replace_file "$preview_license" "$license_dir/android-sdk-preview-license" 644
+  rm -rf "$temp_dir"
+  tp_log "installed Android SDK license markers in $license_dir"
 }
 
 install_build_tools_symlinks() {
@@ -310,6 +342,37 @@ EOF
   ln -sf "$llvm_strip" "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 }
 
+link_dir_contents() {
+  source_dir="$1"
+  target_dir="$2"
+
+  [ -d "$source_dir" ] || return 0
+  mkdir -p "$target_dir"
+  for source_path in "$source_dir"/*; do
+    [ -e "$source_path" ] || continue
+    ln -sf "$source_path" "$target_dir/$(basename "$source_path")"
+  done
+}
+
+install_ndk_sysroot_shim() {
+  sysroot_dir="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+  mkdir -p "$sysroot_dir/usr"
+  ln -sfn "$PREFIX/include" "$sysroot_dir/usr/include"
+
+  for triple in aarch64-linux-android arm-linux-androideabi i686-linux-android x86_64-linux-android; do
+    lib_dir="$sysroot_dir/usr/lib/$triple"
+    link_dir_contents "$PREFIX/$triple/lib" "$lib_dir"
+    link_dir_contents "$PREFIX/opt/ndk-multilib/$triple/lib" "$lib_dir"
+    for api_level in $TERMUX_ANDROID_NDK_API_LEVELS; do
+      api_lib_dir="$lib_dir/$api_level"
+      link_dir_contents "$PREFIX/$triple/lib" "$api_lib_dir"
+      link_dir_contents "$PREFIX/opt/ndk-multilib/$triple/lib" "$api_lib_dir"
+    done
+  done
+
+  tp_log "installed Android NDK sysroot shim in $sysroot_dir"
+}
+
 download_sdk_packages_if_possible() {
   case "$TERMUX_ANDROID_DOWNLOAD_SDK_PACKAGES" in
     true) ;;
@@ -364,7 +427,9 @@ verify_required_tools
 mkdir -p "$ANDROID_HOME"
 write_project_local_properties
 install_platform_tools_shim
+install_sdk_license_files
 install_ndk_shim
+install_ndk_sysroot_shim
 download_sdk_packages_if_possible
 install_build_tools_symlinks
 verify_environment_state

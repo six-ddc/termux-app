@@ -63,6 +63,7 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
     private boolean mCursorInViewport = true;
     private boolean mCursorWideTail;
     private boolean mCursorPasswordInput;
+    private boolean mLastReportedCursorEnabled = true;
     private boolean mRenderStateCursorVisible = true;
     private boolean mRenderStateCursorBlinking = true;
     private boolean mCursorBlinkingEnabled;
@@ -322,6 +323,16 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
         mCursorWideTail = cursor.length >= 6 && cursor[5] != 0;
         mRenderStateCursorBlinking = cursor.length < 7 || cursor[6] != 0;
         mCursorPasswordInput = cursor.length >= 8 && cursor[7] != 0;
+        notifyCursorEnabledIfChanged();
+    }
+
+    private void notifyCursorEnabledIfChanged() {
+        boolean enabled = mRenderStateCursorVisible && JNI.ghosttyGetBoolean(mNativeContext, DATA_CURSOR_VISIBLE);
+        if (enabled == mLastReportedCursorEnabled)
+            return;
+        mLastReportedCursorEnabled = enabled;
+        if (mClient != null)
+            mClient.onTerminalCursorStateChange(enabled);
     }
 
     private int mapGhosttyCursorStyle(int ghosttyStyle) {
@@ -472,9 +483,9 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
 
     @Override
     public void setCursorBlinkState(boolean cursorBlinkState) {
+        if (mCursorBlinkState == cursorBlinkState)
+            return;
         mCursorBlinkState = cursorBlinkState;
-        if (mClient != null)
-            mClient.onTerminalCursorStateChange(cursorBlinkState);
     }
 
     @Override

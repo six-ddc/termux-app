@@ -16,6 +16,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.GridLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -33,7 +34,6 @@ import com.termux.terminal.TerminalEngine;
 import com.termux.terminal.TerminalRenderSnapshot;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TextStyle;
-import com.termux.view.TerminalView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,7 +45,7 @@ import java.util.List;
 public class TermuxPlusTabOverview {
 
     private static final int SESSIONS_PER_PAGE = 4;
-    private static final float FALLBACK_TERMINAL_ASPECT_RATIO = 0.58f;
+    private static final float PREVIEW_CELL_WIDTH_RATIO = 0.52f;
 
     private final TermuxActivity mActivity;
     private final float mDensity;
@@ -258,51 +258,40 @@ public class TermuxPlusTabOverview {
     }
 
     private View buildPreviewPage(List<TerminalSession> sessions, int page) {
-        LinearLayout pageLayout = new LinearLayout(mActivity);
-        pageLayout.setOrientation(LinearLayout.VERTICAL);
-        pageLayout.setPadding(0, dp(4), 0, 0);
+        GridLayout grid = new GridLayout(mActivity);
+        grid.setColumnCount(2);
+        grid.setRowCount(2);
+        grid.setUseDefaultMargins(false);
+        grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
+        grid.setPadding(0, dp(4), 0, 0);
 
         int firstIndex = page * SESSIONS_PER_PAGE;
         for (int row = 0; row < 2; row++) {
-            LinearLayout rowLayout = new LinearLayout(mActivity);
-            rowLayout.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-            if (row == 0) rowParams.bottomMargin = dp(8);
-            pageLayout.addView(rowLayout, rowParams);
-
             for (int col = 0; col < 2; col++) {
                 int sessionIndex = firstIndex + (row * 2) + col;
                 View cell = buildCell(sessions, sessionIndex);
-                LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-                if (col == 0) cellParams.setMarginEnd(dp(4));
-                else cellParams.setMarginStart(dp(4));
-                rowLayout.addView(cell, cellParams);
+                GridLayout.LayoutParams cellParams = new GridLayout.LayoutParams(
+                    GridLayout.spec(row, 1, GridLayout.FILL, 1f),
+                    GridLayout.spec(col, 1, GridLayout.FILL, 1f));
+                cellParams.width = 0;
+                cellParams.height = 0;
+                cellParams.setMargins(
+                    col == 0 ? 0 : dp(4),
+                    row == 0 ? 0 : dp(4),
+                    col == 0 ? dp(4) : 0,
+                    row == 0 ? dp(4) : 0);
+                grid.addView(cell, cellParams);
             }
         }
 
-        return pageLayout;
+        return grid;
     }
 
     private View buildCell(List<TerminalSession> sessions, int sessionIndex) {
         if (sessionIndex < sessions.size())
-            return buildAspectCell(buildSessionPreviewCard(sessionIndex, sessions.get(sessionIndex)));
+            return buildSessionPreviewCard(sessionIndex, sessions.get(sessionIndex));
 
-        return buildAspectCell(buildEmptyCell());
-    }
-
-    private View buildAspectCell(View previewContent) {
-        FrameLayout slot = new FrameLayout(mActivity);
-        PreviewAspectFrame aspectFrame = new PreviewAspectFrame(mActivity);
-        aspectFrame.setAspectRatio(previewAspectRatio());
-        aspectFrame.addView(previewContent, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
-        slot.addView(aspectFrame, params);
-        return slot;
+        return buildEmptyCell();
     }
 
     private View buildSessionPreviewCard(int index, TerminalSession session) {
@@ -462,59 +451,12 @@ public class TermuxPlusTabOverview {
         return color(R.color.termuxplus_text_muted);
     }
 
-    private float previewAspectRatio() {
-        TerminalView terminalView = mActivity.getTerminalView();
-        int width = terminalView == null ? 0 : terminalView.getWidth();
-        int height = terminalView == null ? 0 : terminalView.getHeight();
-        if (width > 0 && height > 0)
-            return clamp(width / (float) height, 0.42f, 2.4f);
-        return FALLBACK_TERMINAL_ASPECT_RATIO;
-    }
-
-    private float clamp(float value, float min, float max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
     private int color(int colorResId) {
         return ContextCompat.getColor(mActivity, colorResId);
     }
 
     private int dp(int value) {
         return Math.round(value * mDensity);
-    }
-
-    private static class PreviewAspectFrame extends FrameLayout {
-        private float mAspectRatio = FALLBACK_TERMINAL_ASPECT_RATIO;
-
-        PreviewAspectFrame(Context context) {
-            super(context);
-        }
-
-        void setAspectRatio(float aspectRatio) {
-            mAspectRatio = aspectRatio > 0 ? aspectRatio : FALLBACK_TERMINAL_ASPECT_RATIO;
-            requestLayout();
-        }
-
-        @Override
-        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            int maxWidth = MeasureSpec.getSize(widthMeasureSpec);
-            int maxHeight = MeasureSpec.getSize(heightMeasureSpec);
-            if (maxWidth <= 0 || maxHeight <= 0) {
-                super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                return;
-            }
-
-            int width = maxWidth;
-            int height = Math.round(width / mAspectRatio);
-            if (height > maxHeight) {
-                height = maxHeight;
-                width = Math.round(height * mAspectRatio);
-            }
-
-            int exactWidth = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY);
-            int exactHeight = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY);
-            super.onMeasure(exactWidth, exactHeight);
-        }
     }
 
     private class TerminalSnapshotPreviewView extends View {
@@ -554,8 +496,9 @@ public class TermuxPlusTabOverview {
                 return;
             }
 
-            float cellWidth = getWidth() / (float) columns;
-            float cellHeight = getHeight() / (float) rows;
+            PreviewBounds bounds = previewBounds(columns, rows);
+            float cellWidth = bounds.width / columns;
+            float cellHeight = bounds.height / rows;
             if (cellWidth <= 0 || cellHeight <= 0) return;
 
             int defaultBackground = snapshot.colors[
@@ -563,15 +506,38 @@ public class TermuxPlusTabOverview {
             mCellPaint.setColor(defaultBackground);
             canvas.drawRect(0, 0, getWidth(), getHeight(), mCellPaint);
 
+            canvas.save();
+            canvas.translate(bounds.left, bounds.top);
+            canvas.clipRect(0, 0, bounds.width, bounds.height);
             drawCellBackgrounds(canvas, snapshot, columns, rows, cellWidth, cellHeight, defaultBackground);
             drawCellText(canvas, snapshot, columns, rows, cellWidth, cellHeight, defaultBackground);
+            canvas.restore();
+        }
+
+        private PreviewBounds previewBounds(int columns, int rows) {
+            float availableWidth = getWidth();
+            float availableHeight = getHeight();
+            float previewAspectRatio = columns * PREVIEW_CELL_WIDTH_RATIO / rows;
+            float width = availableWidth;
+            float height = width / previewAspectRatio;
+            if (height > availableHeight) {
+                height = availableHeight;
+                width = height * previewAspectRatio;
+            }
+            return new PreviewBounds((availableWidth - width) / 2f,
+                (availableHeight - height) / 2f, width, height);
         }
 
         private void drawCellBackgrounds(Canvas canvas, TerminalRenderSnapshot snapshot, int columns, int rows,
                                          float cellWidth, float cellHeight, int defaultBackground) {
             for (int row = 0; row < rows; row++) {
-                for (int column = 0; column < columns; column++) {
+                for (int column = 0; column < columns; ) {
                     int base = renderCellBase(row, column, columns);
+                    int widthColumns = normalizedCellWidth(snapshot, base, column, columns);
+                    if (widthColumns <= 0) {
+                        column++;
+                        continue;
+                    }
                     int effect = snapshot.cells[base + TerminalEngine.RENDER_CELL_EFFECT];
                     boolean selected = snapshot.cells[base + TerminalEngine.RENDER_CELL_SELECTED] != 0;
                     boolean cursor = isCursorCell(snapshot, row, column);
@@ -587,8 +553,9 @@ public class TermuxPlusTabOverview {
                     if (background != defaultBackground || selected || cursor) {
                         mCellPaint.setColor(background);
                         canvas.drawRect(column * cellWidth, row * cellHeight,
-                            (column + 1) * cellWidth, (row + 1) * cellHeight, mCellPaint);
+                            (column + widthColumns) * cellWidth, (row + 1) * cellHeight, mCellPaint);
                     }
+                    column += widthColumns;
                 }
             }
         }
@@ -603,7 +570,7 @@ public class TermuxPlusTabOverview {
             for (int row = 0; row < rows; row++) {
                 for (int column = 0; column < columns; ) {
                     int base = renderCellBase(row, column, columns);
-                    int widthColumns = snapshot.cells[base + TerminalEngine.RENDER_CELL_WIDTH];
+                    int widthColumns = normalizedCellWidth(snapshot, base, column, columns);
                     if (widthColumns <= 0) {
                         column++;
                         continue;
@@ -671,6 +638,13 @@ public class TermuxPlusTabOverview {
             return (row * columns + column) * TerminalEngine.RENDER_CELL_STRIDE;
         }
 
+        private int normalizedCellWidth(TerminalRenderSnapshot snapshot, int base, int column, int columns) {
+            int widthColumns = snapshot.cells[base + TerminalEngine.RENDER_CELL_WIDTH];
+            if (widthColumns <= 0)
+                return 0;
+            return Math.max(1, Math.min(widthColumns, columns - column));
+        }
+
         private boolean isCursorCell(TerminalRenderSnapshot snapshot, int row, int column) {
             if (!snapshot.cursorVisibleIgnoringBlink) return false;
             int cursorColumn = snapshot.cursorWideTail ? Math.max(0, snapshot.cursorCol - 1) : snapshot.cursorCol;
@@ -710,6 +684,20 @@ public class TermuxPlusTabOverview {
             int green = (0xFF & (color >> 8)) * 2 / 3;
             int blue = (0xFF & color) * 2 / 3;
             return 0xFF000000 | (red << 16) | (green << 8) | blue;
+        }
+    }
+
+    private static class PreviewBounds {
+        final float left;
+        final float top;
+        final float width;
+        final float height;
+
+        PreviewBounds(float left, float top, float width, float height) {
+            this.left = left;
+            this.top = top;
+            this.width = width;
+            this.height = height;
         }
     }
 }

@@ -132,8 +132,6 @@
 
     <string name="action_style_terminal">Style</string>
     <string name="action_toggle_keep_screen_on">Keep screen on</string>
-    <string name="action_enable_floating_terminal">Enable floating terminal</string>
-    <string name="action_show_floating_terminal">Show floating terminal</string>
     <string name="action_open_help">Help</string>
     <string name="action_open_settings">Settings</string>
 
@@ -265,6 +263,12 @@
                 <string name="termux_terminal_view_terminal_margin_adjustment_on">Terminal margin adjustment will be enabled.
                     It should be enabled to try to fix the issue where soft keyboard covers part of extra keys/terminal view.
                     If it causes screen flickering on your devices, then disable it. (Default)</string>
+
+                <!-- TermuxPlus Background Floating Terminal -->
+                <string name="termuxplus_background_floating_terminal_title">Background floating terminal</string>
+                <string name="termuxplus_background_floating_terminal_sheet_off">Off by default</string>
+                <string name="termuxplus_background_floating_terminal_sheet_on">On when Termux is in background</string>
+                <string name="termuxplus_background_floating_terminal_permission_required">Grant Display over other apps permission to enable this option.</string>
 
 
 

@@ -41,6 +41,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import com.termux.terminal.TerminalEngine;
+import com.termux.terminal.TerminalRenderSnapshot;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.textselection.TextSelectionCursorController;
 
@@ -319,7 +320,11 @@ public final class TerminalView extends GLSurfaceView {
      * @param session The {@link TerminalSession} this view will be displaying.
      */
     public boolean attachSession(TerminalSession session) {
-        if (session == mTermSession) return false;
+        if (session == mTermSession) {
+            if (mTerminalEngine == null)
+                updateSize();
+            return false;
+        }
         mTopRow = 0;
 
         mTermSession = session;
@@ -505,7 +510,7 @@ public final class TerminalView extends GLSurfaceView {
 
         mTerminalEngine.clearScrollCounter();
 
-        invalidate();
+        requestTerminalRender();
         if (mAccessibilityEnabled) setContentDescription(getText());
     }
 
@@ -610,7 +615,7 @@ public final class TerminalView extends GLSurfaceView {
      */
     public int[] getColumnAndRow(MotionEvent event, boolean relativeToScroll) {
         int column = (int) (event.getX() / mRenderer.mFontWidth);
-        int row = (int) (event.getY() / mRenderer.mFontLineSpacing);
+        int row = (int) (event.getY() / mRenderer.mFontLineSpacing) + getRenderRowOffset();
         if (relativeToScroll) {
             row += mTopRow;
         }
@@ -926,9 +931,7 @@ public final class TerminalView extends GLSurfaceView {
 
         if (mTermSession == null) return;
 
-        // Ensure cursor is shown when a key is pressed down like long hold on (arrow) keys
-        if (mTerminalEngine != null)
-            mTerminalEngine.setCursorBlinkState(true);
+        showCursorAndRequestRender();
 
         final boolean controlDown = controlDownFromEvent || mClient.readControlKey();
         final boolean altDown = leftAltDownFromEvent || mClient.readAltKey();
@@ -1009,9 +1012,7 @@ public final class TerminalView extends GLSurfaceView {
 
     /** Input the specified keyCode if applicable and return if the input was consumed. */
     public boolean handleKeyCode(int keyCode, int keyMod) {
-        // Ensure cursor is shown when a key is pressed down like long hold on (arrow) keys
-        if (mTerminalEngine != null)
-            mTerminalEngine.setCursorBlinkState(true);
+        showCursorAndRequestRender();
 
         if (handleKeyCodeAction(keyCode, keyMod))
             return true;
@@ -1038,6 +1039,13 @@ public final class TerminalView extends GLSurfaceView {
         }
 
        return false;
+    }
+
+    private void showCursorAndRequestRender() {
+        if (mTerminalEngine == null)
+            return;
+        mTerminalEngine.setCursorBlinkState(true);
+        requestTerminalRender();
     }
 
     /**
@@ -1146,7 +1154,7 @@ public final class TerminalView extends GLSurfaceView {
     }
 
     public int getCursorY(float y) {
-        return (int) ((y / mRenderer.mFontLineSpacing) + mTopRow);
+        return (int) ((y / mRenderer.mFontLineSpacing) + getRenderRowOffset() + mTopRow);
     }
 
     public int getPointX(int cx) {
@@ -1157,7 +1165,47 @@ public final class TerminalView extends GLSurfaceView {
     }
 
     public int getPointY(int cy) {
-        return Math.round((cy - mTopRow) * mRenderer.mFontLineSpacing);
+        return Math.round((cy - mTopRow - getRenderRowOffset()) * mRenderer.mFontLineSpacing);
+    }
+
+    int getRenderRowOffset() {
+        if (mDrivesSessionResize || mTerminalEngine == null || mRenderer == null)
+            return 0;
+
+        int lineSpacing = Math.max(1, mRenderer.mFontLineSpacing);
+        int visibleRows = Math.max(1, (int) Math.ceil(getHeight() / (float) lineSpacing));
+        int maxOffset = Math.max(0, mTerminalEngine.getRows() - visibleRows);
+        int anchorRow = findLastRenderedContentRow();
+        if (anchorRow < 0)
+            anchorRow = mTerminalEngine.getCursorRow();
+        return Math.max(0, Math.min(maxOffset, anchorRow - visibleRows + 1));
+    }
+
+    private int findLastRenderedContentRow() {
+        TerminalRenderSnapshot snapshot = mTerminalEngine == null ? null : mTerminalEngine.getRenderSnapshot();
+        if (snapshot == null || snapshot.cells == null)
+            return -1;
+
+        int columns = snapshot.columns;
+        int rows = snapshot.rows;
+        for (int row = rows - 1; row >= 0; row--) {
+            for (int column = 0; column < columns; column++) {
+                int cellIndex = row * columns + column;
+                String text = snapshot.cellText != null && cellIndex < snapshot.cellText.length
+                    ? snapshot.cellText[cellIndex]
+                    : null;
+                if (text != null && !text.isEmpty())
+                    return row;
+
+                int base = cellIndex * TerminalEngine.RENDER_CELL_STRIDE;
+                if (base + TerminalEngine.RENDER_CELL_CODEPOINT >= snapshot.cells.length)
+                    continue;
+                int codePoint = snapshot.cells[base + TerminalEngine.RENDER_CELL_CODEPOINT];
+                if (codePoint > 0 && codePoint != ' ')
+                    return row;
+            }
+        }
+        return -1;
     }
 
     public int getRenderCellWidthAt(int column, int row) {
@@ -1465,14 +1513,13 @@ public final class TerminalView extends GLSurfaceView {
         public void run() {
             try {
                 if (mTerminalEngine != null) {
-                    // Toggle the blink state and then invalidate() the view so
-                    // that onDraw() is called, which then requests the GLSurfaceView renderer
-                    // which checks with TerminalEngine.shouldCursorBeVisible() to decide whether
-                    // to draw the cursor or not
+                    // Toggle the blink phase and request only the GL renderer; the
+                    // terminal content lives on GLSurfaceView, so a full View
+                    // invalidation would add main-thread traversal work.
                     mCursorVisible = !mCursorVisible;
                     //mClient.logVerbose(LOG_TAG, "Toggling cursor blink state to " + mCursorVisible);
                     mTerminalEngine.setCursorBlinkState(mCursorVisible);
-                    invalidate();
+                    requestTerminalRender();
                 }
             } finally {
                 // Recall the Runnable after mBlinkRate milliseconds to toggle the blink state

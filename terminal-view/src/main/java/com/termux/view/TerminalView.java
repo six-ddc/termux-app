@@ -1179,6 +1179,9 @@ public final class TerminalView extends GLSurfaceView {
             return 0;
 
         int edgePadding = getRenderEdgePadding();
+        if (mDrivesSessionResize)
+            return edgePadding;
+
         int availableHeight = getRenderAvailableHeight();
         int renderedHeight = mTerminalEngine.getRows() * mRenderer.mFontLineSpacing;
         if (renderedHeight > availableHeight)

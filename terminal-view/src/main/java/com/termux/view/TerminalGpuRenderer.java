@@ -297,9 +297,10 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             // A dirty-row list is not enough to keep a persistent framebuffer
             // correct when terminal output shifts existing rows upward (linefeed
             // at the bottom, prompt redraws, etc.). Repaint the whole viewport
-            // for every new content snapshot; repeated frames such as cursor
-            // blink still arrive as CLEAN via snapshotConsumed above.
-            boolean contentSnapshotChanged = mFrameDirtyState != TerminalEngine.RENDER_DIRTY_CLEAN;
+            // for every new content snapshot even if the native dirty metadata is
+            // CLEAN/incomplete; repeated frames such as cursor blink still reuse
+            // the existing framebuffer via snapshotConsumed.
+            boolean contentSnapshotChanged = !snapshotConsumed;
             boolean fullRedraw = engineChanged || geometryChanged || blinkForcesRedraw ||
                 !mFramebufferContentValid || topRow != mLastTopRow ||
                 contentSnapshotChanged ||

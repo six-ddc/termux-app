@@ -2,7 +2,7 @@
 
 > Detailed command catalog. The short SKILL.md at the parent directory holds the 80-line essentials; this file preserves the long-form examples organized by domain. Look here when you need an exact flag or a less common command.
 
-`tp-android` is the canonical Android-control CLI installed in Termux on TermuxPlus. Use it instead of ad hoc `adb`, `input`, `am`, or screen-scraping — those don't run from inside the Termux app context anyway, and `tp-android` gives a stable JSON envelope, typed args, and proper bridge IPC.
+`tp-android` is the canonical Android-control CLI installed in Termux on TermuxPlus. Use it instead of ad hoc `adb`, `input`, `am`, or screen-scraping — those don't run from inside the Termux app context anyway, and `tp-android` gives typed args, proper bridge IPC, and explicit `--json`/`--pretty` modes for structured output.
 
 ## Why bridge-only
 
@@ -13,9 +13,10 @@ The reason: bridge is in-process, has no listening port, no per-invocation hands
 ## Output contract
 
 - stdout = data, stderr = diagnostics.
-- Successful commands print a single JSON envelope unless `--raw`, `--format raw`, `--format none`, or a binary `-o -` output is requested.
+- Most successful commands print a single JSON envelope unless `--format text`, `--raw`, `--format raw`, `--format none`, or a binary `-o -` output is requested.
+- `status ...` commands default to flat text for progress logs; pass `--json` or `--pretty` when a script needs the standard envelope.
 - `event watch`, `sms watch`, `notification watch` are streaming — one JSON object per line, indefinitely until killed.
-- Errors print JSON on stderr **and** exit non-zero — always check the exit code before trusting stdout.
+- Errors print JSON on stderr by default, or flat text when `--format text` is active, and exit non-zero — always check the exit code before trusting stdout.
 
 Envelope shape:
 
@@ -23,7 +24,7 @@ Envelope shape:
 {"ok":true,"schema_version":"tp-android.v1","command":"input.tap","result":{}}
 ```
 
-Use `--pretty` for human inspection, `--raw` for scalar extraction in scripts, and `jq -r '.result...'` for structured selection.
+Use `--pretty` for structured human inspection, `--format text` for flat logs, `--raw` for scalar/result extraction in scripts, and `jq -r '.result...'` for structured selection.
 
 ## Sanity check first
 
@@ -79,7 +80,9 @@ tp-android ui screenshot -o ~/screen.png
 tp-android ui screenshot -o /sdcard/Download/screen.png
 ```
 
-If a Termux/Codex floating window is over the target app, treat `app current` and plain `ui dump` as focus-oriented diagnostics, not proof of what is visually dominant. First run `tp-android ui windows --pretty` or `tp-android ui diagnose --package <target> --pretty`, then use package-scoped commands:
+Foreground-dependent `ui` and `input` commands automatically hide Termux's floating terminal if accessibility currently reports Termux in front, then restore it collapsed when the command exits. The guard writes a notice to stderr and can be disabled with `TP_ANDROID_AUTO_HIDE_TERMUX=0`; collapsed restore can be disabled with `TP_ANDROID_AUTO_RESTORE_TERMUX=0`.
+
+If a Termux/Codex floating window is still over the target app, treat `app current` and plain `ui dump` as focus-oriented diagnostics, not proof of what is visually dominant. First run `tp-android ui windows --pretty` or `tp-android ui diagnose --package <target> --pretty`, then use package-scoped commands:
 
 ```sh
 tp-android ui texts --package com.xingin.xhs --pretty

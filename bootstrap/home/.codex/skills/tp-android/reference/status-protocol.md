@@ -17,6 +17,8 @@ A *run* is one logical task. It has an id (`r_<hex>`), a task description, an op
 
 `current` is what `tp-android status current` reads; `$TP_RUN_ID` in the environment overrides it (set this in a subshell to address a specific run from a script).
 
+`status` commands default to flat text for human progress logs. Add `--json` or `--pretty` when a script needs the standard JSON envelope, or `--raw` when you only want the result object.
+
 ## Lifecycle
 
 ```sh
@@ -90,16 +92,17 @@ See [errors.md](errors.md) for the full code table.
 ## Observing a run
 
 ```sh
-tp-android status current --pretty          # full state of the active run
+tp-android status current                   # human-readable active run summary
+tp-android status current --json            # structured full state for jq/scripts
 tp-android status history --limit 20        # newest runs first, summary only
 tp-android status tail --follow             # stream the event log
 ```
 
 `status tail --follow` is ideal for an SSH-attached debugger or a second Termux session: it stays attached until the run ends.
 
-## When stdout is a JSON pipe
+## When stdout must be a JSON pipe
 
-All `status` commands print the standard envelope. Use `--raw` to pull a single field with `jq`:
+`status` commands default to text. Use `--json` for the standard envelope, or `--raw` to print just the result object:
 
 ```sh
 CHOICE=$(tp-android status intervene --reason "…" --choices "a,b" --raw | jq -r '.choice // empty')

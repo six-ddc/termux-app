@@ -5,7 +5,7 @@ description: Control the Android device from inside Termux through the TermuxPlu
 
 # tp-android (short)
 
-`tp-android` talks to the AutoTermux companion over a signature-protected local broadcast (the "bridge"). All commands return a JSON envelope on stdout; diagnostics go to stderr; errors set a non-zero exit code. Default to `--pretty` for inspection, `--raw` for scalar extraction in scripts, and `jq -r '.result...'` for structured selection.
+`tp-android` talks to the AutoTermux companion over a signature-protected local broadcast (the "bridge"). Most commands return a JSON envelope on stdout by default; diagnostics and automation guard notices go to stderr; errors set a non-zero exit code. `status ...` commands default to flat human-readable text because they are progress logs. Use `--json`/`--pretty` whenever a script or agent needs structured fields, `--raw` for scalar extraction, and `jq -r '.result...'` for structured selection.
 
 ## Pre-flight (run these in order at the start of any non-trivial run)
 
@@ -16,13 +16,13 @@ tp-android app current --pretty      # confirm what's actually foreground
 tp-android status start --task "<one-line task>" --total-steps N
 ```
 
-`status start` writes a run id to `~/.termuxplus/runs/current` and (when the HUD is up) shows it to the user. Read back with `tp-android status current --pretty`.
+`status start` writes a run id to `~/.termuxplus/runs/current` and (when the HUD is up) shows it to the user. Read back for humans with `tp-android status current`; use `tp-android status current --json` for machine parsing.
 
 ## Workflow envelope — the 5 rules
 
 1. **Any task with >2 logical steps MUST wrap with `status start / step / finish`.** Without that the user has no idea what you're doing in the background. See [reference/status-protocol.md](reference/status-protocol.md).
 2. **Never guess when the screen is ambiguous — call `tp-android status intervene` / `ask-input` / `confirm` and route on the returned choice.** These block until the user answers or the timeout fires.
-3. **Selectors over coordinates.** Prefer `--text` / `--text-contains` / `--resource-id` over raw `input tap X Y`. Coordinates break across screen sizes and Termux's floating window changes z-order.
+3. **Selectors over coordinates.** Prefer `--text` / `--text-contains` / `--resource-id` over raw `input tap X Y`. Coordinates break across screen sizes. Foreground-dependent `ui` / `input` commands now auto-hide Termux's floating terminal when it is in front, and restore it collapsed when the command exits; read the stderr notice if the target app still is not foreground.
 4. **Always pass `--package <target>` when the target app is not the obvious foreground.** Termux's own UI is what gets dumped otherwise. `tp-android ui windows` and `app current` clarify.
 5. **Branch on `error.code`, not `error.message`.** All errors carry a stable code + hint from [reference/errors.md](reference/errors.md). The message changes; the code does not.
 
@@ -43,8 +43,8 @@ tp-android status finish --state success --summary "settings opened"
 tp-android status start --task "Login with SMS code"
 # ... type username / tap login ...
 RESP=$(tp-android status intervene --reason "Enter the SMS code I just sent" \
-  --choices "I entered it,Resend,Cancel" --wait-timeout 120 --raw)
-echo "$RESP" | jq -r '.choice'
+  --choices "I entered it,Resend,Cancel" --wait-timeout 120 --json)
+echo "$RESP" | jq -r '.result.choice'
 # branch in shell on the choice
 ```
 

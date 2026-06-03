@@ -38,6 +38,7 @@ AUTOTERMUX_PACKAGE = "com.termux.autotermux"
 AUTOTERMUX_INSTALL_ACTION = "com.termux.autotermux.INSTALL_COMPANION"
 AUTOTERMUX_INSTALL_RECEIVER = "com.termux/com.termux.app.autotermux.AutoTermuxInstallReceiver"
 AUTOTERMUX_ASSET_PATH = "assets/autotermux/AutoTermux.apk"
+TERMUX_PACKAGE = "com.termux"
 TRANSFER_CACHE_DIR = Path("/storage/emulated/0/Download/.termuxplus/tp-android-cache")
 CONFIG_PATH = Path(
     os.environ.get(
@@ -172,6 +173,8 @@ TERMUX_API_PARSE_EMPTY_COMMANDS = {
     "toast",
     "tts-speak",
 }
+
+AUTO_HID_TERMUX_FLOATING = False
 
 
 class CliError(Exception):
@@ -814,6 +817,164 @@ def print_raw(value: Any) -> None:
     print(str(value))
 
 
+def format_scalar_text(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def flatten_text_lines(value: Any, prefix: str = "") -> list[str]:
+    lines: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            name = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(item, (dict, list)):
+                lines.extend(flatten_text_lines(item, name))
+            else:
+                lines.append(f"{name}: {format_scalar_text(item)}")
+        return lines
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            name = f"{prefix}.{index}" if prefix else str(index)
+            if isinstance(item, (dict, list)):
+                lines.extend(flatten_text_lines(item, name))
+            else:
+                lines.append(f"{name}: {format_scalar_text(item)}")
+        return lines
+    return [format_scalar_text(value)]
+
+
+def format_status_event_text(event: dict[str, Any]) -> str:
+    kind = str(event.get("kind") or "event")
+    at = event.get("at")
+    prefix = f"{at} " if at is not None else ""
+    if kind == "start":
+        task = event.get("task")
+        total = event.get("total_steps")
+        suffix = f" · {total} steps" if total else ""
+        return f"{prefix}start: {task or '(no task)'}{suffix}"
+    if kind == "step":
+        index = event.get("index")
+        state = event.get("state") or "running"
+        label = event.get("label") or "step"
+        detail = event.get("detail")
+        text = f"{prefix}step {index}: {state} · {label}"
+        return f"{text} · {detail}" if detail else text
+    if kind == "progress":
+        percent = event.get("percent")
+        detail = event.get("detail")
+        text = f"{prefix}progress: {percent}%"
+        return f"{text} · {detail}" if detail else text
+    if kind == "finish":
+        state = event.get("state")
+        summary = event.get("summary")
+        text = f"{prefix}finish: {state}"
+        return f"{text} · {summary}" if summary else text
+    if kind == "cancel":
+        source = event.get("source")
+        return f"{prefix}cancelled" + (f" by {source}" if source else "")
+    if kind == "error":
+        code = event.get("code")
+        message = event.get("message")
+        return f"{prefix}error {code}: {message}"
+    if kind == "pause_request":
+        source = event.get("source")
+        return f"{prefix}pause requested" + (f" by {source}" if source else "")
+    return prefix + " · ".join(flatten_text_lines(event))
+
+
+def format_status_success_text(command: str, result: Any) -> str | None:
+    if command == "status.start" and isinstance(result, dict):
+        return f"run {result.get('run_id')} started\nstarted_at: {result.get('started_at')}"
+    if command == "status.finish" and isinstance(result, dict):
+        return f"run {result.get('run_id')} finished: {result.get('state')}\nended_at: {result.get('ended_at')}"
+    if command in {"status.step", "status.progress"} and isinstance(result, dict):
+        run_id = result.get("run_id")
+        if command == "status.step":
+            step = result.get("step") if isinstance(result.get("step"), dict) else {}
+            text = f"step {step.get('index')}: {step.get('state')} · {step.get('label')}"
+            if step.get("detail"):
+                text += f" · {step.get('detail')}"
+            return f"{text}\nrun: {run_id}"
+        progress = result.get("progress") if isinstance(result.get("progress"), dict) else {}
+        text = f"progress: {progress.get('percent')}%"
+        if progress.get("detail"):
+            text += f" · {progress.get('detail')}"
+        return f"{text}\nrun: {run_id}"
+    if command in {"status.intervene", "status.ask-input", "status.confirm"} and isinstance(result, dict):
+        return "\n".join(flatten_text_lines(result))
+    if command == "status.error" and isinstance(result, dict):
+        err = result.get("error") if isinstance(result.get("error"), dict) else {}
+        lines = [f"error {err.get('code')}: {err.get('message')}"]
+        if err.get("hint"):
+            lines.append(f"hint: {err.get('hint')}")
+        lines.append(f"run: {result.get('run_id')}")
+        return "\n".join(lines)
+    if command == "status.cancel" and isinstance(result, dict):
+        return f"run {result.get('run_id')} cancelled"
+    if command == "status.current":
+        if not result:
+            return "no active run"
+        if isinstance(result, dict):
+            lines = [
+                f"run {result.get('run_id')}: {result.get('state')}",
+                f"task: {result.get('task')}",
+            ]
+            step = result.get("current_step")
+            if isinstance(step, dict):
+                lines.append(f"step: {step.get('index')} {step.get('state')} · {step.get('label')}")
+                progress = step.get("progress")
+                if isinstance(progress, dict):
+                    lines.append(f"progress: {progress.get('percent')}%")
+            if result.get("summary"):
+                lines.append(f"summary: {result.get('summary')}")
+            if result.get("error"):
+                err = result.get("error")
+                if isinstance(err, dict):
+                    lines.append(f"error: {err.get('code')} · {err.get('message')}")
+            lines.append(f"started_at: {result.get('started_at')}")
+            lines.append(f"updated_at: {result.get('updated_at')}")
+            if result.get("ended_at"):
+                lines.append(f"ended_at: {result.get('ended_at')}")
+            events = result.get("events")
+            if isinstance(events, list) and events:
+                lines.append("recent_events:")
+                for event in events[-5:]:
+                    if isinstance(event, dict):
+                        lines.append(f"  {format_status_event_text(event)}")
+            return "\n".join(lines)
+    if command == "status.history" and isinstance(result, dict):
+        runs = result.get("runs")
+        if not runs:
+            return "no runs"
+        lines = []
+        if isinstance(runs, list):
+            for run in runs:
+                if isinstance(run, dict):
+                    lines.append(f"{run.get('run_id')}  {run.get('state')}  {run.get('task')}")
+        return "\n".join(lines)
+    return None
+
+
+def format_success_text(command: str, result: Any, meta: dict[str, Any] | None = None) -> str:
+    status_text = format_status_success_text(command, result)
+    if status_text is not None:
+        return status_text
+    lines = []
+    if command:
+        lines.append(f"command: {command}")
+    if meta:
+        for key, value in meta.items():
+            lines.append(f"meta.{key}: {format_scalar_text(value)}")
+    if result is not None:
+        lines.extend(flatten_text_lines(result))
+    if not lines:
+        lines.append("ok")
+    return "\n".join(lines)
+
+
 def emit_success(
     args: argparse.Namespace,
     result: Any = None,
@@ -827,10 +988,14 @@ def emit_success(
     if output_format == "raw":
         print_raw(result)
         return
+    command_name = command or getattr(args, "command_path", getattr(args, "command", ""))
+    if output_format == "text":
+        print(format_success_text(command_name, result, meta))
+        return
     payload: dict[str, Any] = {
         "ok": True,
         "schema_version": "tp-android.v1",
-        "command": command or getattr(args, "command_path", getattr(args, "command", "")),
+        "command": command_name,
         "result": result,
     }
     if meta:
@@ -859,6 +1024,19 @@ def emit_error(
         error_obj["hint"] = effective_hint
     if details:
         error_obj["details"] = details
+    output_format = active_output_format(args)
+    if output_format == "none":
+        return
+    if output_format == "text":
+        lines = [f"error {code}: {message}"]
+        if effective_hint:
+            lines.append(f"hint: {effective_hint}")
+        lines.append(f"recoverable: {'true' if effective_recoverable else 'false'}")
+        if details:
+            for line in flatten_text_lines(details, "details"):
+                lines.append(line)
+        print("\n".join(lines), file=sys.stderr)
+        return
     payload = {
         "ok": False,
         "schema_version": "tp-android.v1",
@@ -1672,7 +1850,17 @@ def command_status_tail(args: argparse.Namespace) -> int:
         events = run.get("events") or []
         if len(events) > seen:
             for ev in events[seen:]:
-                print_json(ev, compact=True)
+                if active_output_format(args) == "text":
+                    if isinstance(ev, dict):
+                        print(format_status_event_text(ev))
+                    else:
+                        print(format_scalar_text(ev))
+                elif active_output_format(args) == "pretty":
+                    print_json(ev)
+                elif active_output_format(args) == "none":
+                    pass
+                else:
+                    print_json(ev, compact=True)
             seen = len(events)
         if not args.follow:
             return 0
@@ -2991,7 +3179,7 @@ def command_exec_script(args: argparse.Namespace) -> int:
     auto_wrap = bool(args.task)
     run_id: str | None = None
     if auto_wrap:
-        wrap_args = ["status", "start", "--task", args.task, "--total-steps", str(len([s for s in steps if (s.get("kind") or s.get("op")) != "sleep"]))]
+        wrap_args = ["status", "start", "--json", "--task", args.task, "--total-steps", str(len([s for s in steps if (s.get("kind") or s.get("op")) != "sleep"]))]
         if args.notify:
             wrap_args.append("--notify")
         if args.hud:
@@ -3010,7 +3198,7 @@ def command_exec_script(args: argparse.Namespace) -> int:
         step = _batch_render(raw_step, vars_map)
         if auto_wrap and (step.get("kind") or step.get("op")) != "done":
             _daemon_dispatch_in_process([
-                "status", "step",
+                "status", "step", "--json",
                 "--step", str(index),
                 "--label", str(step.get("label") or step.get("kind") or "step"),
                 "--state", "running",
@@ -3031,7 +3219,7 @@ def command_exec_script(args: argparse.Namespace) -> int:
 
     if auto_wrap:
         finish_state = "success" if ok else "error"
-        _daemon_dispatch_in_process(["status", "finish", "--state", finish_state])
+        _daemon_dispatch_in_process(["status", "finish", "--json", "--state", finish_state])
 
     emit_success(
         args,
@@ -3128,6 +3316,7 @@ def command_version_info(args: argparse.Namespace) -> int:
 
 
 def portal_get(path: str, args: argparse.Namespace) -> Any:
+    maybe_hide_termux_for_foreground_operation(args, path, {})
     config = load_runtime_config(args)
     transport = config_transport(config)
     if transport == "bridge":
@@ -3160,12 +3349,118 @@ def portal_get(path: str, args: argparse.Namespace) -> Any:
 
 
 def portal_post(path: str, args: argparse.Namespace, payload: dict[str, Any]) -> Any:
+    maybe_hide_termux_for_foreground_operation(args, path, payload)
     config = load_runtime_config(args)
     transport = config_transport(config)
     if transport == "bridge":
         return bridge_call(config, path, payload)
     # transport == "provider"
     return provider_action(config, path, payload)
+
+
+FOREGROUND_DEPENDENT_METHODS = {
+    "state",
+    "state_full",
+    "a11y_tree",
+    "a11y_tree_full",
+    "node/action",
+    "node/find",
+    "node/focused",
+    "ui/diagnose",
+    "ui/texts",
+    "tap",
+    "swipe",
+    "keyboard/clear",
+    "keyboard/input",
+    "keyboard/key",
+    "screenshot",
+    "screenshot/cache",
+}
+
+
+def cli_notice(args: argparse.Namespace | None, message: str) -> None:
+    if active_output_format(args) == "none":
+        return
+    print(f"tp-android: {message}", file=sys.stderr)
+
+
+def normalize_method_name(path: str) -> str:
+    return urllib.parse.urlparse("/" + path.lstrip("/")).path.lstrip("/")
+
+
+def maybe_hide_termux_for_foreground_operation(args: argparse.Namespace, path: str, payload: dict[str, Any] | None = None) -> None:
+    if os.environ.get("TP_ANDROID_AUTO_HIDE_TERMUX", "1").lower() in {"0", "false", "no", "off"}:
+        return
+    method = normalize_method_name(path)
+    guard_method = method[:-6] if method.endswith("/cache") else method
+    if guard_method not in FOREGROUND_DEPENDENT_METHODS:
+        return
+    payload = payload or {}
+    target_package = (
+        payload.get("packageName")
+        or payload.get("package")
+        or getattr(args, "package", None)
+        or getattr(args, "expect_package", None)
+    )
+    maybe_hide_termux_for_target_package(args, str(target_package) if target_package else None)
+
+
+def maybe_hide_termux_for_target_package(args: argparse.Namespace, target_package: str | None) -> None:
+    global AUTO_HID_TERMUX_FLOATING
+    if os.environ.get("TP_ANDROID_AUTO_HIDE_TERMUX", "1").lower() in {"0", "false", "no", "off"}:
+        return
+    if target_package == TERMUX_PACKAGE:
+        return
+    config = load_runtime_config(args)
+    try:
+        state = parse_json_object_if_needed(bridge_call(config, "phone_state"), "phone-state")
+    except CliError:
+        return
+    foreground_package = phone_state_field(state, "packageName", "package_name")
+    if foreground_package != TERMUX_PACKAGE:
+        return
+    activity = phone_state_field(state, "activityName", "activity_name")
+    try:
+        bridge_call(config, "termux/floating/hide")
+        AUTO_HID_TERMUX_FLOATING = True
+        time.sleep(0.15)
+    except CliError:
+        return
+    try:
+        after = parse_json_object_if_needed(bridge_call(config, "phone_state"), "phone-state")
+    except CliError:
+        after = None
+    after_package = phone_state_field(after, "packageName", "package_name") if isinstance(after, dict) else ""
+    if after_package != TERMUX_PACKAGE:
+        cli_notice(
+            args,
+            "Termux floating terminal was in front; hid it before foreground UI automation.",
+        )
+        return
+    if "TermuxActivity" in activity or activity.startswith("com.termux"):
+        cli_notice(
+            args,
+            "Termux is the foreground app; UI automation may target Termux until you switch to the target app.",
+        )
+    else:
+        cli_notice(
+            args,
+            "Tried to hide Termux floating terminal, but accessibility still reports Termux in front.",
+        )
+
+
+def restore_auto_hidden_termux_floating(args: argparse.Namespace) -> None:
+    global AUTO_HID_TERMUX_FLOATING
+    if not AUTO_HID_TERMUX_FLOATING:
+        return
+    AUTO_HID_TERMUX_FLOATING = False
+    if os.environ.get("TP_ANDROID_AUTO_RESTORE_TERMUX", "1").lower() in {"0", "false", "no", "off"}:
+        return
+    try:
+        bridge_call(load_runtime_config(args), "termux/floating/show")
+        cli_notice(args, "Termux floating terminal restored in collapsed mode.")
+    except CliError:
+        pass
 
 
 def command_observe(args: argparse.Namespace) -> int:
@@ -4559,6 +4854,7 @@ def wait_for_package_foreground(
     timeout: float = 10.0,
     interval: float = 0.25,
 ) -> dict[str, Any] | None:
+    maybe_hide_termux_for_target_package(args, package_name)
     deadline = time.monotonic() + timeout
     while True:
         state = current_phone_state(args)
@@ -4747,6 +5043,8 @@ def phone_state_matches_app(args: argparse.Namespace, state: dict[str, Any]) -> 
 
 
 def command_app_wait(args: argparse.Namespace) -> int:
+    if not args.gone:
+        maybe_hide_termux_for_target_package(args, args.package)
     deadline = time.monotonic() + args.timeout_seconds
     last_state: dict[str, Any] = {}
     while True:
@@ -7033,9 +7331,9 @@ def build_common_parent() -> argparse.ArgumentParser:
     parent.add_argument(
         "--format",
         dest="output_format",
-        choices=("json", "pretty", "raw", "none"),
+        choices=("text", "json", "pretty", "raw", "none"),
         default=argparse.SUPPRESS,
-        help="Output format; json is compact and machine-readable",
+        help="Output format; text is human-readable, json is compact and machine-readable",
     )
     parent.add_argument("--json", dest="output_format", action="store_const", const="json", default=argparse.SUPPRESS)
     parent.add_argument("--pretty", dest="output_format", action="store_const", const="pretty", default=argparse.SUPPRESS)
@@ -7262,6 +7560,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Every long-running automation should wrap with status start/step/finish
     # and route ambiguous decisions through status intervene/ask-input/confirm.
     status = add_parser(subparsers, "status", common, help="Agent run lifecycle and user-intervention protocol")
+    status.set_defaults(output_format="text")
     status_sub = status.add_subparsers(dest="status_command", required=True)
 
     status_start = add_parser(status_sub, "start", common, help="Create a new run; emits run_id and stores it as current")
@@ -8489,6 +8788,8 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         emit_error("interrupted", args, code="INTERRUPTED")
         return 130
+    finally:
+        restore_auto_hidden_termux_floating(args)
 
 
 if __name__ == "__main__":

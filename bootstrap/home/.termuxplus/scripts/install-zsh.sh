@@ -10,6 +10,7 @@ TERMUX_OH_MY_ZSH_REPO="${TERMUX_OH_MY_ZSH_REPO:-https://github.com/ohmyzsh/ohmyz
 TERMUX_OH_MY_ZSH_BRANCH="master"
 TERMUX_OH_MY_ZSH_DIR="${TERMUX_OH_MY_ZSH_DIR:-$PREFIX/share/termuxplus/oh-my-zsh}"
 TERMUX_INSTALL_OH_MY_ZSH="${TERMUX_INSTALL_OH_MY_ZSH:-true}"
+TERMUX_OH_MY_ZSH_PLUGINS="${TERMUX_OH_MY_ZSH_PLUGINS:-git}"
 
 write_zshrc() {
   target_file="$1"
@@ -31,7 +32,7 @@ if [ -z "\${TERMUXPLUS_ZSHRC_LOADED:-}" ]; then
   fi
 
   ZSH_THEME="robbyrussell"
-  plugins=()
+  plugins=($TERMUX_OH_MY_ZSH_PLUGINS)
 
   DISABLE_AUTO_UPDATE="true"
   DISABLE_UPDATE_PROMPT="true"

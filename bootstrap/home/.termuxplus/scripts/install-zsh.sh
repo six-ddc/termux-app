@@ -10,7 +10,13 @@ TERMUX_OH_MY_ZSH_REPO="${TERMUX_OH_MY_ZSH_REPO:-https://github.com/ohmyzsh/ohmyz
 TERMUX_OH_MY_ZSH_BRANCH="master"
 TERMUX_OH_MY_ZSH_DIR="${TERMUX_OH_MY_ZSH_DIR:-$PREFIX/share/termuxplus/oh-my-zsh}"
 TERMUX_INSTALL_OH_MY_ZSH="${TERMUX_INSTALL_OH_MY_ZSH:-true}"
-TERMUX_OH_MY_ZSH_PLUGINS="${TERMUX_OH_MY_ZSH_PLUGINS:-git}"
+TERMUX_OH_MY_ZSH_PLUGINS="${TERMUX_OH_MY_ZSH_PLUGINS:-git command-not-found colored-man-pages extract z safe-paste}"
+TERMUX_ZSH_AUTOSUGGESTIONS_REPO="${TERMUX_ZSH_AUTOSUGGESTIONS_REPO:-https://github.com/zsh-users/zsh-autosuggestions.git}"
+TERMUX_ZSH_AUTOSUGGESTIONS_BRANCH="master"
+TERMUX_ZSH_AUTOSUGGESTIONS_DIR="${TERMUX_ZSH_AUTOSUGGESTIONS_DIR:-$PREFIX/share/termuxplus/zsh-autosuggestions}"
+TERMUX_ZSH_SYNTAX_HIGHLIGHTING_REPO="${TERMUX_ZSH_SYNTAX_HIGHLIGHTING_REPO:-https://github.com/zsh-users/zsh-syntax-highlighting.git}"
+TERMUX_ZSH_SYNTAX_HIGHLIGHTING_BRANCH="master"
+TERMUX_ZSH_SYNTAX_HIGHLIGHTING_DIR="${TERMUX_ZSH_SYNTAX_HIGHLIGHTING_DIR:-$PREFIX/share/termuxplus/zsh-syntax-highlighting}"
 
 write_zshrc() {
   target_file="$1"
@@ -44,6 +50,14 @@ if [ -z "\${TERMUXPLUS_ZSHRC_LOADED:-}" ]; then
     source "\$ZSH/oh-my-zsh.sh"
   fi
 
+  if [ -r "\$PREFIX/share/termuxplus/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
+    source "\$PREFIX/share/termuxplus/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  fi
+
+  if [ -r "\$PREFIX/share/termuxplus/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
+    source "\$PREFIX/share/termuxplus/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+  fi
+
   # Termux runs as an Android app uid (u0_aNNN), so oh-my-zsh's default
   # %n@%m:%~ title is noisy. Keep tab titles focused on the current directory.
   ZSH_THEME_TERM_TAB_TITLE_IDLE="%~"
@@ -56,26 +70,46 @@ EOF
   rm -rf "$temp_dir"
 }
 
-prepare_oh_my_zsh_source() {
-  if [ -d "$TERMUX_OH_MY_ZSH_DIR/.git" ] &&
-    ! git -C "$TERMUX_OH_MY_ZSH_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    rm -rf "$TERMUX_OH_MY_ZSH_DIR"
+prepare_git_source() {
+  source_name="$1"
+  source_repo="$2"
+  source_branch="$3"
+  source_dir="$4"
+
+  if [ -d "$source_dir/.git" ] &&
+    ! git -C "$source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    rm -rf "$source_dir"
   fi
 
-  if [ ! -d "$TERMUX_OH_MY_ZSH_DIR/.git" ]; then
-    rm -rf "$TERMUX_OH_MY_ZSH_DIR"
-    mkdir -p "$(dirname "$TERMUX_OH_MY_ZSH_DIR")"
-    git clone --depth=1 --branch "$TERMUX_OH_MY_ZSH_BRANCH" "$TERMUX_OH_MY_ZSH_REPO" "$TERMUX_OH_MY_ZSH_DIR"
+  if [ ! -d "$source_dir/.git" ]; then
+    rm -rf "$source_dir"
+    mkdir -p "$(dirname "$source_dir")"
+    git clone --depth=1 --branch "$source_branch" "$source_repo" "$source_dir"
   fi
 
-  git -C "$TERMUX_OH_MY_ZSH_DIR" remote set-url origin "$TERMUX_OH_MY_ZSH_REPO"
-  git -C "$TERMUX_OH_MY_ZSH_DIR" fetch origin \
-    "+refs/heads/$TERMUX_OH_MY_ZSH_BRANCH:refs/remotes/origin/$TERMUX_OH_MY_ZSH_BRANCH" \
+  git -C "$source_dir" remote set-url origin "$source_repo"
+  git -C "$source_dir" fetch origin \
+    "+refs/heads/$source_branch:refs/remotes/origin/$source_branch" \
     --depth=1 >/dev/null
-  git -C "$TERMUX_OH_MY_ZSH_DIR" checkout -q -f -B \
-    "$TERMUX_OH_MY_ZSH_BRANCH" "origin/$TERMUX_OH_MY_ZSH_BRANCH"
+  git -C "$source_dir" checkout -q -f -B "$source_branch" "origin/$source_branch"
 
-  git -C "$TERMUX_OH_MY_ZSH_DIR" clean -fdx >/dev/null
+  git -C "$source_dir" clean -fdx >/dev/null
+  tp_log "$source_name source is ready"
+}
+
+prepare_oh_my_zsh_source() {
+  prepare_git_source "oh-my-zsh" \
+    "$TERMUX_OH_MY_ZSH_REPO" \
+    "$TERMUX_OH_MY_ZSH_BRANCH" \
+    "$TERMUX_OH_MY_ZSH_DIR"
+  prepare_git_source "zsh-autosuggestions" \
+    "$TERMUX_ZSH_AUTOSUGGESTIONS_REPO" \
+    "$TERMUX_ZSH_AUTOSUGGESTIONS_BRANCH" \
+    "$TERMUX_ZSH_AUTOSUGGESTIONS_DIR"
+  prepare_git_source "zsh-syntax-highlighting" \
+    "$TERMUX_ZSH_SYNTAX_HIGHLIGHTING_REPO" \
+    "$TERMUX_ZSH_SYNTAX_HIGHLIGHTING_BRANCH" \
+    "$TERMUX_ZSH_SYNTAX_HIGHLIGHTING_DIR"
 }
 
 install_default_shell_if_missing() {

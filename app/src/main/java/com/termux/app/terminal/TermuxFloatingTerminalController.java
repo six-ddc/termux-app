@@ -3,11 +3,13 @@ package com.termux.app.terminal;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -26,7 +28,9 @@ import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.shared.termux.terminal.TermuxTerminalViewClientBase;
 import com.termux.shared.view.KeyboardUtils;
+import com.termux.terminal.TerminalEngine;
 import com.termux.terminal.TerminalSession;
+import com.termux.view.TerminalRenderer;
 import com.termux.view.TerminalView;
 
 public final class TermuxFloatingTerminalController {
@@ -45,11 +49,13 @@ public final class TermuxFloatingTerminalController {
     private FrameLayout mRootView;
     private TerminalView mTerminalView;
     private TextView mTitleView;
+    private Typeface mTerminalTypeface;
     private WindowManager.LayoutParams mLayoutParams;
     private boolean mAttached;
     private boolean mExpanded;
     private int mLastWidth;
     private int mLastHeight;
+    private int mLastAppliedTerminalFontSize = -1;
 
     private final Runnable mRefreshRunnable = new Runnable() {
         @Override
@@ -62,11 +68,19 @@ public final class TermuxFloatingTerminalController {
         }
     };
 
+    private final Runnable mGeometryRefreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!mAttached) return;
+
+            refreshTerminalGeometry();
+        }
+    };
+
     /** Refresh the floating terminal once. */
     private void refreshNow() {
         attachCurrentSession();
-        if (mTerminalView != null)
-            mTerminalView.onScreenUpdated();
+        refreshTerminalGeometry();
         updateTitle();
     }
 
@@ -98,6 +112,7 @@ public final class TermuxFloatingTerminalController {
 
     public void hide() {
         mHandler.removeCallbacks(mRefreshRunnable);
+        mHandler.removeCallbacks(mGeometryRefreshRunnable);
         if (!mAttached || mRootView == null) return;
 
         if (mTerminalView != null)
@@ -115,6 +130,8 @@ public final class TermuxFloatingTerminalController {
         mTerminalView = null;
         mTitleView = null;
         mLayoutParams = null;
+        mTerminalTypeface = null;
+        mLastAppliedTerminalFontSize = -1;
     }
 
     public void onSessionsChanged() {
@@ -124,6 +141,7 @@ public final class TermuxFloatingTerminalController {
             return;
         }
         attachCurrentSession();
+        scheduleTerminalGeometryRefresh();
         updateTitle();
     }
 
@@ -177,6 +195,7 @@ public final class TermuxFloatingTerminalController {
 
         mLayoutParams = params;
         attachCurrentSession();
+        scheduleTerminalGeometryRefresh();
         updateTitle();
         mHandler.post(mRefreshRunnable);
 
@@ -236,8 +255,8 @@ public final class TermuxFloatingTerminalController {
     private void buildExpandedView() {
         LinearLayout panel = new LinearLayout(mService);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(8), dp(7), dp(8), dp(8));
-        panel.setBackground(makeRoundRect(Color.argb(235, 8, 12, 13), dp(8), Color.argb(180, 11, 201, 137), dp(1)));
+        panel.setPadding(dp(6), dp(6), dp(6), dp(6));
+        panel.setBackground(makeRoundRect(Color.argb(235, 8, 12, 13), dp(8), Color.TRANSPARENT, 0));
 
         LinearLayout header = new LinearLayout(mService);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -266,13 +285,19 @@ public final class TermuxFloatingTerminalController {
         // reshape the shared PTY (would fight the main view / thrash SIGWINCH).
         mTerminalView.setDrivesSessionResize(false);
         mTerminalView.setTerminalViewClient(mTerminalViewClient);
-        mTerminalView.setTextSize(getFloatingTerminalFontSize());
-        mTerminalView.setTypeface(TermuxTerminalFontManager.loadTerminalTypeface(mService));
+        mTerminalTypeface = TermuxTerminalFontManager.loadTerminalTypeface(mService);
+        mLastAppliedTerminalFontSize = getFloatingTerminalFontSize();
+        mTerminalView.setTextSize(mLastAppliedTerminalFontSize);
+        mTerminalView.setTypeface(mTerminalTypeface);
         mTerminalView.setZOrderOnTop(true);
         mTerminalView.getHolder().setFormat(PixelFormat.TRANSLUCENT);
         mTerminalView.setFocusable(true);
         mTerminalView.setFocusableInTouchMode(true);
         mTerminalView.setBackgroundColor(Color.TRANSPARENT);
+        mTerminalView.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)
+                scheduleTerminalGeometryRefresh();
+        });
         panel.addView(mTerminalView, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             0,
@@ -307,6 +332,10 @@ public final class TermuxFloatingTerminalController {
         return TermuxAppSharedPreferences.getDefaultFontSizes(mService)[0];
     }
 
+    private int getMinimumTerminalFontSize() {
+        return TermuxAppSharedPreferences.getDefaultFontSizes(mService)[1];
+    }
+
     private void attachCurrentSession() {
         if (mTerminalView == null) return;
 
@@ -314,6 +343,90 @@ public final class TermuxFloatingTerminalController {
         if (session == null) return;
 
         mTerminalView.attachSession(session);
+    }
+
+    private void scheduleTerminalGeometryRefresh() {
+        mHandler.removeCallbacks(mGeometryRefreshRunnable);
+        mHandler.post(mGeometryRefreshRunnable);
+    }
+
+    private void refreshTerminalGeometry() {
+        updateExpandedWindowSizeIfNeeded();
+
+        if (mTerminalView == null) return;
+
+        updateFloatingTerminalFontSize();
+        mTerminalView.updateSize();
+        mTerminalView.onScreenUpdated();
+    }
+
+    private void updateExpandedWindowSizeIfNeeded() {
+        if (!mAttached || !mExpanded || mRootView == null || mLayoutParams == null) return;
+
+        int width = expandedWidth();
+        int height = expandedHeight();
+        int clampedX = clamp(mLayoutParams.x, 0, Math.max(0, screenWidth() - width));
+        int clampedY = clamp(mLayoutParams.y, 0, Math.max(0, screenHeight() - height));
+        if (mLayoutParams.width == width && mLayoutParams.height == height
+            && mLayoutParams.x == clampedX && mLayoutParams.y == clampedY) {
+            mLastWidth = width;
+            mLastHeight = height;
+            return;
+        }
+
+        mLayoutParams.width = width;
+        mLayoutParams.height = height;
+        mLayoutParams.x = clampedX;
+        mLayoutParams.y = clampedY;
+        mLastWidth = width;
+        mLastHeight = height;
+
+        try {
+            mWindowManager.updateViewLayout(mRootView, mLayoutParams);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to resize floating terminal", e);
+        }
+    }
+
+    private void updateFloatingTerminalFontSize() {
+        TerminalSession session = mService.getCurrentStoredTerminalSessionOrLast();
+        int targetFontSize = resolveFloatingTerminalFontSize(session);
+        if (targetFontSize == mLastAppliedTerminalFontSize) return;
+
+        mLastAppliedTerminalFontSize = targetFontSize;
+        mTerminalView.setTextSize(targetFontSize);
+    }
+
+    private int resolveFloatingTerminalFontSize(@Nullable TerminalSession session) {
+        int preferredFontSize = getFloatingTerminalFontSize();
+        if (mTerminalView == null || session == null || mTerminalTypeface == null)
+            return preferredFontSize;
+
+        TerminalEngine engine = session.getTerminalEngine();
+        if (engine == null)
+            return preferredFontSize;
+
+        int columns = engine.getColumns();
+        int viewWidth = mTerminalView.getWidth();
+        if (columns <= 0 || viewWidth <= 0)
+            return preferredFontSize;
+
+        int availableWidth = Math.max(1, viewWidth - dp(4));
+        int minFontSize = Math.min(preferredFontSize, getMinimumTerminalFontSize());
+        int low = minFontSize;
+        int high = preferredFontSize;
+        int best = minFontSize;
+        while (low <= high) {
+            int mid = (low + high) / 2;
+            TerminalRenderer renderer = new TerminalRenderer(mid, mTerminalTypeface);
+            if (renderer.getFontWidth() * columns <= availableWidth) {
+                best = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return best;
     }
 
     private void updateTitle() {
@@ -365,11 +478,20 @@ public final class TermuxFloatingTerminalController {
     }
 
     private int screenWidth() {
-        return mService.getResources().getDisplayMetrics().widthPixels;
+        return getScreenBounds().width();
     }
 
     private int screenHeight() {
-        return mService.getResources().getDisplayMetrics().heightPixels;
+        return getScreenBounds().height();
+    }
+
+    private Rect getScreenBounds() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            return mWindowManager.getCurrentWindowMetrics().getBounds();
+
+        DisplayMetrics metrics = new DisplayMetrics();
+        mWindowManager.getDefaultDisplay().getRealMetrics(metrics);
+        return new Rect(0, 0, metrics.widthPixels, metrics.heightPixels);
     }
 
     private int dp(int value) {

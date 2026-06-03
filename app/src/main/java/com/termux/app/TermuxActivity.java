@@ -181,12 +181,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private int mLastVisibleImeHeight;
     private boolean mTermuxPlusExtraKeysPanelExpanded;
     private boolean mTermuxPlusExtraKeysPanelRestoringKeyboard;
+    private boolean mTermuxPlusExtraKeysPanelImeHiddenSinceExpand;
 
     private final Handler mFloatingTerminalStopHandler = new Handler(Looper.getMainLooper());
     private boolean mSuppressFloatingTerminalOnStop;
     private final Runnable mExpandExtraKeysPanelFallbackRunnable = () -> {
         if (!mTermuxPlusExtraKeysPanelExpanded || mCurrentImeHeight <= 0) return;
         mCurrentImeHeight = 0;
+        mTermuxPlusExtraKeysPanelImeHiddenSinceExpand = true;
         updateTerminalToolbarHeight();
     };
     private final Runnable mFinishExtraKeysPanelCollapseRunnable = this::finishTermuxPlusExtraKeysPanelCollapse;
@@ -632,11 +634,23 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public void onTermuxPlusImeInsetsChanged(int imeHeight) {
         mCurrentImeHeight = Math.max(0, imeHeight);
-        if (mCurrentImeHeight > 0 && !shouldKeepTermuxPlusExtraKeysPanelOpen())
+        if (mCurrentImeHeight > 0 &&
+            (!shouldKeepTermuxPlusExtraKeysPanelOpen() || mTermuxPlusExtraKeysPanelExpanded))
             mLastVisibleImeHeight = mCurrentImeHeight;
 
         if (mTermuxTerminalExtraKeys == null || mTerminalToolbarDefaultHeight <= 0)
             return;
+
+        // Once the expanded keys panel has replaced the IME, a later IME show should collapse
+        // the panel back to the pinned two rows so the keyboard and keys do not stack.
+        if (mTermuxPlusExtraKeysPanelExpanded) {
+            if (mCurrentImeHeight <= 0) {
+                mTermuxPlusExtraKeysPanelImeHiddenSinceExpand = true;
+            } else if (mTermuxPlusExtraKeysPanelImeHiddenSinceExpand) {
+                collapseTermuxPlusExtraKeysPanelForVisibleKeyboard();
+                return;
+            }
+        }
 
         if (mTermuxPlusExtraKeysPanelRestoringKeyboard && mCurrentImeHeight >= Math.round(getRememberedImeHeight() * 0.75f))
             finishTermuxPlusExtraKeysPanelCollapse();
@@ -650,6 +664,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         mTermuxPlusExtraKeysPanelExpanded = true;
         mTermuxPlusExtraKeysPanelRestoringKeyboard = false;
+        mTermuxPlusExtraKeysPanelImeHiddenSinceExpand = mCurrentImeHeight <= 0;
         if (mTerminalView != null) {
             mTerminalView.removeCallbacks(mFinishExtraKeysPanelCollapseRunnable);
             mTerminalView.removeCallbacks(mExpandExtraKeysPanelFallbackRunnable);
@@ -663,6 +678,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void collapseTermuxPlusExtraKeysPanelToKeyboard() {
         mTermuxPlusExtraKeysPanelExpanded = false;
         mTermuxPlusExtraKeysPanelRestoringKeyboard = true;
+        mTermuxPlusExtraKeysPanelImeHiddenSinceExpand = false;
         if (mTerminalView != null) {
             mTerminalView.removeCallbacks(mExpandExtraKeysPanelFallbackRunnable);
             mTerminalView.removeCallbacks(mFinishExtraKeysPanelCollapseRunnable);
@@ -674,10 +690,22 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         updateTerminalToolbarHeight();
     }
 
+    private void collapseTermuxPlusExtraKeysPanelForVisibleKeyboard() {
+        mTermuxPlusExtraKeysPanelExpanded = false;
+        mTermuxPlusExtraKeysPanelRestoringKeyboard = false;
+        mTermuxPlusExtraKeysPanelImeHiddenSinceExpand = false;
+        if (mTerminalView != null) {
+            mTerminalView.removeCallbacks(mExpandExtraKeysPanelFallbackRunnable);
+            mTerminalView.removeCallbacks(mFinishExtraKeysPanelCollapseRunnable);
+        }
+        updateTerminalToolbarHeight();
+    }
+
     private void finishTermuxPlusExtraKeysPanelCollapse() {
         if (!mTermuxPlusExtraKeysPanelRestoringKeyboard) return;
         mTermuxPlusExtraKeysPanelRestoringKeyboard = false;
         mTermuxPlusExtraKeysPanelExpanded = false;
+        mTermuxPlusExtraKeysPanelImeHiddenSinceExpand = false;
         updateTerminalToolbarHeight();
     }
 

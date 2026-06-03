@@ -8,6 +8,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
 import android.graphics.Typeface;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
@@ -1139,7 +1140,13 @@ public final class TerminalView extends GLSurfaceView {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        canvas.drawColor(0XFF000000);
+        // Clear the *view* layer to transparent rather than opaque black. The
+        // terminal pixels live on the GLSurfaceView surface; when that surface is
+        // a media overlay (e.g. the floating terminal, or transparent mode) it
+        // composites *below* this view layer, so an opaque fill here would hide
+        // the terminal entirely. The surface owns the background, so the view
+        // layer must stay transparent.
+        canvas.drawColor(0, PorterDuff.Mode.CLEAR);
         if (!mLoggedCanvasDrawPath) {
             Log.w(LOG_TAG, "TerminalView.onDraw invoked; terminal content remains on GLSurfaceView renderer");
             mLoggedCanvasDrawPath = true;
@@ -1175,32 +1182,12 @@ public final class TerminalView extends GLSurfaceView {
     }
 
     public int getRenderTopInset() {
-        if (mTerminalEngine == null || mRenderer == null)
-            return 0;
-
         int edgePadding = getRenderEdgePadding();
-        if (mDrivesSessionResize)
-            return edgePadding;
-
-        int availableHeight = getRenderAvailableHeight();
-        int renderedHeight = mTerminalEngine.getRows() * mRenderer.mFontLineSpacing;
-        if (renderedHeight > availableHeight)
-            return 0;
-
-        return edgePadding + Math.max(0, (availableHeight - renderedHeight) / 2);
+        return edgePadding;
     }
 
     int getRenderRowOffset() {
-        if (mDrivesSessionResize || mTerminalEngine == null || mRenderer == null)
-            return 0;
-
-        int lineSpacing = Math.max(1, mRenderer.mFontLineSpacing);
-        int visibleRows = Math.max(1, (int) Math.ceil(getRenderAvailableHeight() / (float) lineSpacing));
-        int maxOffset = Math.max(0, mTerminalEngine.getRows() - visibleRows);
-        int anchorRow = findLastRenderedContentRow();
-        if (anchorRow < 0)
-            anchorRow = mTerminalEngine.getCursorRow();
-        return Math.max(0, Math.min(maxOffset, anchorRow - visibleRows + 1));
+        return 0;
     }
 
     private int getRenderAvailableHeight() {
@@ -1209,33 +1196,6 @@ public final class TerminalView extends GLSurfaceView {
 
     private int getRenderEdgePadding() {
         return Math.round(RENDER_EDGE_PADDING_DP * getResources().getDisplayMetrics().density);
-    }
-
-    private int findLastRenderedContentRow() {
-        TerminalRenderSnapshot snapshot = mTerminalEngine == null ? null : mTerminalEngine.getRenderSnapshot();
-        if (snapshot == null || snapshot.cells == null)
-            return -1;
-
-        int columns = snapshot.columns;
-        int rows = snapshot.rows;
-        for (int row = rows - 1; row >= 0; row--) {
-            for (int column = 0; column < columns; column++) {
-                int cellIndex = row * columns + column;
-                String text = snapshot.cellText != null && cellIndex < snapshot.cellText.length
-                    ? snapshot.cellText[cellIndex]
-                    : null;
-                if (text != null && !text.isEmpty())
-                    return row;
-
-                int base = cellIndex * TerminalEngine.RENDER_CELL_STRIDE;
-                if (base + TerminalEngine.RENDER_CELL_CODEPOINT >= snapshot.cells.length)
-                    continue;
-                int codePoint = snapshot.cells[base + TerminalEngine.RENDER_CELL_CODEPOINT];
-                if (codePoint > 0 && codePoint != ' ')
-                    return row;
-            }
-        }
-        return -1;
     }
 
     public int getRenderCellWidthAt(int column, int row) {

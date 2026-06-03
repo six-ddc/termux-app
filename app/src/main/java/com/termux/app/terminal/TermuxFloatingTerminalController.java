@@ -1,14 +1,22 @@
 package com.termux.app.terminal;
 
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -28,7 +36,6 @@ import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.shared.termux.terminal.TermuxTerminalViewClientBase;
 import com.termux.shared.view.KeyboardUtils;
-import com.termux.terminal.TerminalEngine;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalRenderer;
 import com.termux.view.TerminalView;
@@ -40,6 +47,29 @@ public final class TermuxFloatingTerminalController {
     // refreshFromOutput() (called from the session service client); this timer
     // just catches anything not tied to terminal output (e.g. title changes).
     private static final int REFRESH_INTERVAL_MS = 1000;
+    private static final int EXPANDED_PANEL_PADDING_DP = 6;
+    private static final float MIN_FLOATING_FONT_SCALE = 0.75f;
+    private static final int FLOATING_FONT_SIZE_STEP_PX = 2;
+    /** Floating terminal background transparency (0 = opaque … 255 = fully
+     * see-through). Applied to the terminal body and mirrored into the header
+     * background alpha so the whole panel reads as one frosted glass surface. */
+    private static final int FLOATING_TERMINAL_TRANSPARENCY = 64;
+
+    // --- Floating chrome palette: a precision "terminal HUD" — frosted near-black
+    // bars (alpha matched to the terminal body), a single phosphor-green accent
+    // used only for the session marker, hairline, and active/pressed states.
+    // Everything else is a muted desaturated light. ---
+    private static final int CHROME_BG = Color.argb(255 - FLOATING_TERMINAL_TRANSPARENCY, 9, 13, 14);
+    private static final int CHROME_HAIRLINE = Color.argb(56, 11, 201, 137);
+    private static final int CHROME_TEXT = Color.argb(236, 197, 222, 213);
+    private static final int CHROME_TEXT_DIM = Color.argb(128, 121, 150, 141);
+    private static final int CHROME_ACCENT = Color.rgb(11, 201, 137);
+    private static final int CHROME_PRESS = Color.argb(40, 11, 201, 137);
+    private static final int CHROME_PRESS_CLOSE = Color.argb(50, 232, 104, 92);
+
+    private static final int ICON_MINIMIZE = 0;
+    private static final int ICON_MAXIMIZE = 1;
+    private static final int ICON_CLOSE = 2;
 
     private final TermuxService mService;
     private final WindowManager mWindowManager;
@@ -56,6 +86,8 @@ public final class TermuxFloatingTerminalController {
     private int mLastWidth;
     private int mLastHeight;
     private int mLastAppliedTerminalFontSize = -1;
+    private int mUserExpandedWidth = -1;
+    private int mUserExpandedHeight = -1;
 
     private final Runnable mRefreshRunnable = new Runnable() {
         @Override
@@ -199,8 +231,10 @@ public final class TermuxFloatingTerminalController {
         updateTitle();
         mHandler.post(mRefreshRunnable);
 
-        if (expanded)
-            focusTerminalAndShowKeyboard();
+        // Focus the terminal so hardware keys work, but do NOT pop the soft
+        // keyboard on open — it shows on the first tap (see onSingleTapUp).
+        if (expanded && mTerminalView != null)
+            mTerminalView.requestFocus();
     }
 
     private WindowManager.LayoutParams createLayoutParams(boolean expanded) {
@@ -253,44 +287,71 @@ public final class TermuxFloatingTerminalController {
     }
 
     private void buildExpandedView() {
+        mTerminalTypeface = TermuxTerminalFontManager.loadTerminalTypeface(mService);
+
         LinearLayout panel = new LinearLayout(mService);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(6), dp(6), dp(6), dp(6));
-        panel.setBackground(makeRoundRect(Color.argb(235, 8, 12, 13), dp(8), Color.TRANSPARENT, 0));
+        panel.setPadding(dp(EXPANDED_PANEL_PADDING_DP), dp(EXPANDED_PANEL_PADDING_DP),
+            dp(EXPANDED_PANEL_PADDING_DP), dp(EXPANDED_PANEL_PADDING_DP));
+        // No background on the panel: the terminal renders on a media-overlay GL
+        // surface that sits *below* the view layer, so anything opaque painted
+        // over the terminal region (a panel background) would hide it. The header
+        // carries the dark chrome; the terminal area is backed by the GL surface's
+        // own opaque terminal background.
 
         LinearLayout header = new LinearLayout(mService);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setBackground(makeTopRoundRect(CHROME_BG, dp(9)));
+        header.setPadding(dp(11), 0, dp(5), 0);
         header.setOnTouchListener(new DragTouchListener(null));
 
         mTitleView = new TextView(mService);
-        mTitleView.setTextColor(Color.rgb(210, 235, 225));
-        mTitleView.setTextSize(12);
-        mTitleView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        mTitleView.setTextColor(CHROME_TEXT);
+        mTitleView.setTextSize(11f);
+        mTitleView.setTypeface(mTerminalTypeface != null ? mTerminalTypeface : Typeface.MONOSPACE);
         mTitleView.setSingleLine(true);
-        header.addView(mTitleView, new LinearLayout.LayoutParams(0, dp(32), 1));
+        mTitleView.setEllipsize(TextUtils.TruncateAt.END);
+        mTitleView.setLetterSpacing(0.03f);
+        mTitleView.setIncludeFontPadding(false);
+        mTitleView.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(mTitleView, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1));
 
-        header.addView(makeHeaderButton("-", () -> show(false)));
-        header.addView(makeHeaderButton("Open", () -> {
+        header.addView(makeControlButton(ICON_MINIMIZE, () -> show(false)));
+        header.addView(makeControlButton(ICON_MAXIMIZE, () -> {
             hide();
             TermuxActivity.startTermuxActivity(mService);
         }));
-        header.addView(makeHeaderButton("x", this::hide));
+        header.addView(makeControlButton(ICON_CLOSE, this::hide));
         panel.addView(header, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            dp(34)));
+            dp(27)));
+
+        View hairline = new View(mService);
+        hairline.setBackgroundColor(CHROME_HAIRLINE);
+        panel.addView(hairline, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 1));
 
         mTerminalView = new TerminalView(mService, null);
-        // Mirror view: it reuses the activity's current session, so it must not
-        // reshape the shared PTY (would fight the main view / thrash SIGWINCH).
-        mTerminalView.setDrivesSessionResize(false);
+        // The expanded floating terminal is the active terminal surface while
+        // the main activity is backgrounded, so let it size the shared PTY to
+        // its own window. The activity view will size it back on resume.
+        mTerminalView.setDrivesSessionResize(true);
         mTerminalView.setTerminalViewClient(mTerminalViewClient);
-        mTerminalTypeface = TermuxTerminalFontManager.loadTerminalTypeface(mService);
         mLastAppliedTerminalFontSize = getFloatingTerminalFontSize();
         mTerminalView.setTextSize(mLastAppliedTerminalFontSize);
         mTerminalView.setTypeface(mTerminalTypeface);
-        mTerminalView.setZOrderOnTop(true);
+        // Media overlay (not z-order-on-top): the surface composites above the
+        // (transparent) window but below the view layer, so the resize handle —
+        // a normal sibling view — can paint on top of the terminal and stay
+        // visible and touchable.
+        mTerminalView.setZOrderMediaOverlay(true);
         mTerminalView.getHolder().setFormat(PixelFormat.TRANSLUCENT);
+        // Frost the terminal body so the screen behind shows through, matching the
+        // header alpha. Set before the surface is created (before onResume()) so
+        // the GL surface comes up translucent. Glyphs stay opaque — only the cell
+        // backgrounds take the alpha — so text remains readable.
+        mTerminalView.setTerminalTransparency(FLOATING_TERMINAL_TRANSPARENCY);
         mTerminalView.setFocusable(true);
         mTerminalView.setFocusableInTouchMode(true);
         mTerminalView.setBackgroundColor(Color.TRANSPARENT);
@@ -298,7 +359,12 @@ public final class TermuxFloatingTerminalController {
             if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)
                 scheduleTerminalGeometryRefresh();
         });
-        panel.addView(mTerminalView, new LinearLayout.LayoutParams(
+        FrameLayout terminalContainer = new FrameLayout(mService);
+        terminalContainer.addView(mTerminalView, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT));
+        terminalContainer.addView(makeResizeHandle(), resizeHandleLayoutParams());
+        panel.addView(terminalContainer, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             0,
             1));
@@ -308,23 +374,40 @@ public final class TermuxFloatingTerminalController {
             FrameLayout.LayoutParams.MATCH_PARENT));
     }
 
-    private TextView makeHeaderButton(String label, Runnable action) {
-        TextView button = new TextView(mService);
-        button.setText(label);
-        button.setGravity(Gravity.CENTER);
-        button.setTextColor(Color.rgb(220, 255, 238));
-        button.setTextSize(12);
-        button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        button.setBackground(makeRoundRect(Color.argb(230, 16, 36, 30), dp(5), Color.argb(100, 11, 201, 137), dp(1)));
+    private View makeControlButton(int icon, Runnable action) {
+        ControlIconView button = new ControlIconView(mService, icon);
         button.setOnClickListener(v -> action.run());
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(label.length() > 2 ? 54 : 32), dp(28));
-        params.leftMargin = dp(5);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(26), dp(26));
+        params.leftMargin = dp(2);
         button.setLayoutParams(params);
         return button;
     }
 
-    private int getFloatingTerminalFontSize() {
+    private Drawable makeIconPressBackground(boolean destructive) {
+        GradientDrawable pressed = new GradientDrawable();
+        pressed.setColor(destructive ? CHROME_PRESS_CLOSE : CHROME_PRESS);
+        pressed.setCornerRadius(dp(7));
+        GradientDrawable idle = new GradientDrawable();
+        idle.setColor(Color.TRANSPARENT);
+        idle.setCornerRadius(dp(7));
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed}, pressed);
+        states.addState(new int[0], idle);
+        return states;
+    }
+
+    private View makeResizeHandle() {
+        return new ResizeGripView(mService);
+    }
+
+    private FrameLayout.LayoutParams resizeHandleLayoutParams() {
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(26), dp(26));
+        params.gravity = Gravity.BOTTOM | Gravity.END;
+        params.setMargins(0, 0, dp(2), dp(2));
+        return params;
+    }
+
+    private int getConfiguredTerminalFontSize() {
         TermuxAppSharedPreferences preferences = TermuxAppSharedPreferences.build(mService);
         if (preferences != null)
             return preferences.getFontSize();
@@ -332,8 +415,39 @@ public final class TermuxFloatingTerminalController {
         return TermuxAppSharedPreferences.getDefaultFontSizes(mService)[0];
     }
 
-    private int getMinimumTerminalFontSize() {
-        return TermuxAppSharedPreferences.getDefaultFontSizes(mService)[1];
+    private int getFloatingTerminalFontSize() {
+        if (mTerminalView == null)
+            return getConfiguredTerminalFontSize();
+
+        return resolveFloatingTerminalFontSize(mTerminalView.getWidth());
+    }
+
+    /**
+     * Scale the floating font gently with window <em>width</em> only. The old
+     * code took {@code min(widthScale, heightScale)}, but the floating window is
+     * short, so the height ratio always won and pinned the font to its floor —
+     * which made the terminal look like a shrunk full-screen view. Width-only
+     * scaling with a 0.75 floor keeps a normal, readable terminal that simply
+     * reflows to fewer columns.
+     */
+    private int resolveFloatingTerminalFontSize(int terminalWidth) {
+        int configuredFontSize = getConfiguredTerminalFontSize();
+        if (terminalWidth <= 0)
+            return configuredFontSize;
+
+        float widthScale = terminalWidth / (float) Math.max(1, screenWidth());
+        float scale = Math.min(1f, Math.max(MIN_FLOATING_FONT_SCALE, widthScale));
+        int targetFontSize = roundFontSizeToStep(Math.round(configuredFontSize * scale));
+
+        int minimumFontSize = Math.max(
+            TermuxAppSharedPreferences.getDefaultFontSizes(mService)[1],
+            roundFontSizeToStep(Math.round(configuredFontSize * MIN_FLOATING_FONT_SCALE)));
+        return clamp(targetFontSize, Math.min(configuredFontSize, minimumFontSize), configuredFontSize);
+    }
+
+    private int roundFontSizeToStep(int fontSize) {
+        return Math.max(FLOATING_FONT_SIZE_STEP_PX,
+            Math.round(fontSize / (float) FLOATING_FONT_SIZE_STEP_PX) * FLOATING_FONT_SIZE_STEP_PX);
     }
 
     private void attachCurrentSession() {
@@ -389,44 +503,11 @@ public final class TermuxFloatingTerminalController {
     }
 
     private void updateFloatingTerminalFontSize() {
-        TerminalSession session = mService.getCurrentStoredTerminalSessionOrLast();
-        int targetFontSize = resolveFloatingTerminalFontSize(session);
+        int targetFontSize = getFloatingTerminalFontSize();
         if (targetFontSize == mLastAppliedTerminalFontSize) return;
 
         mLastAppliedTerminalFontSize = targetFontSize;
         mTerminalView.setTextSize(targetFontSize);
-    }
-
-    private int resolveFloatingTerminalFontSize(@Nullable TerminalSession session) {
-        int preferredFontSize = getFloatingTerminalFontSize();
-        if (mTerminalView == null || session == null || mTerminalTypeface == null)
-            return preferredFontSize;
-
-        TerminalEngine engine = session.getTerminalEngine();
-        if (engine == null)
-            return preferredFontSize;
-
-        int columns = engine.getColumns();
-        int viewWidth = mTerminalView.getWidth();
-        if (columns <= 0 || viewWidth <= 0)
-            return preferredFontSize;
-
-        int availableWidth = Math.max(1, viewWidth - dp(4));
-        int minFontSize = Math.min(preferredFontSize, getMinimumTerminalFontSize());
-        int low = minFontSize;
-        int high = preferredFontSize;
-        int best = minFontSize;
-        while (low <= high) {
-            int mid = (low + high) / 2;
-            TerminalRenderer renderer = new TerminalRenderer(mid, mTerminalTypeface);
-            if (renderer.getFontWidth() * columns <= availableWidth) {
-                best = mid;
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-        return best;
     }
 
     private void updateTitle() {
@@ -434,10 +515,28 @@ public final class TermuxFloatingTerminalController {
 
         TerminalSession session = mService.getCurrentStoredTerminalSessionOrLast();
         int sessionIndex = session == null ? -1 : mService.getIndexOfSession(session);
-        String label = session == null
+        String name = session == null
             ? mService.getString(R.string.termuxplus_floating_terminal_title)
-            : "[" + (sessionIndex + 1) + "] " + getSessionLabel(session);
-        mTitleView.setText(label);
+            : getSessionLabel(session);
+
+        if (sessionIndex < 0) {
+            mTitleView.setText(name);
+            return;
+        }
+
+        // A slim accent session marker instead of bulky "[n]" brackets — the
+        // index in phosphor green, then the name in muted light.
+        String index = String.valueOf(sessionIndex + 1);
+        SpannableStringBuilder builder = new SpannableStringBuilder();
+        builder.append(index);
+        builder.setSpan(new ForegroundColorSpan(CHROME_ACCENT), 0, index.length(),
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        builder.append("  ");
+        int nameStart = builder.length();
+        builder.append(name);
+        builder.setSpan(new ForegroundColorSpan(CHROME_TEXT), nameStart, builder.length(),
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        mTitleView.setText(builder);
     }
 
     private String getSessionLabel(TerminalSession session) {
@@ -467,14 +566,89 @@ public final class TermuxFloatingTerminalController {
         return drawable;
     }
 
+    /** Rounded only on the top corners — used for the expanded panel header,
+     * which is the only chrome that may paint over the (transparent) window;
+     * the terminal area below is left to the GL surface. */
+    private GradientDrawable makeTopRoundRect(int color, int radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        float r = radius;
+        drawable.setCornerRadii(new float[]{r, r, r, r, 0f, 0f, 0f, 0f});
+        return drawable;
+    }
+
     private int expandedWidth() {
-        // Cap to ~70 % of screen width so it never feels like a full-screen takeover.
+        if (mUserExpandedWidth > 0)
+            return clamp(mUserExpandedWidth, minimumExpandedWindowWidth(), maxExpandedWindowWidth());
+        return defaultExpandedWidth();
+    }
+
+    private int defaultExpandedWidth() {
+        // A fixed, comfortable target (~70 % width, capped) — deliberately NOT
+        // derived from the shared session's column count, which still reflects
+        // the full-screen view and would make the floating window echo the
+        // full-screen shape. Snap to the floating font's cell grid so there is
+        // no half-column gap on the right edge.
         int cap = (int) (screenWidth() * 0.7f);
-        return Math.max(dp(260), Math.min(cap, dp(420)));
+        int maxWidth = Math.min(cap, dp(420));
+        int minWidth = minimumExpandedWindowWidth();
+        return snapExpandedWidthToCellGrid(Math.max(minWidth, maxWidth), minWidth, maxWidth);
+    }
+
+    private int minimumExpandedWindowWidth() {
+        int headerButtons = 3 * dp(26) + 3 * dp(2);
+        int headerPadding = dp(11) + dp(5);
+        int panelPadding = 2 * dp(EXPANDED_PANEL_PADDING_DP);
+        int minimumTitleWidth = dp(40);
+        return panelPadding + headerPadding + headerButtons + minimumTitleWidth;
+    }
+
+    private int maxExpandedWindowWidth() {
+        return Math.max(minimumExpandedWindowWidth(), screenWidth() - dp(8));
+    }
+
+    private int snapExpandedWidthToCellGrid(int width, int minWidth, int maxWidth) {
+        Typeface typeface = mTerminalTypeface != null
+            ? mTerminalTypeface
+            : TermuxTerminalFontManager.loadTerminalTypeface(mService);
+        TerminalRenderer renderer = new TerminalRenderer(getFloatingTerminalFontSize(), typeface);
+        float cellWidth = renderer.getFontWidth();
+        if (cellWidth <= 0)
+            return Math.max(minWidth, Math.min(maxWidth, width));
+
+        int horizontalChrome = 2 * dp(EXPANDED_PANEL_PADDING_DP);
+        int availableTerminalWidth = Math.max(1, width - horizontalChrome);
+        int columns = Math.max(1, (int) Math.floor(availableTerminalWidth / cellWidth));
+        int snappedWidth = horizontalChrome + (int) Math.ceil(columns * cellWidth);
+
+        while (snappedWidth < minWidth && snappedWidth < maxWidth) {
+            columns++;
+            snappedWidth = horizontalChrome + (int) Math.ceil(columns * cellWidth);
+        }
+        while (snappedWidth > maxWidth && columns > 1) {
+            columns--;
+            snappedWidth = horizontalChrome + (int) Math.ceil(columns * cellWidth);
+        }
+
+        return Math.max(minWidth, Math.min(maxWidth, snappedWidth));
     }
 
     private int expandedHeight() {
+        if (mUserExpandedHeight > 0)
+            return clamp(mUserExpandedHeight, minimumExpandedWindowHeight(), maxExpandedWindowHeight());
+        return defaultExpandedHeight();
+    }
+
+    private int defaultExpandedHeight() {
         return Math.max(dp(220), Math.min((int) (screenHeight() * 0.42f), dp(380)));
+    }
+
+    private int minimumExpandedWindowHeight() {
+        return dp(142);
+    }
+
+    private int maxExpandedWindowHeight() {
+        return Math.max(minimumExpandedWindowHeight(), screenHeight() - dp(24));
     }
 
     private int screenWidth() {
@@ -500,6 +674,151 @@ public final class TermuxFloatingTerminalController {
 
     private int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private final class ResizeTouchListener implements View.OnTouchListener {
+        private final ResizeGripView mGrip;
+        private int mStartWidth;
+        private int mStartHeight;
+        private float mStartRawX;
+        private float mStartRawY;
+
+        ResizeTouchListener(ResizeGripView grip) {
+            mGrip = grip;
+        }
+
+        @Override
+        public boolean onTouch(View view, MotionEvent event) {
+            if (mLayoutParams == null || !mExpanded) return false;
+
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    mStartWidth = mLayoutParams.width;
+                    mStartHeight = mLayoutParams.height;
+                    mStartRawX = event.getRawX();
+                    mStartRawY = event.getRawY();
+                    mGrip.setActive(true);
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    resizeExpandedWindow(
+                        mStartWidth + Math.round(event.getRawX() - mStartRawX),
+                        mStartHeight + Math.round(event.getRawY() - mStartRawY));
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    mGrip.setActive(false);
+                    scheduleTerminalGeometryRefresh();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void resizeExpandedWindow(int desiredWidth, int desiredHeight) {
+            int maxWidth = Math.max(minimumExpandedWindowWidth(), screenWidth() - mLayoutParams.x);
+            int maxHeight = Math.max(minimumExpandedWindowHeight(), screenHeight() - mLayoutParams.y);
+            int width = clamp(desiredWidth, minimumExpandedWindowWidth(), maxWidth);
+            int height = clamp(desiredHeight, minimumExpandedWindowHeight(), maxHeight);
+            if (width == mLayoutParams.width && height == mLayoutParams.height)
+                return;
+
+            mUserExpandedWidth = width;
+            mUserExpandedHeight = height;
+            mLayoutParams.width = width;
+            mLayoutParams.height = height;
+            mLastWidth = width;
+            mLastHeight = height;
+
+            try {
+                mWindowManager.updateViewLayout(mRootView, mLayoutParams);
+            } catch (Exception e) {
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to resize floating terminal", e);
+                return;
+            }
+
+            scheduleTerminalGeometryRefresh();
+        }
+    }
+
+    /** A minimal control glyph (minimize / maximize / close), stroke-drawn rather
+     * than typeset so it stays crisp and font-independent, with a borderless
+     * rounded press state. */
+    private final class ControlIconView extends View {
+        private final int mIcon;
+        private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        ControlIconView(Context context, int icon) {
+            super(context);
+            mIcon = icon;
+            mPaint.setStyle(Paint.Style.STROKE);
+            mPaint.setStrokeCap(Paint.Cap.ROUND);
+            mPaint.setStrokeJoin(Paint.Join.ROUND);
+            mPaint.setColor(CHROME_TEXT);
+            mPaint.setStrokeWidth(Math.max(2f, strokePx()));
+            setBackground(makeIconPressBackground(icon == ICON_CLOSE));
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            float r = dp(5);
+            switch (mIcon) {
+                case ICON_MINIMIZE:
+                    canvas.drawLine(cx - r, cy, cx + r, cy, mPaint);
+                    break;
+                case ICON_MAXIMIZE:
+                    float rad = dp(2);
+                    canvas.drawRoundRect(cx - r, cy - r, cx + r, cy + r, rad, rad, mPaint);
+                    break;
+                case ICON_CLOSE:
+                    canvas.drawLine(cx - r, cy - r, cx + r, cy + r, mPaint);
+                    canvas.drawLine(cx - r, cy + r, cx + r, cy - r, mPaint);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /** The resize affordance: three nested diagonal strokes anchored to the
+     * bottom-right corner (the universal grip), muted at rest and lit to the
+     * accent green while dragging. */
+    private final class ResizeGripView extends View {
+        private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private boolean mActive;
+
+        ResizeGripView(Context context) {
+            super(context);
+            mPaint.setStyle(Paint.Style.STROKE);
+            mPaint.setStrokeCap(Paint.Cap.ROUND);
+            mPaint.setStrokeWidth(Math.max(2f, strokePx()));
+            setOnTouchListener(new ResizeTouchListener(this));
+        }
+
+        void setActive(boolean active) {
+            if (mActive == active) return;
+            mActive = active;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            mPaint.setColor(mActive ? CHROME_ACCENT : CHROME_TEXT_DIM);
+            float pad = dp(5);
+            float x = getWidth() - pad;
+            float y = getHeight() - pad;
+            float base = dp(3);
+            float gap = dp(4);
+            for (int i = 0; i < 3; i++) {
+                float len = base + i * gap;
+                canvas.drawLine(x, y - len, x - len, y, mPaint);
+            }
+        }
+    }
+
+    private float strokePx() {
+        return mService.getResources().getDisplayMetrics().density * 1.3f;
     }
 
     private final class DragTouchListener implements View.OnTouchListener {

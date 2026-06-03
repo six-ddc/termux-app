@@ -9,6 +9,8 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -29,26 +31,30 @@ import androidx.viewpager.widget.ViewPager;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
+import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.terminal.TerminalEngine;
 import com.termux.terminal.TerminalRenderSnapshot;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TextStyle;
+import com.termux.view.TerminalRenderer;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Full-screen session switcher. Each page shows four terminal previews in a 2x2
- * grid; each preview is letterboxed to the current terminal aspect ratio.
+ * grid; each preview renders from the terminal's top-left cell and clips to the
+ * card bounds, matching the main terminal's anchoring instead of letterboxing.
  */
 public class TermuxPlusTabOverview {
 
     private static final int SESSIONS_PER_PAGE = 4;
-    private static final float PREVIEW_CELL_WIDTH_RATIO = 0.52f;
+    private static final int PREVIEW_REFRESH_INTERVAL_MS = 1000;
 
     private final TermuxActivity mActivity;
     private final float mDensity;
+    private final Typeface mTerminalTypeface;
     private Dialog mDialog;
     private TextView mPageLabel;
     private LinearLayout mPageDots;
@@ -56,6 +62,7 @@ public class TermuxPlusTabOverview {
     public TermuxPlusTabOverview(TermuxActivity activity) {
         mActivity = activity;
         mDensity = activity.getResources().getDisplayMetrics().density;
+        mTerminalTypeface = TermuxTerminalFontManager.loadTerminalTypeface(activity);
     }
 
     public void show() {
@@ -463,18 +470,39 @@ public class TermuxPlusTabOverview {
         private final TerminalSession mSession;
         private final Paint mCellPaint = new Paint();
         private final Paint mTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Handler mHandler = new Handler(Looper.getMainLooper());
+        private final Runnable mRefreshRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!isAttachedToWindow()) return;
+                invalidate();
+                mHandler.postDelayed(this, PREVIEW_REFRESH_INTERVAL_MS);
+            }
+        };
+        private TerminalRenderer mRenderer;
         private String mEmptyText;
 
         TerminalSnapshotPreviewView(Context context, TerminalSession session) {
             super(context);
             mSession = session;
-            mTextPaint.setTypeface(Typeface.MONOSPACE);
             mTextPaint.setSubpixelText(true);
             mTextPaint.setTextAlign(Paint.Align.LEFT);
         }
 
         void setEmptyText(String emptyText) {
             mEmptyText = emptyText;
+        }
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            mHandler.post(mRefreshRunnable);
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            mHandler.removeCallbacks(mRefreshRunnable);
+            super.onDetachedFromWindow();
         }
 
         @Override
@@ -496,9 +524,9 @@ public class TermuxPlusTabOverview {
                 return;
             }
 
-            PreviewBounds bounds = previewBounds(columns, rows);
-            float cellWidth = bounds.width / columns;
-            float cellHeight = bounds.height / rows;
+            TerminalRenderer renderer = getPreviewRenderer(columns);
+            float cellWidth = renderer.getFontWidth();
+            int cellHeight = renderer.getFontLineSpacing();
             if (cellWidth <= 0 || cellHeight <= 0) return;
 
             int defaultBackground = snapshot.colors[
@@ -507,31 +535,48 @@ public class TermuxPlusTabOverview {
             canvas.drawRect(0, 0, getWidth(), getHeight(), mCellPaint);
 
             canvas.save();
-            canvas.translate(bounds.left, bounds.top);
-            canvas.clipRect(0, 0, bounds.width, bounds.height);
+            canvas.clipRect(0, 0, getWidth(), getHeight());
             drawCellBackgrounds(canvas, snapshot, columns, rows, cellWidth, cellHeight, defaultBackground);
-            drawCellText(canvas, snapshot, columns, rows, cellWidth, cellHeight, defaultBackground);
+            drawCellText(canvas, renderer, snapshot, columns, rows, cellWidth, cellHeight);
             canvas.restore();
         }
 
-        private PreviewBounds previewBounds(int columns, int rows) {
-            float availableWidth = getWidth();
-            float availableHeight = getHeight();
-            float previewAspectRatio = columns * PREVIEW_CELL_WIDTH_RATIO / rows;
-            float width = availableWidth;
-            float height = width / previewAspectRatio;
-            if (height > availableHeight) {
-                height = availableHeight;
-                width = height * previewAspectRatio;
+        private TerminalRenderer getPreviewRenderer(int columns) {
+            int targetTextSize = resolvePreviewTextSize(columns);
+            if (mRenderer == null || mRenderer.getTextSize() != targetTextSize)
+                mRenderer = new TerminalRenderer(targetTextSize, mTerminalTypeface);
+            return mRenderer;
+        }
+
+        private int resolvePreviewTextSize(int columns) {
+            int preferred = mActivity.getPreferences() == null
+                ? TermuxAppSharedPreferences.getDefaultFontSizes(mActivity)[0]
+                : mActivity.getPreferences().getFontSize();
+            int readableMinimum = TermuxAppSharedPreferences.getDefaultFontSizes(mActivity)[1];
+            if (columns <= 0 || getWidth() <= 0)
+                return Math.max(readableMinimum, preferred);
+
+            int low = Math.max(1, readableMinimum);
+            int high = Math.max(low, preferred);
+            int best = low;
+            while (low <= high) {
+                int mid = (low + high) / 2;
+                TerminalRenderer renderer = new TerminalRenderer(mid, mTerminalTypeface);
+                if (renderer.getFontWidth() * columns <= getWidth()) {
+                    best = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
             }
-            return new PreviewBounds((availableWidth - width) / 2f,
-                (availableHeight - height) / 2f, width, height);
+            return Math.max(readableMinimum, best);
         }
 
         private void drawCellBackgrounds(Canvas canvas, TerminalRenderSnapshot snapshot, int columns, int rows,
-                                         float cellWidth, float cellHeight, int defaultBackground) {
-            for (int row = 0; row < rows; row++) {
-                for (int column = 0; column < columns; ) {
+                                         float cellWidth, int cellHeight, int defaultBackground) {
+            int visibleRows = Math.min(rows, (int) Math.ceil(getHeight() / (float) Math.max(1, cellHeight)));
+            for (int row = 0; row < visibleRows; row++) {
+                for (int column = 0; column < columns && column * cellWidth < getWidth(); ) {
                     int base = renderCellBase(row, column, columns);
                     int widthColumns = normalizedCellWidth(snapshot, base, column, columns);
                     if (widthColumns <= 0) {
@@ -560,15 +605,16 @@ public class TermuxPlusTabOverview {
             }
         }
 
-        private void drawCellText(Canvas canvas, TerminalRenderSnapshot snapshot, int columns, int rows,
-                                  float cellWidth, float cellHeight, int defaultBackground) {
-            float textSize = Math.max(2f, cellHeight * 0.76f);
-            mTextPaint.setTextSize(textSize);
-            Paint.FontMetrics metrics = mTextPaint.getFontMetrics();
-            float baselineOffset = (cellHeight - metrics.ascent - metrics.descent) / 2f;
+        private void drawCellText(Canvas canvas, TerminalRenderer renderer, TerminalRenderSnapshot snapshot,
+                                  int columns, int rows, float cellWidth, int cellHeight) {
+            renderer.copyGlyphPaintTo(mTextPaint);
+            mTextPaint.setSubpixelText(true);
+            mTextPaint.setTextAlign(Paint.Align.LEFT);
+            float baselineOffset = cellHeight - renderer.getFontLineSpacingAndAscent();
 
-            for (int row = 0; row < rows; row++) {
-                for (int column = 0; column < columns; ) {
+            int visibleRows = Math.min(rows, (int) Math.ceil(getHeight() / (float) Math.max(1, cellHeight)));
+            for (int row = 0; row < visibleRows; row++) {
+                for (int column = 0; column < columns && column * cellWidth < getWidth(); ) {
                     int base = renderCellBase(row, column, columns);
                     int widthColumns = normalizedCellWidth(snapshot, base, column, columns);
                     if (widthColumns <= 0) {
@@ -601,7 +647,7 @@ public class TermuxPlusTabOverview {
                         foreground = applyDimEffect(foreground, effect);
                         mTextPaint.setColor(foreground);
                         mTextPaint.setFakeBoldText((effect & TextStyle.CHARACTER_ATTRIBUTE_BOLD) != 0);
-                        mTextPaint.setTextSkewX((effect & TextStyle.CHARACTER_ATTRIBUTE_ITALIC) != 0 ? -0.2f : 0f);
+                        mTextPaint.setTextSkewX((effect & TextStyle.CHARACTER_ATTRIBUTE_ITALIC) != 0 ? -0.35f : 0f);
                         mTextPaint.setUnderlineText((effect & TextStyle.CHARACTER_ATTRIBUTE_UNDERLINE) != 0);
                         mTextPaint.setStrikeThruText((effect & TextStyle.CHARACTER_ATTRIBUTE_STRIKETHROUGH) != 0);
                         canvas.drawText(text, column * cellWidth, row * cellHeight + baselineOffset, mTextPaint);
@@ -684,20 +730,6 @@ public class TermuxPlusTabOverview {
             int green = (0xFF & (color >> 8)) * 2 / 3;
             int blue = (0xFF & color) * 2 / 3;
             return 0xFF000000 | (red << 16) | (green << 8) | blue;
-        }
-    }
-
-    private static class PreviewBounds {
-        final float left;
-        final float top;
-        final float width;
-        final float height;
-
-        PreviewBounds(float left, float top, float width, float height) {
-            this.left = left;
-            this.top = top;
-            this.width = width;
-            this.height = height;
         }
     }
 }

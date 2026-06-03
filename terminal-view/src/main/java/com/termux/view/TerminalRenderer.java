@@ -50,6 +50,10 @@ public final class TerminalRenderer {
         return mFontWidth;
     }
 
+    public int getTextSize() {
+        return mTextSize;
+    }
+
     public int getFontLineSpacing() {
         return mFontLineSpacing;
     }

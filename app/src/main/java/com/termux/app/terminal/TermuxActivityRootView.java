@@ -276,7 +276,16 @@ public class TermuxActivityRootView extends LinearLayout implements ViewTreeObse
     public static class WindowInsetsListener implements View.OnApplyWindowInsetsListener {
         @Override
         public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
-            mStatusBarHeight =  WindowInsetsCompat.toWindowInsetsCompat(insets).getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            WindowInsetsCompat insetsCompat = WindowInsetsCompat.toWindowInsetsCompat(insets, v);
+            mStatusBarHeight = insetsCompat.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            if (v instanceof TermuxActivityRootView) {
+                TermuxActivity activity = ((TermuxActivityRootView) v).mActivity;
+                if (activity != null) {
+                    int imeHeight = insetsCompat.isVisible(WindowInsetsCompat.Type.ime())
+                        ? insetsCompat.getInsets(WindowInsetsCompat.Type.ime()).bottom : 0;
+                    activity.onTermuxPlusImeInsetsChanged(imeHeight);
+                }
+            }
             // Let view window handle insets however it wants
             return v.onApplyWindowInsets(insets);
         }

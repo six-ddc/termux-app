@@ -56,6 +56,7 @@ import com.termux.shared.termux.TermuxUtils;
 import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
 import com.termux.shared.termux.theme.TermuxThemeUtils;
 import com.termux.shared.theme.NightMode;
+import com.termux.shared.view.KeyboardUtils;
 import com.termux.shared.view.ViewUtils;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
@@ -176,9 +177,19 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private int mNavBarHeight;
 
     private float mTerminalToolbarDefaultHeight;
+    private int mCurrentImeHeight;
+    private int mLastVisibleImeHeight;
+    private boolean mTermuxPlusExtraKeysPanelExpanded;
+    private boolean mTermuxPlusExtraKeysPanelRestoringKeyboard;
 
     private final Handler mFloatingTerminalStopHandler = new Handler(Looper.getMainLooper());
     private boolean mSuppressFloatingTerminalOnStop;
+    private final Runnable mExpandExtraKeysPanelFallbackRunnable = () -> {
+        if (!mTermuxPlusExtraKeysPanelExpanded || mCurrentImeHeight <= 0) return;
+        mCurrentImeHeight = 0;
+        updateTerminalToolbarHeight();
+    };
+    private final Runnable mFinishExtraKeysPanelCollapseRunnable = this::finishTermuxPlusExtraKeysPanelCollapse;
 
     /** Whether the immersive fullscreen / focus mode is currently active. */
     private boolean mIsFullscreen;
@@ -577,19 +588,120 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (terminalToolbarViewPager == null) return;
 
         ViewGroup.LayoutParams layoutParams = terminalToolbarViewPager.getLayoutParams();
-        int actionsHeight = 0;
-        int extraKeysRows = mTermuxTerminalExtraKeys == null ? 0 : mTermuxTerminalExtraKeys.getMaxExtraKeysRows();
-        int targetHeight = Math.round((actionsHeight + (mTerminalToolbarDefaultHeight * extraKeysRows)) *
-            mProperties.getTerminalToolbarHeightScaleFactor());
-        if (layoutParams.height == targetHeight)
-            return;
+        int targetHeight = getTermuxPlusPinnedExtraKeysHeight() + getTermuxPlusExpandedExtraKeysPanelHeight();
+        if (layoutParams.height != targetHeight) {
+            layoutParams.height = targetHeight;
+            terminalToolbarViewPager.setLayoutParams(layoutParams);
+        }
 
-        layoutParams.height = targetHeight;
-        terminalToolbarViewPager.setLayoutParams(layoutParams);
+        refreshTerminalToolbarExtraKeysPanelLayouts();
     }
 
     public void updateTerminalToolbarHeight() {
         setTerminalToolbarHeight();
+    }
+
+    public int getTermuxPlusPinnedExtraKeysHeight() {
+        int extraKeysRows = mTermuxTerminalExtraKeys == null ? 0 : mTermuxTerminalExtraKeys.getPinnedExtraKeysRows();
+        return Math.round((mTerminalToolbarDefaultHeight * extraKeysRows) *
+            mProperties.getTerminalToolbarHeightScaleFactor());
+    }
+
+    public int getTermuxPlusExpandedExtraKeysPanelHeight() {
+        if (!shouldKeepTermuxPlusExtraKeysPanelOpen()) return 0;
+        if (mTermuxTerminalExtraKeys == null || mTermuxTerminalExtraKeys.getExpandedExtraKeysRows() <= 0)
+            return 0;
+
+        int panelHeight = getRememberedImeHeight();
+        if (mTermuxPlusExtraKeysPanelRestoringKeyboard)
+            panelHeight = Math.max(0, panelHeight - mCurrentImeHeight);
+        if (mTermuxActivityRootView != null && mTermuxActivityRootView.getHeight() > 0) {
+            int maxPanelHeight = Math.max(0, mTermuxActivityRootView.getHeight() - getTermuxPlusPinnedExtraKeysHeight());
+            panelHeight = Math.min(panelHeight, maxPanelHeight);
+        }
+        return panelHeight;
+    }
+
+    public void toggleTermuxPlusExtraKeysPanel() {
+        if (mTermuxPlusExtraKeysPanelExpanded || mTermuxPlusExtraKeysPanelRestoringKeyboard) {
+            collapseTermuxPlusExtraKeysPanelToKeyboard();
+        } else {
+            expandTermuxPlusExtraKeysPanel();
+        }
+    }
+
+    public void onTermuxPlusImeInsetsChanged(int imeHeight) {
+        mCurrentImeHeight = Math.max(0, imeHeight);
+        if (mCurrentImeHeight > 0 && !shouldKeepTermuxPlusExtraKeysPanelOpen())
+            mLastVisibleImeHeight = mCurrentImeHeight;
+
+        if (mTermuxTerminalExtraKeys == null || mTerminalToolbarDefaultHeight <= 0)
+            return;
+
+        if (mTermuxPlusExtraKeysPanelRestoringKeyboard && mCurrentImeHeight >= Math.round(getRememberedImeHeight() * 0.75f))
+            finishTermuxPlusExtraKeysPanelCollapse();
+        else
+            updateTerminalToolbarHeight();
+    }
+
+    private void expandTermuxPlusExtraKeysPanel() {
+        if (mCurrentImeHeight > 0)
+            mLastVisibleImeHeight = mCurrentImeHeight;
+
+        mTermuxPlusExtraKeysPanelExpanded = true;
+        mTermuxPlusExtraKeysPanelRestoringKeyboard = false;
+        if (mTerminalView != null) {
+            mTerminalView.removeCallbacks(mFinishExtraKeysPanelCollapseRunnable);
+            mTerminalView.removeCallbacks(mExpandExtraKeysPanelFallbackRunnable);
+            mTerminalView.requestFocus();
+            KeyboardUtils.hideSoftKeyboard(this, mTerminalView);
+            mTerminalView.postDelayed(mExpandExtraKeysPanelFallbackRunnable, 420);
+        }
+        updateTerminalToolbarHeight();
+    }
+
+    private void collapseTermuxPlusExtraKeysPanelToKeyboard() {
+        mTermuxPlusExtraKeysPanelExpanded = false;
+        mTermuxPlusExtraKeysPanelRestoringKeyboard = true;
+        if (mTerminalView != null) {
+            mTerminalView.removeCallbacks(mExpandExtraKeysPanelFallbackRunnable);
+            mTerminalView.removeCallbacks(mFinishExtraKeysPanelCollapseRunnable);
+            KeyboardUtils.clearDisableSoftKeyboardFlags(this);
+            mTerminalView.requestFocus();
+            KeyboardUtils.showSoftKeyboard(this, mTerminalView);
+            mTerminalView.postDelayed(mFinishExtraKeysPanelCollapseRunnable, 700);
+        }
+        updateTerminalToolbarHeight();
+    }
+
+    private void finishTermuxPlusExtraKeysPanelCollapse() {
+        if (!mTermuxPlusExtraKeysPanelRestoringKeyboard) return;
+        mTermuxPlusExtraKeysPanelRestoringKeyboard = false;
+        mTermuxPlusExtraKeysPanelExpanded = false;
+        updateTerminalToolbarHeight();
+    }
+
+    private boolean shouldKeepTermuxPlusExtraKeysPanelOpen() {
+        return mTermuxPlusExtraKeysPanelExpanded || mTermuxPlusExtraKeysPanelRestoringKeyboard;
+    }
+
+    private int getRememberedImeHeight() {
+        if (mLastVisibleImeHeight > 0)
+            return mLastVisibleImeHeight;
+
+        int fallbackRows = mTermuxTerminalExtraKeys == null ? 8 :
+            Math.max(6, Math.min(mTermuxTerminalExtraKeys.getExpandedExtraKeysRows(), 10));
+        return Math.round((mTerminalToolbarDefaultHeight * fallbackRows) *
+            mProperties.getTerminalToolbarHeightScaleFactor());
+    }
+
+    private void refreshTerminalToolbarExtraKeysPanelLayouts() {
+        final ViewPager terminalToolbarViewPager = getTerminalToolbarViewPager();
+        if (terminalToolbarViewPager == null) return;
+
+        PagerAdapter adapter = terminalToolbarViewPager.getAdapter();
+        if (adapter instanceof TerminalToolbarViewPager.PageAdapter)
+            ((TerminalToolbarViewPager.PageAdapter) adapter).refreshExtraKeysPanelLayouts();
     }
 
     public void toggleTerminalToolbar() {
@@ -1293,8 +1405,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
             if (mExtraKeysView != null) {
                 mTermuxTerminalExtraKeys.reloadExtraKeys();
-                mExtraKeysView.setButtonTextAllCaps(mProperties.shouldExtraKeysTextBeAllCaps());
-                mExtraKeysView.reload(mTermuxTerminalExtraKeys.getExtraKeysInfo(), mTerminalToolbarDefaultHeight);
+                ViewPager terminalToolbarViewPager = getTerminalToolbarViewPager();
+                PagerAdapter adapter = terminalToolbarViewPager == null ? null : terminalToolbarViewPager.getAdapter();
+                if (adapter instanceof TerminalToolbarViewPager.PageAdapter)
+                    ((TerminalToolbarViewPager.PageAdapter) adapter).reloadExtraKeysViews();
             }
 
             // Update NightMode.APP_NIGHT_MODE

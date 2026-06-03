@@ -39,8 +39,7 @@ public class TerminalToolbarViewPager {
 
     public static final String MODE_NAME_KEYS = "keys";
     private static final String EXTRA_KEYS_VIEW_TAG_PREFIX = "termuxplus_extra_keys_page_";
-    private static final int EXTRA_KEY_COLUMN_WIDTH_DP = 56;
-    private static final int EXTRA_KEY_BUTTON_WIDTH_DP = 52;
+    private static final String EXTRA_KEYS_PAGE_TAG_PREFIX = "termuxplus_extra_keys_container_";
 
     public static class PageAdapter extends PagerAdapter {
 
@@ -83,19 +82,14 @@ public class TerminalToolbarViewPager {
         private View inflateExtraKeysPage(LayoutInflater inflater, ViewGroup collection, int position) {
             View layout = inflater.inflate(R.layout.view_terminal_toolbar_extra_keys, collection, false);
             ExtraKeysView extraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys);
-            extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
-            extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
-            extraKeysView.setButtonColors(
-                color(R.color.termuxplus_text_primary),
-                color(R.color.termuxplus_outline_selected),
-                color(R.color.termuxplus_control),
-                color(R.color.termuxplus_control_selected));
+            ExtraKeysView expandedExtraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys_expanded);
+            configureExtraKeysView(extraKeysView);
+            configureExtraKeysView(expandedExtraKeysView);
+            layout.setTag(getExtraKeysPageTag(position));
             extraKeysView.setTag(getExtraKeysViewTag(position));
             if (position == mActivity.getTerminalToolbarViewPager().getCurrentItem())
                 mActivity.setExtraKeysView(extraKeysView);
-            ExtraKeysInfo extraKeysInfo = mActivity.getTermuxTerminalExtraKeys().getExtraKeysInfo(position);
-            configureExtraKeysStrip(layout, extraKeysView, extraKeysInfo);
-            extraKeysView.reload(extraKeysInfo, mActivity.getTerminalToolbarDefaultHeight());
+            reloadExtraKeysViews(layout, position);
 
             if (mActivity.getProperties().isUsingFullScreen() && mActivity.getProperties().isUsingFullScreenWorkAround())
                 FullScreenWorkAround.apply(mActivity);
@@ -103,28 +97,91 @@ public class TerminalToolbarViewPager {
             return layout;
         }
 
-        private void configureExtraKeysStrip(View layout, ExtraKeysView extraKeysView, ExtraKeysInfo extraKeysInfo) {
-            TermuxPlusExtraKeysScrollView scrollView = layout.findViewById(R.id.terminal_toolbar_extra_keys_scroll);
-            if (scrollView == null || extraKeysView == null) return;
+        public void reloadExtraKeysViews() {
+            ViewPager viewPager = mActivity.getTerminalToolbarViewPager();
+            if (viewPager == null) return;
 
-            int columns = getColumns(extraKeysInfo);
-            int columnWidth = dp(EXTRA_KEY_COLUMN_WIDTH_DP);
-            int targetWidth = Math.max(
-                mActivity.getResources().getDisplayMetrics().widthPixels,
-                columns * columnWidth + dp(6));
-
-            ViewGroup.LayoutParams params = extraKeysView.getLayoutParams();
-            params.width = targetWidth;
-            extraKeysView.setLayoutParams(params);
-            extraKeysView.setFixedButtonWidthPx(dp(EXTRA_KEY_BUTTON_WIDTH_DP));
-            scrollView.setSnapColumnWidth(columnWidth);
-            scrollView.post(scrollView::snapToNearestColumn);
+            for (int i = 0; i < viewPager.getChildCount(); i++) {
+                View child = viewPager.getChildAt(i);
+                Object tag = child.getTag();
+                if (!(tag instanceof String)) continue;
+                String tagValue = (String) tag;
+                if (!tagValue.startsWith(EXTRA_KEYS_PAGE_TAG_PREFIX)) continue;
+                int position = parseExtraKeysPagePosition(tagValue);
+                if (position >= 0)
+                    reloadExtraKeysViews(child, position);
+            }
         }
 
-        private int getColumns(ExtraKeysInfo extraKeysInfo) {
-            if (extraKeysInfo == null || extraKeysInfo.getMatrix() == null)
-                return 1;
-            return Math.max(1, ExtraKeysView.maximumLength(extraKeysInfo.getMatrix()));
+        public void refreshExtraKeysPanelLayouts() {
+            ViewPager viewPager = mActivity.getTerminalToolbarViewPager();
+            if (viewPager == null) return;
+
+            for (int i = 0; i < viewPager.getChildCount(); i++)
+                refreshExtraKeysPanelLayout(viewPager.getChildAt(i));
+        }
+
+        private void reloadExtraKeysViews(View layout, int position) {
+            TermuxTerminalExtraKeys extraKeys = mActivity.getTermuxTerminalExtraKeys();
+            if (extraKeys == null) return;
+
+            ExtraKeysView primaryExtraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys);
+            ExtraKeysView expandedExtraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys_expanded);
+            ExtraKeysInfo primaryExtraKeysInfo = extraKeys.getPrimaryExtraKeysInfo(position);
+            ExtraKeysInfo expandedExtraKeysInfo = extraKeys.getExpandedExtraKeysInfo(position);
+            if (primaryExtraKeysView != null)
+                primaryExtraKeysView.reload(primaryExtraKeysInfo, mActivity.getTermuxPlusPinnedExtraKeysHeight());
+            if (expandedExtraKeysView != null)
+                expandedExtraKeysView.reload(expandedExtraKeysInfo, Math.max(mActivity.getTermuxPlusExpandedExtraKeysPanelHeight(), mActivity.getTerminalToolbarDefaultHeight()));
+
+            refreshExtraKeysPanelLayout(layout);
+        }
+
+        private void configureExtraKeysView(ExtraKeysView extraKeysView) {
+            if (extraKeysView == null) return;
+
+            extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
+            extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
+            extraKeysView.setButtonColors(
+                color(R.color.termuxplus_text_primary),
+                color(R.color.termuxplus_outline_selected),
+                color(R.color.termuxplus_control),
+                color(R.color.termuxplus_control_selected));
+            extraKeysView.setFixedButtonWidthPx(0);
+        }
+
+        private void refreshExtraKeysPanelLayout(View layout) {
+            if (layout == null) return;
+
+            ExtraKeysView primaryExtraKeysView = layout.findViewById(R.id.terminal_toolbar_extra_keys);
+            View expandedContainer = layout.findViewById(R.id.terminal_toolbar_extra_keys_expanded_container);
+            int pinnedHeight = mActivity.getTermuxPlusPinnedExtraKeysHeight();
+            int expandedHeight = mActivity.getTermuxPlusExpandedExtraKeysPanelHeight();
+
+            if (primaryExtraKeysView != null) {
+                ViewGroup.LayoutParams primaryParams = primaryExtraKeysView.getLayoutParams();
+                if (primaryParams.height != pinnedHeight) {
+                    primaryParams.height = pinnedHeight;
+                    primaryExtraKeysView.setLayoutParams(primaryParams);
+                }
+            }
+
+            if (expandedContainer != null) {
+                ViewGroup.LayoutParams expandedParams = expandedContainer.getLayoutParams();
+                if (expandedParams.height != expandedHeight) {
+                    expandedParams.height = expandedHeight;
+                    expandedContainer.setLayoutParams(expandedParams);
+                }
+                expandedContainer.setVisibility(expandedHeight > 0 ? View.VISIBLE : View.GONE);
+            }
+        }
+
+        private int parseExtraKeysPagePosition(String tagValue) {
+            try {
+                return Integer.parseInt(tagValue.substring(EXTRA_KEYS_PAGE_TAG_PREFIX.length()));
+            } catch (Exception e) {
+                return -1;
+            }
         }
 
         private void renderSnippets(EditText searchInput, LinearLayout snippetsList) {
@@ -480,6 +537,10 @@ public class TerminalToolbarViewPager {
 
     private static String getExtraKeysViewTag(int position) {
         return EXTRA_KEYS_VIEW_TAG_PREFIX + position;
+    }
+
+    private static String getExtraKeysPageTag(int position) {
+        return EXTRA_KEYS_PAGE_TAG_PREFIX + position;
     }
 
 

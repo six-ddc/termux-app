@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/termuxplus_header_bg" />
-</shape>
+<!-- Main header bar: frosted near-black with a faint phosphor-green hairline along
+     the bottom edge — the HUD chrome divider between the tab strip and terminal. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/termuxplus_glass_bg" />
+        </shape>
+    </item>
+    <item android:gravity="bottom">
+        <shape android:shape="rectangle">
+            <size android:height="1dp" />
+            <solid android:color="@color/termuxplus_hairline_accent" />
+        </shape>
+    </item>
+</layer-list>

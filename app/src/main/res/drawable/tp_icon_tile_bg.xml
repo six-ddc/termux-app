@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- HUD icon tile: a dark green-tinted chip framing a phosphor-green glyph. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#19212C" />
-    <corners android:radius="11dp" />
+    <solid android:color="@color/termuxplus_accent_soft" />
+    <corners android:radius="8dp" />
+    <stroke android:width="1dp" android:color="@color/termuxplus_hairline_accent" />
 </shape>

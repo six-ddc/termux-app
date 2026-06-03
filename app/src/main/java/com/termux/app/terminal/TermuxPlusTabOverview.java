@@ -19,8 +19,6 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
-import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -31,6 +29,8 @@ import androidx.viewpager.widget.ViewPager;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
+import com.termux.app.ui.TpChrome;
+import com.termux.app.ui.TpIconView;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.terminal.TerminalEngine;
@@ -149,8 +149,10 @@ public class TermuxPlusTabOverview {
         TextView title = new TextView(mActivity);
         title.setText(R.string.termuxplus_overview_title);
         title.setTextColor(color(R.color.termuxplus_text_primary));
-        title.setTextSize(16);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextSize(15);
+        title.setTypeface(mTerminalTypeface, Typeface.BOLD);
+        title.setLetterSpacing(0.04f);
+        title.setIncludeFontPadding(false);
         title.setSingleLine(true);
         titleBlock.addView(title, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -183,8 +185,9 @@ public class TermuxPlusTabOverview {
         dotsParams.setMarginEnd(dp(8));
         header.addView(mPageDots, dotsParams);
 
-        ImageButton newButton = headerIconButton(R.drawable.ic_tp_add, R.string.termuxplus_overview_new);
-        newButton.setColorFilter(color(R.color.termuxplus_accent));
+        TpIconView newButton = new TpIconView(mActivity, TpIconView.ADD);
+        newButton.setColor(TpChrome.ACCENT);
+        newButton.setContentDescription(mActivity.getString(R.string.termuxplus_overview_new));
         newButton.setOnClickListener(v -> {
             dismiss();
             mActivity.getTermuxTerminalSessionClient().addNewSession(false, null);
@@ -193,22 +196,13 @@ public class TermuxPlusTabOverview {
         newParams.setMarginEnd(dp(4));
         header.addView(newButton, newParams);
 
-        ImageButton close = headerIconButton(R.drawable.ic_tp_close, android.R.string.cancel);
-        close.setColorFilter(color(R.color.termuxplus_text_primary));
+        TpIconView close = new TpIconView(mActivity, TpIconView.CLOSE);
+        close.setColor(TpChrome.TEXT);
+        close.setContentDescription(mActivity.getString(android.R.string.cancel));
         close.setOnClickListener(v -> dismiss());
         header.addView(close, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
         return header;
-    }
-
-    private ImageButton headerIconButton(int iconResId, int descriptionResId) {
-        ImageButton button = new ImageButton(mActivity);
-        button.setImageResource(iconResId);
-        button.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_header_button_bg));
-        button.setContentDescription(mActivity.getString(descriptionResId));
-        button.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        button.setPadding(dp(9), dp(9), dp(9), dp(9));
-        return button;
     }
 
     private void updatePageIndicator(int page, int pageCount) {
@@ -353,7 +347,8 @@ public class TermuxPlusTabOverview {
         title.setText(cardTitle(index, session));
         title.setTextColor(color(R.color.termuxplus_text_primary));
         title.setTextSize(11.5f);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(mTerminalTypeface, Typeface.BOLD);
+        title.setIncludeFontPadding(false);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));

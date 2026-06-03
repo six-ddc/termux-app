@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.Typeface;
@@ -31,6 +32,8 @@ import androidx.annotation.Nullable;
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.TermuxService;
+import com.termux.app.ui.TpChrome;
+import com.termux.app.ui.TpIconView;
 import com.termux.shared.android.PermissionUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
@@ -55,17 +58,16 @@ public final class TermuxFloatingTerminalController {
      * background alpha so the whole panel reads as one frosted glass surface. */
     private static final int FLOATING_TERMINAL_TRANSPARENCY = 64;
 
-    // --- Floating chrome palette: a precision "terminal HUD" — frosted near-black
-    // bars (alpha matched to the terminal body), a single phosphor-green accent
-    // used only for the session marker, hairline, and active/pressed states.
-    // Everything else is a muted desaturated light. ---
+    // --- Floating chrome palette: sourced from the shared TpChrome HUD language so
+    // the floating terminal and the main UI stay pixel-consistent. Only CHROME_BG is
+    // local, because its alpha is mirrored from the terminal-body transparency. ---
     private static final int CHROME_BG = Color.argb(255 - FLOATING_TERMINAL_TRANSPARENCY, 9, 13, 14);
-    private static final int CHROME_HAIRLINE = Color.argb(56, 11, 201, 137);
-    private static final int CHROME_TEXT = Color.argb(236, 197, 222, 213);
-    private static final int CHROME_TEXT_DIM = Color.argb(128, 121, 150, 141);
-    private static final int CHROME_ACCENT = Color.rgb(11, 201, 137);
-    private static final int CHROME_PRESS = Color.argb(40, 11, 201, 137);
-    private static final int CHROME_PRESS_CLOSE = Color.argb(50, 232, 104, 92);
+    private static final int CHROME_HAIRLINE = TpChrome.HAIRLINE;
+    private static final int CHROME_TEXT = TpChrome.TEXT;
+    private static final int CHROME_TEXT_DIM = TpChrome.TEXT_DIM;
+    private static final int CHROME_ACCENT = TpChrome.ACCENT;
+    private static final int CHROME_PRESS = TpChrome.PRESS;
+    private static final int CHROME_PRESS_CLOSE = TpChrome.PRESS_CLOSE;
 
     private static final int ICON_MINIMIZE = 0;
     private static final int ICON_MAXIMIZE = 1;
@@ -272,18 +274,55 @@ public final class TermuxFloatingTerminalController {
     }
 
     private void buildCollapsedView() {
-        TextView bubble = new TextView(mService);
-        bubble.setText("TP");
-        bubble.setGravity(Gravity.CENTER);
-        bubble.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        bubble.setTextColor(Color.rgb(220, 255, 238));
-        bubble.setTextSize(10);
-        bubble.setBackground(makeRoundRect(Color.argb(230, 8, 18, 15), dp(14), Color.rgb(11, 201, 137), dp(1)));
+        CollapsedBubbleView bubble = new CollapsedBubbleView(mService);
         bubble.setOnTouchListener(new DragTouchListener(() -> showExpandedIfAllowed()));
 
         mRootView.addView(bubble, new FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT));
+    }
+
+    /** Collapsed floating affordance: a frosted dark disc rimmed with a thin
+     * phosphor-green ring and a stroke-drawn {@code ›_} terminal prompt — the HUD
+     * stand-in for the old "TP" text bubble. */
+    private final class CollapsedBubbleView extends View {
+        private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mRing = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mGlyph = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path mPath = new Path();
+
+        CollapsedBubbleView(Context context) {
+            super(context);
+            mFill.setStyle(Paint.Style.FILL);
+            mFill.setColor(Color.argb(236, 9, 13, 14));
+            mRing.setStyle(Paint.Style.STROKE);
+            mRing.setColor(CHROME_ACCENT);
+            mRing.setStrokeWidth(Math.max(2f, strokePx()));
+            mGlyph.setStyle(Paint.Style.STROKE);
+            mGlyph.setStrokeCap(Paint.Cap.ROUND);
+            mGlyph.setStrokeJoin(Paint.Join.ROUND);
+            mGlyph.setColor(CHROME_ACCENT);
+            mGlyph.setStrokeWidth(Math.max(2f, strokePx()));
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            float radius = Math.min(cx, cy) - mRing.getStrokeWidth();
+            canvas.drawCircle(cx, cy, radius, mFill);
+            canvas.drawCircle(cx, cy, radius, mRing);
+
+            float r = radius * 0.42f;
+            // chevron "›" pointing right, left of centre
+            mPath.reset();
+            mPath.moveTo(cx - r * 0.95f, cy - r);
+            mPath.lineTo(cx - r * 0.05f, cy);
+            mPath.lineTo(cx - r * 0.95f, cy + r);
+            canvas.drawPath(mPath, mGlyph);
+            // cursor "_" at lower-right
+            canvas.drawLine(cx + r * 0.2f, cy + r * 0.62f, cx + r, cy + r * 0.62f, mGlyph);
+        }
     }
 
     private void buildExpandedView() {
@@ -555,15 +594,6 @@ public final class TermuxFloatingTerminalController {
 
         mTerminalView.requestFocus();
         mTerminalView.postDelayed(() -> KeyboardUtils.showSoftKeyboard(mService, mTerminalView), 150);
-    }
-
-    private GradientDrawable makeRoundRect(int color, int radius, int strokeColor, int strokeWidth) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(color);
-        drawable.setCornerRadius(radius);
-        if (strokeWidth > 0)
-            drawable.setStroke(strokeWidth, strokeColor);
-        return drawable;
     }
 
     /** Rounded only on the top corners — used for the expanded panel header,

@@ -30,6 +30,8 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.termux.R;
 import com.termux.app.terminal.io.TermuxPlusSnippet;
 import com.termux.app.terminal.io.TermuxPlusSnippetRepository;
+import com.termux.app.ui.TpChrome;
+import com.termux.app.ui.TpIconView;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -129,7 +131,7 @@ public class TermuxPlusSnippetsSheet {
         tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
         ImageView icon = new ImageView(mActivity);
         icon.setImageResource(R.drawable.ic_tp_braces);
-        icon.setColorFilter(color(R.color.termuxplus_text_primary));
+        icon.setColorFilter(TpChrome.ACCENT);
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
         iconParams.gravity = Gravity.CENTER;
         tile.addView(icon, iconParams);
@@ -148,15 +150,25 @@ public class TermuxPlusSnippetsSheet {
             textColumn.addView(createText(metaText, R.color.termuxplus_text_muted, 10, android.graphics.Typeface.NORMAL, true));
         row.addView(textColumn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-        Button edit = createActionButton(mActivity.getString(R.string.termuxplus_edit), false, false);
+        TpIconView edit = new TpIconView(mActivity, TpIconView.EDIT);
+        edit.setColor(TpChrome.TEXT_DIM);
+        edit.setContentDescription(mActivity.getString(R.string.termuxplus_edit));
         edit.setOnClickListener(v -> showSnippetEditor(snippet));
-        row.addView(edit, createActionLayoutParams(58));
+        row.addView(edit, snippetActionIconParams());
 
-        Button delete = createActionButton(mActivity.getString(R.string.termuxplus_delete), false, true);
+        TpIconView delete = new TpIconView(mActivity, TpIconView.TRASH);
+        delete.setColor(TpChrome.ERROR);
+        delete.setContentDescription(mActivity.getString(R.string.termuxplus_delete));
         delete.setOnClickListener(v -> showDeleteConfirmation(snippet, true));
-        row.addView(delete, createActionLayoutParams(72));
+        row.addView(delete, snippetActionIconParams());
 
         return row;
+    }
+
+    private LinearLayout.LayoutParams snippetActionIconParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(34), dp(34));
+        params.setMargins(dp(2), 0, 0, 0);
+        return params;
     }
 
     private void showSnippetEditor(@Nullable TermuxPlusSnippet snippet) {
@@ -354,9 +366,9 @@ public class TermuxPlusSnippetsSheet {
         button.setPadding(dp(8), 0, dp(8), 0);
         button.setSingleLine(true);
         button.setTextSize(12);
-        button.setTextColor(color(danger ? R.color.termuxplus_text_error :
-            (primary ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary)));
-        button.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        button.setTextColor(danger ? TpChrome.ERROR :
+            (primary ? TpChrome.ACCENT : TpChrome.TEXT_DIM));
+        button.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
         button.setBackground(ContextCompat.getDrawable(mActivity,
             primary ? R.drawable.tp_accent_button_bg : R.drawable.tp_chip_bg));
         return button;
@@ -389,12 +401,6 @@ public class TermuxPlusSnippetsSheet {
         editText.setTypeface(android.graphics.Typeface.MONOSPACE);
         editText.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_sheet_input_bg));
         editText.setPadding(dp(12), 0, dp(12), 0);
-    }
-
-    private LinearLayout.LayoutParams createActionLayoutParams(int widthDp) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(widthDp), dp(34));
-        params.setMargins(dp(4), 0, 0, 0);
-        return params;
     }
 
     private void setSheetContent(View sheet) {

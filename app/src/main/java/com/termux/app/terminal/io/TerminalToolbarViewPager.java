@@ -1,5 +1,6 @@
 package com.termux.app.terminal.io;
 
+import android.graphics.Color;
 import android.graphics.Typeface;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -27,6 +28,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.activities.TermuxPlusSnippetsActivity;
+import com.termux.app.ui.TpChrome;
 import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
 import com.termux.terminal.TerminalSession;
@@ -142,11 +144,13 @@ public class TerminalToolbarViewPager {
 
             extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
             extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
+            // HUD keys: borderless on the frosted bar (transparent rest), text in muted
+            // light, modifier-active text in phosphor green, and a green press tint.
             extraKeysView.setButtonColors(
-                color(R.color.termuxplus_text_primary),
-                color(R.color.termuxplus_outline_selected),
-                color(R.color.termuxplus_control),
-                color(R.color.termuxplus_control_selected));
+                TpChrome.TEXT,
+                TpChrome.ACCENT,
+                Color.TRANSPARENT,
+                TpChrome.PRESS);
             extraKeysView.setFixedButtonWidthPx(0);
         }
 
@@ -221,7 +225,7 @@ public class TerminalToolbarViewPager {
             tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
             ImageView icon = new ImageView(mActivity);
             icon.setImageResource(R.drawable.ic_tp_braces);
-            icon.setColorFilter(color(R.color.termuxplus_text_primary));
+            icon.setColorFilter(TpChrome.ACCENT);
             FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
             iconParams.gravity = Gravity.CENTER;
             tile.addView(icon, iconParams);
@@ -309,8 +313,8 @@ public class TerminalToolbarViewPager {
             button.setPadding(dp(8), 0, dp(8), 0);
             button.setSingleLine(true);
             button.setTextSize(12);
-            button.setTextColor(color(primary ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
-            button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            button.setTextColor(primary ? TpChrome.ACCENT : TpChrome.TEXT_DIM);
+            button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
             button.setBackground(ContextCompat.getDrawable(mActivity,
                 primary ? R.drawable.tp_accent_button_bg : R.drawable.tp_chip_bg));
         }

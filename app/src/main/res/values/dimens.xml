@@ -11,9 +11,10 @@
     <dimen name="termuxplus_fullscreen_restore_size">32dp</dimen>
     <dimen name="termuxplus_fullscreen_restore_padding">7dp</dimen>
 
-    <!-- Sheets / cards -->
-    <dimen name="termuxplus_sheet_radius">18dp</dimen>
-    <dimen name="termuxplus_card_radius">14dp</dimen>
-    <dimen name="termuxplus_action_row_radius">12dp</dimen>
+    <!-- Sheets / cards — HUD: low, tight corners -->
+    <dimen name="termuxplus_sheet_radius">12dp</dimen>
+    <dimen name="termuxplus_card_radius">8dp</dimen>
+    <dimen name="termuxplus_action_row_radius">7dp</dimen>
     <dimen name="termuxplus_action_icon_size">22dp</dimen>
+    <dimen name="termuxplus_tab_radius">6dp</dimen>
 </resources>

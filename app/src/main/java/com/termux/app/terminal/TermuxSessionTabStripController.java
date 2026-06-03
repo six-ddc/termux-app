@@ -2,6 +2,7 @@ package com.termux.app.terminal;
 
 import android.graphics.Paint;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -9,15 +10,15 @@ import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import androidx.core.content.ContextCompat;
-
 import com.termux.R;
 import com.termux.app.TermuxActivity;
+import com.termux.app.ui.TpChrome;
+import com.termux.app.ui.TpIconView;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.terminal.TerminalSession;
 
@@ -26,10 +27,10 @@ import java.util.List;
 
 public class TermuxSessionTabStripController {
 
-    private static final int TAB_TITLE_MIN_WIDTH_DP = 44;
-    private static final int TAB_TITLE_MAX_WIDTH_DP = 68;
-    private static final int TAB_MIN_WIDTH_DP = 78;
-    private static final int CLOSE_BUTTON_WIDTH_DP = 20;
+    private static final int TAB_TITLE_MIN_WIDTH_DP = 40;
+    private static final int TAB_TITLE_MAX_WIDTH_DP = 72;
+    private static final int TAB_MIN_WIDTH_DP = 56;
+    private static final int CLOSE_BUTTON_WIDTH_DP = 22;
     private static final int TAB_REORDER_LONG_PRESS_EXTRA_DELAY_MS = 140;
     private static final long TAB_REORDER_ANIMATION_MS = 120L;
 
@@ -38,6 +39,7 @@ public class TermuxSessionTabStripController {
     private final HorizontalScrollView mTabStripScrollView;
     private final int mDragTouchSlop;
     private final int mDragLongPressDelayMs;
+    private final Typeface mTabTypeface;
     private final List<TerminalSession> mRenderedSessions = new ArrayList<>();
     private TerminalSession mLastCurrentSession;
     private TerminalSession mDraggingSession;
@@ -71,6 +73,7 @@ public class TermuxSessionTabStripController {
         mTabStripScrollView = activity.findViewById(R.id.terminal_sessions_tab_strip_scroll);
         mDragTouchSlop = ViewConfiguration.get(activity).getScaledTouchSlop();
         mDragLongPressDelayMs = ViewConfiguration.getLongPressTimeout() + TAB_REORDER_LONG_PRESS_EXTRA_DELAY_MS;
+        mTabTypeface = TermuxTerminalFontManager.loadTerminalTypeface(activity);
     }
 
     public void notifyUpdated(List<TermuxSession> sessions) {
@@ -109,20 +112,32 @@ public class TermuxSessionTabStripController {
     private View createSessionTab(int index, TerminalSession session) {
         boolean selected = session == mActivity.getCurrentSession();
 
-        LinearLayout tab = new LinearLayout(mActivity);
-        tab.setOrientation(LinearLayout.HORIZONTAL);
-        tab.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout tab = new FrameLayout(mActivity);
         tab.setActivated(selected);
         tab.setSelected(selected);
-        tab.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_tab_bg));
-        setSessionTabPadding(tab, selected);
+        tab.setBackground(TpChrome.pressBg(mActivity, false));
         tab.setMinimumWidth(dp(TAB_MIN_WIDTH_DP));
         tab.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().setCurrentSession(session));
         tab.setOnTouchListener((v, event) -> onSessionTabTouch(v, session, event));
         LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, getTabHeightPx());
-        tabParams.setMargins(0, 0, dp(4), 0);
+        tabParams.setMargins(0, 0, dp(2), 0);
         tab.setLayoutParams(tabParams);
+
+        LinearLayout content = new LinearLayout(mActivity);
+        content.setOrientation(LinearLayout.HORIZONTAL);
+        content.setGravity(Gravity.CENTER_VERTICAL);
+        content.setPadding(dp(10), 0, dp(6), 0);
+        content.setDuplicateParentStateEnabled(false);
+
+        View dot = new View(mActivity);
+        GradientDrawable dotShape = new GradientDrawable();
+        dotShape.setShape(GradientDrawable.OVAL);
+        dotShape.setColor(statusDotColor(session));
+        dot.setBackground(dotShape);
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(6), dp(6));
+        dotParams.setMargins(0, 0, dp(7), 0);
+        content.addView(dot, dotParams);
 
         TextView title = new TextView(mActivity);
         title.setSingleLine(true);
@@ -130,74 +145,91 @@ public class TermuxSessionTabStripController {
         title.setText(getTabTitle(index, session));
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setIncludeFontPadding(false);
-        title.setTextSize(10.5f);
-        title.setTypeface(Typeface.MONOSPACE, selected ? Typeface.BOLD : Typeface.NORMAL);
+        title.setTextSize(11f);
+        title.setLetterSpacing(0.02f);
+        title.setTypeface(mTabTypeface, selected ? Typeface.BOLD : Typeface.NORMAL);
         title.setTextColor(getTabTextColor(selected, session));
         title.setMinWidth(dp(TAB_TITLE_MIN_WIDTH_DP));
         title.setMaxWidth(dp(TAB_TITLE_MAX_WIDTH_DP));
-        if (!session.isRunning())
-            title.setPaintFlags(title.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
-        title.setOnTouchListener((v, event) -> onSessionTabTouch(tab, session, event));
-        tab.addView(title, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT));
+        applyStrikeThrough(title, session);
+        content.addView(title, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT));
 
-        ImageButton close = new ImageButton(mActivity);
-        close.setImageResource(R.drawable.ic_termuxplus_close_18);
-        close.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_icon_button_bg));
+        TpIconView close = new TpIconView(mActivity, TpIconView.CLOSE);
+        close.setColor(TpChrome.TEXT);
         close.setContentDescription(mActivity.getString(R.string.action_close_session));
-        close.setColorFilter(ContextCompat.getColor(mActivity,
-            selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
-        close.setPadding(dp(4), dp(4), dp(4), dp(4));
         close.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().closeSession(session));
         close.setVisibility(selected ? View.VISIBLE : View.GONE);
         close.setEnabled(selected);
-        tab.addView(close, new LinearLayout.LayoutParams(dp(CLOSE_BUTTON_WIDTH_DP), LinearLayout.LayoutParams.MATCH_PARENT));
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(dp(CLOSE_BUTTON_WIDTH_DP), dp(CLOSE_BUTTON_WIDTH_DP));
+        closeParams.leftMargin = dp(2);
+        content.addView(close, closeParams);
+
+        tab.addView(content, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        View underline = new View(mActivity);
+        underline.setBackgroundColor(TpChrome.ACCENT);
+        FrameLayout.LayoutParams underlineParams = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, dp(2));
+        underlineParams.gravity = Gravity.BOTTOM;
+        underlineParams.setMargins(dp(6), 0, dp(6), 0);
+        underline.setLayoutParams(underlineParams);
+        underline.setVisibility(selected ? View.VISIBLE : View.INVISIBLE);
+        tab.addView(underline);
 
         return tab;
     }
 
     private void updateSessionTab(View tabView, int index, TerminalSession session) {
-        if (!(tabView instanceof LinearLayout)) return;
+        if (!(tabView instanceof FrameLayout) || ((FrameLayout) tabView).getChildCount() < 2) return;
 
         boolean selected = session == mActivity.getCurrentSession();
         tabView.setActivated(selected);
         tabView.setSelected(selected);
 
-        LinearLayout tab = (LinearLayout) tabView;
-        setSessionTabPadding(tab, selected);
-        if (tab.getChildCount() > 0 && tab.getChildAt(0) instanceof TextView) {
-            TextView title = (TextView) tab.getChildAt(0);
-            title.setText(getTabTitle(index, session));
-            title.setTypeface(Typeface.MONOSPACE, selected ? Typeface.BOLD : Typeface.NORMAL);
-            title.setTextColor(getTabTextColor(selected, session));
+        FrameLayout tab = (FrameLayout) tabView;
+        View contentView = tab.getChildAt(0);
+        View underline = tab.getChildAt(1);
+        if (!(contentView instanceof LinearLayout)) return;
+        LinearLayout content = (LinearLayout) contentView;
 
-            int paintFlags = title.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG;
-            if (!session.isRunning())
-                paintFlags |= Paint.STRIKE_THRU_TEXT_FLAG;
-            title.setPaintFlags(paintFlags);
+        if (content.getChildAt(0) != null && content.getChildAt(0).getBackground() instanceof GradientDrawable)
+            ((GradientDrawable) content.getChildAt(0).getBackground()).setColor(statusDotColor(session));
+
+        if (content.getChildAt(1) instanceof TextView) {
+            TextView title = (TextView) content.getChildAt(1);
+            title.setText(getTabTitle(index, session));
+            title.setTypeface(mTabTypeface, selected ? Typeface.BOLD : Typeface.NORMAL);
+            title.setTextColor(getTabTextColor(selected, session));
+            applyStrikeThrough(title, session);
         }
 
-        if (tab.getChildCount() > 1 && tab.getChildAt(1) instanceof ImageButton) {
-            ImageButton close = (ImageButton) tab.getChildAt(1);
-            close.setColorFilter(ContextCompat.getColor(mActivity,
-                selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary));
+        if (content.getChildAt(2) instanceof TpIconView) {
+            TpIconView close = (TpIconView) content.getChildAt(2);
             close.setVisibility(selected ? View.VISIBLE : View.GONE);
             close.setEnabled(selected);
         }
+
+        underline.setVisibility(selected ? View.VISIBLE : View.INVISIBLE);
     }
 
-    private void setSessionTabPadding(LinearLayout tab, boolean selected) {
-        tab.setPadding(dp(9), 0, selected ? dp(1) : dp(9), 0);
+    private void applyStrikeThrough(TextView title, TerminalSession session) {
+        int paintFlags = title.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG;
+        if (!session.isRunning())
+            paintFlags |= Paint.STRIKE_THRU_TEXT_FLAG;
+        title.setPaintFlags(paintFlags);
+    }
+
+    private int statusDotColor(TerminalSession session) {
+        if (session.isRunning())
+            return TpChrome.ACCENT;
+        return session.getExitStatus() != 0 ? TpChrome.ERROR : TpChrome.TEXT_DIM;
     }
 
     private View createNewSessionTab() {
-        TextView add = new TextView(mActivity);
-        add.setText("+");
-        add.setGravity(Gravity.CENTER);
-        add.setIncludeFontPadding(false);
-        add.setTextSize(16);
-        add.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
-        add.setTextColor(ContextCompat.getColor(mActivity, R.color.termuxplus_text_secondary));
-        add.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.termuxplus_session_add_bg));
+        TpIconView add = new TpIconView(mActivity, TpIconView.ADD);
+        add.setColor(TpChrome.TEXT_DIM);
         add.setContentDescription(mActivity.getString(R.string.action_new_session));
         add.setOnClickListener(v -> mActivity.getTermuxTerminalSessionClient().addNewSession(false, null));
         add.setOnLongClickListener(v -> {
@@ -205,7 +237,7 @@ public class TermuxSessionTabStripController {
             return true;
         });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(30), getTabHeightPx());
-        params.setMargins(0, 0, dp(3), 0);
+        params.setMargins(dp(2), 0, dp(3), 0);
         add.setLayoutParams(params);
         return add;
     }
@@ -457,9 +489,8 @@ public class TermuxSessionTabStripController {
 
     private int getTabTextColor(boolean selected, TerminalSession session) {
         if (!session.isRunning() && session.getExitStatus() != 0)
-            return ContextCompat.getColor(mActivity, R.color.termuxplus_text_error);
-        return ContextCompat.getColor(mActivity,
-            selected ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary);
+            return TpChrome.ERROR;
+        return selected ? TpChrome.TEXT : TpChrome.TEXT_DIM;
     }
 
     private List<TerminalSession> getTerminalSessions(List<TermuxSession> sessions) {

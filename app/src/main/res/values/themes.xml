@@ -40,6 +40,10 @@
         <item name="extraKeysButtonActiveTextColor">@color/red_400</item>
         <item name="extraKeysButtonBackgroundColor">@color/black</item>
         <item name="extraKeysButtonActiveBackgroundColor">@color/grey_500</item>
+
+        <!-- HUD dark dialogs (rename / create / delete / select-url etc.). -->
+        <item name="android:alertDialogTheme">@style/TermuxAlertDialogStyle</item>
+        <item name="alertDialogTheme">@style/TermuxAlertDialogStyleCompat</item>
     </style>
 
     <!-- Applied at runtime (before super.onCreate) when the terminal-transparency
@@ -73,9 +77,14 @@
     <style name="Theme.TermuxPlus.BottomSheet" parent="Theme.Material3.DayNight.BottomSheetDialog">
         <item name="bottomSheetStyle">@style/Widget.TermuxPlus.BottomSheet</item>
         <item name="colorPrimary">@color/termuxplus_accent</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorOnPrimary">#06140F</item>
+        <item name="colorSecondary">@color/termuxplus_accent</item>
         <item name="colorSurface">@color/termuxplus_sheet_bg</item>
         <item name="colorOnSurface">@color/termuxplus_text_primary</item>
+        <!-- Keep the green only as an accent: disable Material3's tonal elevation
+             overlay so raised surfaces (the sheet itself) stay flat dark instead of
+             getting washed green by colorPrimary. -->
+        <item name="elevationOverlayEnabled">false</item>
         <item name="android:backgroundDimAmount">0.55</item>
         <item name="android:navigationBarColor">@color/termuxplus_sheet_bg</item>
         <item name="enableEdgeToEdge">false</item>

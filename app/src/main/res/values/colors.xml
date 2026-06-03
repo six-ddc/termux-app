@@ -8,7 +8,7 @@
     <color name="termuxplus_control_pressed">#151C22</color>
     <color name="termuxplus_outline">#242B32</color>
     <color name="termuxplus_outline_subtle">#1A2026</color>
-    <color name="termuxplus_outline_selected">#63C57D</color>
+    <color name="termuxplus_outline_selected">#0BC989</color>
     <color name="termuxplus_text_primary">#E7ECEF</color>
     <color name="termuxplus_text_secondary">#98A2AD</color>
     <color name="termuxplus_text_muted">#66717C</color>
@@ -24,19 +24,26 @@
     <color name="termuxplus_sheet_border">#232B35</color>
     <color name="termuxplus_sheet_handle">#3A434F</color>
     <color name="termuxplus_card_bg">#121821</color>
-    <color name="termuxplus_card_bg_pressed">#19212C</color>
+    <color name="termuxplus_card_bg_pressed">#14201B</color>
     <color name="termuxplus_card_border">#232B35</color>
 
-    <!-- Accent: cool blue chrome highlight (matches Termius), green stays for run/active -->
-    <color name="termuxplus_accent">#4C8DFF</color>
-    <color name="termuxplus_accent_pressed">#3E78E0</color>
-    <color name="termuxplus_accent_soft">#16243B</color>
-    <color name="termuxplus_accent_border">#2A4A7A</color>
-    <color name="termuxplus_run">#63C57D</color>
+    <!-- Accent: single phosphor-green HUD accent (matches the floating terminal). -->
+    <color name="termuxplus_accent">#0BC989</color>
+    <color name="termuxplus_accent_pressed">#0AA876</color>
+    <color name="termuxplus_accent_soft">#0C1A15</color>
+    <color name="termuxplus_accent_border">#1C4034</color>
+    <color name="termuxplus_run">#0BC989</color>
     <color name="termuxplus_ripple">#1FFFFFFF</color>
+
+    <!-- HUD chrome: frosted near-black surfaces, faint green hairlines, press tints. -->
+    <color name="termuxplus_glass_bg">#E6090D0E</color>
+    <color name="termuxplus_glass_bg_strong">#F2090D0E</color>
+    <color name="termuxplus_hairline_accent">#380BC989</color>
+    <color name="termuxplus_press">#280BC989</color>
+    <color name="termuxplus_press_close">#32E8685C</color>
 
     <!-- Tab pill states -->
     <color name="termuxplus_pill_bg">#0E1318</color>
-    <color name="termuxplus_pill_bg_active">#172230</color>
+    <color name="termuxplus_pill_bg_active">#11201A</color>
     <color name="termuxplus_pill_border">#1E2630</color>
 </resources>

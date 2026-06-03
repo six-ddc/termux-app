@@ -1,9 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <style name="TermuxAlertDialogStyle" parent="@android:style/Theme.Material.Light.Dialog.Alert">
-        <!-- Seen in buttons on alert dialog: -->
-        <item name="android:colorAccent">#212121</item>
+    <!-- Dark HUD alert dialog (platform android.app.AlertDialog): flat dark window,
+         phosphor-green accent on the buttons. -->
+    <style name="TermuxAlertDialogStyle" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/termuxplus_accent</item>
+        <item name="android:windowBackground">@drawable/tp_dialog_bg</item>
+        <item name="android:textColorPrimary">@color/termuxplus_text_primary</item>
+        <item name="android:textColorSecondary">@color/termuxplus_text_secondary</item>
+    </style>
+
+    <!-- Dark HUD alert dialog for androidx.appcompat.app.AlertDialog. -->
+    <style name="TermuxAlertDialogStyleCompat" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+        <item name="colorAccent">@color/termuxplus_accent</item>
+        <item name="android:windowBackground">@drawable/tp_dialog_bg</item>
+        <item name="android:textColorPrimary">@color/termuxplus_text_primary</item>
     </style>
 
 </resources>

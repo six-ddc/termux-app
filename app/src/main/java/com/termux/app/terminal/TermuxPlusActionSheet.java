@@ -78,6 +78,8 @@ public class TermuxPlusActionSheet {
 
         // ---- Terminal ----
         addSection(list, R.string.termuxplus_section_terminal);
+        addRow(list, TpIconView.FOLDER, string(R.string.termuxplus_projects_title), null, false,
+            mActivity::showWorkspaceLauncher);
         addRow(list, TpIconView.GRID, string(R.string.termuxplus_tab_overview), null, false,
             mActivity::showTabOverview);
         addRow(list, TpIconView.LINK, string(R.string.action_select_url), null, false,

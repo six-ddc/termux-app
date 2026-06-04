@@ -36,6 +36,14 @@
                 android:paddingStart="3dp"
                 android:paddingEnd="3dp">
 
+                <com.termux.app.ui.TpIconView
+                    android:id="@+id/tp_btn_projects"
+                    android:layout_width="@dimen/termuxplus_header_button_size"
+                    android:layout_height="@dimen/termuxplus_header_button_size"
+                    android:layout_marginEnd="1dp"
+                    android:contentDescription="@string/termuxplus_projects_title"
+                    app:tpIcon="folder" />
+
                 <HorizontalScrollView
                     android:id="@+id/terminal_sessions_tab_strip_scroll"
                     android:layout_width="0dp"

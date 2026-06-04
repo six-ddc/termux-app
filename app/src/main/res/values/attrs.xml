@@ -30,6 +30,7 @@
             <enum name="settings" value="25" />
             <enum name="help" value="26" />
             <enum name="report" value="27" />
+            <enum name="folder" value="28" />
         </attr>
         <attr name="tpFramed" format="boolean" />
     </declare-styleable>

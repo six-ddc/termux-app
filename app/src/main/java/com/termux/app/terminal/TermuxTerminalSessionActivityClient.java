@@ -445,6 +445,31 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         }
     }
 
+    public void addWorkspaceSession(String workingDirectory, String sessionName, @Nullable String command) {
+        TermuxService service = mActivity.getTermuxService();
+        if (service == null) return;
+
+        if (service.getTermuxSessionsSize() >= MAX_SESSIONS) {
+            new AlertDialog.Builder(mActivity).setTitle(R.string.title_max_terminals_reached).setMessage(R.string.msg_max_terminals_reached)
+                .setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+
+        String executablePath = null;
+        String[] arguments = null;
+        if (command != null && !command.trim().isEmpty()) {
+            executablePath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sh";
+            arguments = new String[]{"-lc", command};
+        }
+
+        TermuxSession newTermuxSession = service.createTermuxSession(executablePath, arguments, null,
+            workingDirectory, false, sessionName);
+        if (newTermuxSession == null) return;
+
+        TerminalSession newTerminalSession = newTermuxSession.getTerminalSession();
+        setCurrentSession(newTerminalSession);
+    }
+
     public void setCurrentStoredSession() {
         TerminalSession currentSession = mActivity.getCurrentSession();
         if (currentSession != null)

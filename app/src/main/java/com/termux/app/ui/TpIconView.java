@@ -49,6 +49,7 @@ public class TpIconView extends View {
     public static final int SETTINGS = 25;
     public static final int HELP = 26;
     public static final int REPORT = 27;
+    public static final int FOLDER = 28;
 
     private final int mIcon;
     private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -239,6 +240,9 @@ public class TpIconView extends View {
             case REPORT:
                 drawReport(canvas, cx, cy, r);
                 break;
+            case FOLDER:
+                drawFolder(canvas, cx, cy, r);
+                break;
             default:
                 break;
         }
@@ -424,5 +428,25 @@ public class TpIconView extends View {
         mPath.lineTo(cx + r * 0.72f, cy - r * 0.62f);
         mPath.lineTo(cx - r * 0.72f, cy - r * 0.18f);
         canvas.drawPath(mPath, mPaint);
+    }
+
+    private void drawFolder(Canvas canvas, float cx, float cy, float r) {
+        float left = cx - r * 1.05f;
+        float right = cx + r * 1.05f;
+        float top = cy - r * 0.55f;
+        float bottom = cy + r * 0.82f;
+        float tabTop = cy - r * 0.92f;
+        float tabRight = cx - r * 0.18f;
+        float rad = r * 0.18f;
+
+        mPath.reset();
+        mPath.moveTo(left, top);
+        mPath.lineTo(left, tabTop + rad);
+        mPath.quadTo(left, tabTop, left + rad, tabTop);
+        mPath.lineTo(cx - r * 0.48f, tabTop);
+        mPath.lineTo(cx - r * 0.25f, top);
+        mPath.lineTo(tabRight, top);
+        canvas.drawPath(mPath, mPaint);
+        canvas.drawRoundRect(left, top, right, bottom, rad, rad, mPaint);
     }
 }

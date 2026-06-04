@@ -47,6 +47,7 @@ import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
 import com.termux.app.terminal.TermuxSessionTabStripController;
 import com.termux.app.terminal.TermuxPlusActionSheet;
 import com.termux.app.terminal.TermuxPlusTabOverview;
+import com.termux.app.workspace.TermuxPlusWorkspaceLauncherSheet;
 import com.termux.app.terminal.io.TerminalToolbarViewPager;
 import com.termux.app.terminal.TermuxTerminalViewClient;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
@@ -940,10 +941,20 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     // ============================================================= //
 
     private void setupHeaderBar() {
+        View projects = findViewById(R.id.tp_btn_projects);
         View menu = findViewById(R.id.tp_btn_menu);
         View restore = findViewById(R.id.tp_fullscreen_restore);
+        if (projects != null) projects.setOnClickListener(v -> showWorkspaceLauncher());
         if (menu != null) menu.setOnClickListener(v -> showActionSheet());
         if (restore != null) restore.setOnClickListener(v -> exitFullscreen());
+    }
+
+    public void showWorkspaceLauncher() {
+        try {
+            new TermuxPlusWorkspaceLauncherSheet(this).show();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to show workspace launcher", e);
+        }
     }
 
     public void showActionSheet() {

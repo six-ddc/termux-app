@@ -3,6 +3,7 @@ package com.termux.app.workspace;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -24,6 +25,7 @@ public final class TermuxPlusWorkspaceRepository {
     private static final String LOG_TAG = "TermuxPlusWorkspaceRepository";
 
     private static final int MAX_AGENT_FILES_TO_SCAN = 240;
+    private static final int MAX_CODEX_LINES_TO_SCAN = 120;
     private static final int MAX_CLAUDE_LINES_TO_SCAN = 120;
     private static final int MAX_WORKSPACES = 24;
     private static final int MAX_SESSIONS_PER_WORKSPACE = 4;
@@ -41,7 +43,6 @@ public final class TermuxPlusWorkspaceRepository {
         for (TermuxPlusWorkspace workspace : workspaces) {
             workspace.sortSessions();
             workspace.trimSessions(MAX_SESSIONS_PER_WORKSPACE);
-            loadGitMetadata(workspace);
         }
 
         Collections.sort(workspaces, TermuxPlusWorkspace.UPDATED_DESC);
@@ -85,7 +86,7 @@ public final class TermuxPlusWorkspaceRepository {
                 JSONObject object = new JSONObject(line);
                 String id = object.optString("id", null);
                 if (id == null || id.isEmpty()) continue;
-                String title = object.optString("thread_name", null);
+                String title = firstNonEmpty(object, "thread_name", "title", "name");
                 long updatedAt = parseIsoMillis(object.optString("updated_at", null));
                 index.put(id, new CodexIndexEntry(title, updatedAt));
             }
@@ -97,30 +98,49 @@ public final class TermuxPlusWorkspaceRepository {
     }
 
     private static CodexSessionMeta readCodexSessionMeta(File file, Map<String, CodexIndexEntry> index) throws Exception {
+        String sessionId = null;
+        String cwd = null;
+        String title = null;
+        long updatedAt = file.lastModified();
+
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.indexOf("\"session_meta\"") < 0) continue;
-
+            int lineCount = 0;
+            while ((line = reader.readLine()) != null && lineCount++ < MAX_CODEX_LINES_TO_SCAN) {
+                if (line.trim().isEmpty()) continue;
                 JSONObject object = new JSONObject(line);
-                if (!"session_meta".equals(object.optString("type"))) continue;
-                JSONObject payload = object.optJSONObject("payload");
-                if (payload == null) return null;
 
-                String id = payload.optString("id", null);
-                String cwd = payload.optString("cwd", null);
-                long updatedAt = parseIsoMillis(payload.optString("timestamp", null));
-                String title = null;
-                CodexIndexEntry entry = id == null ? null : index.get(id);
-                if (entry != null) {
-                    title = entry.title;
-                    updatedAt = Math.max(updatedAt, entry.updatedAt);
+                long lineUpdatedAt = parseIsoMillis(object.optString("timestamp", null));
+                if (lineUpdatedAt > 0)
+                    updatedAt = Math.max(updatedAt, lineUpdatedAt);
+
+                if ("session_meta".equals(object.optString("type"))) {
+                    JSONObject payload = object.optJSONObject("payload");
+                    if (payload != null) {
+                        sessionId = payload.optString("id", sessionId);
+                        cwd = payload.optString("cwd", cwd);
+                        long metaUpdatedAt = parseIsoMillis(payload.optString("timestamp", null));
+                        if (metaUpdatedAt > 0)
+                            updatedAt = Math.max(updatedAt, metaUpdatedAt);
+
+                        CodexIndexEntry entry = sessionId == null ? null : index.get(sessionId);
+                        if (entry != null) {
+                            title = entry.title;
+                            updatedAt = Math.max(updatedAt, entry.updatedAt);
+                        }
+                    }
                 }
-                if (updatedAt <= 0) updatedAt = file.lastModified();
-                return new CodexSessionMeta(id, cwd, title, updatedAt);
+
+                if (title == null)
+                    title = extractCodexUserTitle(object);
+
+                if (cwd != null && title != null && sessionId != null)
+                    break;
             }
         }
-        return null;
+
+        if (cwd == null || cwd.isEmpty()) return null;
+        return new CodexSessionMeta(sessionId, cwd, title, updatedAt);
     }
 
     private static void scanClaudeSessions(File homeDir, Map<String, TermuxPlusWorkspace> workspaceMap) {
@@ -169,7 +189,9 @@ public final class TermuxPlusWorkspaceRepository {
 
                 String type = object.optString("type", null);
                 if (title == null && "ai-title".equals(type))
-                    title = object.optString("aiTitle", null);
+                    title = firstNonEmpty(object, "aiTitle", "title", "summary");
+                if (title == null && "summary".equals(type))
+                    title = firstNonEmpty(object, "summary", "title");
                 if (title == null)
                     title = extractClaudeUserTitle(object);
 
@@ -180,6 +202,17 @@ public final class TermuxPlusWorkspaceRepository {
 
         if (cwd == null || cwd.isEmpty()) return null;
         return new ClaudeSessionMeta(sessionId, cwd, title, updatedAt);
+    }
+
+    private static String extractCodexUserTitle(JSONObject object) {
+        if (!"event_msg".equals(object.optString("type"))) return null;
+
+        JSONObject payload = object.optJSONObject("payload");
+        if (payload == null || !"user_message".equals(payload.optString("type"))) return null;
+
+        String title = extractJsonText(payload.opt("message"));
+        if (title != null) return title;
+        return extractJsonText(payload.opt("text_elements"));
     }
 
     private static String extractClaudeUserTitle(JSONObject object) {
@@ -193,9 +226,7 @@ public final class TermuxPlusWorkspaceRepository {
         if (message == null || !"user".equals(message.optString("role"))) return null;
 
         Object content = message.opt("content");
-        if (content instanceof String)
-            return (String) content;
-        return null;
+        return extractJsonText(content);
     }
 
     private static TermuxPlusWorkspace getOrCreateWorkspace(Map<String, TermuxPlusWorkspace> workspaceMap, String path) {
@@ -429,10 +460,45 @@ public final class TermuxPlusWorkspaceRepository {
     private static String cleanTitle(String title, String fallback) {
         if (title == null || title.trim().isEmpty())
             return fallback;
-        String clean = title.replace('\n', ' ').replace('\r', ' ').trim();
+        String clean = title.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ').trim();
+        while (clean.contains("  "))
+            clean = clean.replace("  ", " ");
         if (clean.length() > 56)
             return clean.substring(0, 55) + "...";
         return clean;
+    }
+
+    private static String firstNonEmpty(JSONObject object, String... keys) {
+        if (object == null) return null;
+        for (String key : keys) {
+            String value = object.optString(key, null);
+            if (value != null && !value.trim().isEmpty())
+                return value;
+        }
+        return null;
+    }
+
+    private static String extractJsonText(Object value) {
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            return text.isEmpty() ? null : text;
+        }
+
+        if (value instanceof JSONObject) {
+            JSONObject object = (JSONObject) value;
+            String text = firstNonEmpty(object, "text", "content", "message", "summary", "title");
+            if (text != null) return text;
+        }
+
+        if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            for (int i = 0; i < array.length(); i++) {
+                String text = extractJsonText(array.opt(i));
+                if (text != null) return text;
+            }
+        }
+
+        return null;
     }
 
     private static long parseIsoMillis(String value) {

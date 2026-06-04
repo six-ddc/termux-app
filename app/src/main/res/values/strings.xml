@@ -94,10 +94,11 @@
     <string name="termuxplus_projects_empty">No agent workspaces found.</string>
     <string name="termuxplus_projects_loading">Scanning agent sessions...</string>
     <string name="termuxplus_project_shell">Shell</string>
-    <string name="termuxplus_project_tmux">tmux</string>
     <string name="termuxplus_project_new_codex">Codex</string>
     <string name="termuxplus_project_new_claude">Claude</string>
-    <string name="termuxplus_project_no_git">no git</string>
+    <string name="termuxplus_agent_launch_config_copy_path">Copy launch config path</string>
+    <string name="termuxplus_agent_launch_config_path_copied">Copied launch config path. Edit that file to change agent launch commands.</string>
+    <string name="termuxplus_agent_launch_config_copy_failed">Could not create launch config.</string>
     <string name="termuxplus_tab_overview">Sessions</string>
     <string name="termuxplus_fullscreen">Fullscreen</string>
     <string name="termuxplus_exit_fullscreen">Exit fullscreen</string>

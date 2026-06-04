@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
 import android.widget.TextView;
 
 import androidx.core.content.ContextCompat;
@@ -20,6 +21,7 @@ import com.termux.app.TermuxActivity;
 import com.termux.app.terminal.TermuxTerminalFontManager;
 import com.termux.app.ui.TpChrome;
 import com.termux.app.ui.TpIconView;
+import com.termux.shared.interact.ShareUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
 
@@ -89,6 +91,11 @@ public class TermuxPlusWorkspaceLauncherSheet {
     }
 
     private View buildTitle() {
+        LinearLayout row = new LinearLayout(mActivity);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), 0, dp(8), dp(8));
+
         TextView title = new TextView(mActivity);
         title.setText(mActivity.getString(R.string.termuxplus_projects_title));
         title.setTextColor(TpChrome.TEXT);
@@ -96,8 +103,15 @@ public class TermuxPlusWorkspaceLauncherSheet {
         title.setTypeface(mTypeface, Typeface.BOLD);
         title.setIncludeFontPadding(false);
         title.setSingleLine(true);
-        title.setPadding(dp(12), 0, dp(12), dp(8));
-        return title;
+        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TpIconView copyConfigPath = new TpIconView(mActivity, TpIconView.LINK);
+        copyConfigPath.setColor(TpChrome.TEXT_DIM);
+        copyConfigPath.setContentDescription(mActivity.getString(R.string.termuxplus_agent_launch_config_copy_path));
+        copyConfigPath.setOnClickListener(v -> copyAgentLaunchConfigPath());
+        row.addView(copyConfigPath, new LinearLayout.LayoutParams(dp(30), dp(30)));
+
+        return row;
     }
 
     private void loadWorkspacesAsync() {
@@ -121,7 +135,6 @@ public class TermuxPlusWorkspaceLauncherSheet {
             addWorkspaceHeader(workspace);
             for (TermuxPlusAgentSession session : workspace.getSessions())
                 addAgentSessionRow(workspace, session);
-            addWorkspaceActions(workspace);
             addDivider();
         }
     }
@@ -164,16 +177,13 @@ public class TermuxPlusWorkspaceLauncherSheet {
 
         row.addView(textColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView status = new TextView(mActivity);
-        status.setText(workspaceStatus(workspace));
-        status.setTextColor(workspace.isGitDirty() ? TpChrome.ACCENT : TpChrome.TEXT_DIM);
-        status.setTextSize(12);
-        status.setTypeface(mTypeface, Typeface.NORMAL);
-        status.setIncludeFontPadding(false);
-        status.setGravity(Gravity.END);
-        status.setSingleLine(true);
-        status.setEllipsize(TextUtils.TruncateAt.END);
-        row.addView(status, new LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.WRAP_CONTENT));
+        TpIconView add = new TpIconView(mActivity, TpIconView.ADD);
+        add.setColor(TpChrome.TEXT);
+        add.setContentDescription("New workspace session");
+        add.setOnClickListener(v -> showWorkspaceActionMenu(add, workspace));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(dp(32), dp(32));
+        addParams.setMarginStart(dp(8));
+        row.addView(add, addParams);
 
         mList.addView(row, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -184,18 +194,9 @@ public class TermuxPlusWorkspaceLauncherSheet {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_action_row_bg));
-        row.setPadding(dp(50), dp(7), dp(10), dp(7));
-        row.setMinimumHeight(dp(42));
+        row.setPadding(dp(12), dp(6), dp(10), dp(6));
+        row.setMinimumHeight(dp(44));
         row.setOnClickListener(v -> openAgentSession(workspace, session));
-
-        TextView agent = new TextView(mActivity);
-        agent.setText(session.getAgent());
-        agent.setTextColor(TpChrome.TEXT_DIM);
-        agent.setTextSize(11);
-        agent.setTypeface(mTypeface, Typeface.BOLD);
-        agent.setIncludeFontPadding(false);
-        agent.setSingleLine(true);
-        row.addView(agent, new LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView title = new TextView(mActivity);
         title.setText(session.getTitle());
@@ -207,6 +208,10 @@ public class TermuxPlusWorkspaceLauncherSheet {
         title.setEllipsize(TextUtils.TruncateAt.END);
         row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        LinearLayout meta = new LinearLayout(mActivity);
+        meta.setOrientation(LinearLayout.VERTICAL);
+        meta.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+
         TextView time = new TextView(mActivity);
         time.setText(relativeTime(session.getUpdatedAt()));
         time.setTextColor(TpChrome.TEXT_DIM);
@@ -215,7 +220,23 @@ public class TermuxPlusWorkspaceLauncherSheet {
         time.setIncludeFontPadding(false);
         time.setGravity(Gravity.END);
         time.setSingleLine(true);
-        row.addView(time, new LinearLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.WRAP_CONTENT));
+        meta.addView(time, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView agent = new TextView(mActivity);
+        agent.setText(session.getAgent().toUpperCase(Locale.US));
+        agent.setTextColor(TpChrome.TEXT_DIM);
+        agent.setTextSize(10);
+        agent.setTypeface(mTypeface, Typeface.BOLD);
+        agent.setIncludeFontPadding(false);
+        agent.setGravity(Gravity.END);
+        agent.setSingleLine(true);
+        meta.addView(agent, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT);
+        metaParams.setMarginStart(dp(8));
+        row.addView(meta, metaParams);
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -223,58 +244,81 @@ public class TermuxPlusWorkspaceLauncherSheet {
         mList.addView(row, params);
     }
 
-    private void addWorkspaceActions(TermuxPlusWorkspace workspace) {
-        LinearLayout row = new LinearLayout(mActivity);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(50), dp(4), dp(10), dp(8));
-
-        row.addView(createActionButton(mActivity.getString(R.string.termuxplus_project_shell),
-            () -> openWorkspaceCommand(workspace, "sh:" + workspace.getName(), null)));
-        row.addView(createActionButton(mActivity.getString(R.string.termuxplus_project_new_codex),
-            () -> openWorkspaceCommand(workspace, "codex:" + workspace.getName(), "codex")));
-        row.addView(createActionButton(mActivity.getString(R.string.termuxplus_project_new_claude),
-            () -> openWorkspaceCommand(workspace, "claude:" + workspace.getName(), "claude")));
-        row.addView(createActionButton(mActivity.getString(R.string.termuxplus_project_tmux),
-            () -> openWorkspaceCommand(workspace, "tmux:" + workspace.getName(),
-                "tmux new -A -s " + shellQuote(tmuxSessionName(workspace.getName())))));
-
-        mList.addView(row, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-    }
-
-    private TextView createActionButton(String text, Runnable action) {
-        TextView button = new TextView(mActivity);
-        button.setText(text);
-        button.setTextColor(TpChrome.TEXT);
-        button.setTextSize(12);
-        button.setTypeface(mTypeface, Typeface.BOLD);
-        button.setIncludeFontPadding(false);
-        button.setGravity(Gravity.CENTER);
-        button.setSingleLine(true);
-        button.setPadding(dp(9), 0, dp(9), dp(1));
-        button.setMinHeight(dp(28));
-        button.setBackground(TpChrome.roundRect(TpChrome.PRESS, dp(7), TpChrome.HAIRLINE, Math.max(1, dp(1))));
-        button.setOnClickListener(v -> action.run());
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(28), 1f);
-        params.setMarginEnd(dp(5));
-        button.setLayoutParams(params);
-        return button;
-    }
-
     private void openAgentSession(TermuxPlusWorkspace workspace, TermuxPlusAgentSession session) {
         String command;
         if (TermuxPlusAgentSession.AGENT_CODEX.equals(session.getAgent()))
-            command = session.getSessionId() == null || session.getSessionId().isEmpty()
-                ? "codex"
-                : "codex resume " + shellQuote(session.getSessionId());
+            command = TermuxPlusAgentLaunchConfig.getResumeCommand(
+                TermuxPlusAgentSession.AGENT_CODEX, session.getSessionId());
         else
-            command = session.getSessionId() == null || session.getSessionId().isEmpty()
-                ? "claude"
-                : "claude --resume " + shellQuote(session.getSessionId());
+            command = TermuxPlusAgentLaunchConfig.getResumeCommand(
+                TermuxPlusAgentSession.AGENT_CLAUDE, session.getSessionId());
 
         openWorkspaceCommand(workspace, session.getAgent() + ":" + workspace.getName(), command);
+    }
+
+    private void showWorkspaceActionMenu(View anchor, TermuxPlusWorkspace workspace) {
+        LinearLayout menu = new LinearLayout(mActivity);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(4), dp(4), dp(4), dp(4));
+        menu.setBackground(TpChrome.roundRect(TpChrome.SOLID_BG, dp(8), TpChrome.HAIRLINE, Math.max(1, dp(1))));
+
+        PopupWindow popup = new PopupWindow(menu, dp(136), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setOutsideTouchable(true);
+        popup.setBackgroundDrawable(TpChrome.roundRect(0x00000000, 0));
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP)
+            popup.setElevation(dp(6));
+
+        menu.addView(createWorkspaceActionMenuItem(mActivity.getString(R.string.termuxplus_project_shell),
+            () -> {
+                popup.dismiss();
+                openWorkspaceCommand(workspace, "sh:" + workspace.getName(), null);
+            }));
+        menu.addView(createWorkspaceActionMenuItem(mActivity.getString(R.string.termuxplus_project_new_codex),
+            () -> {
+                popup.dismiss();
+                openWorkspaceCommand(workspace, "codex:" + workspace.getName(),
+                    TermuxPlusAgentLaunchConfig.getNewCommand(TermuxPlusAgentSession.AGENT_CODEX));
+            }));
+        menu.addView(createWorkspaceActionMenuItem(mActivity.getString(R.string.termuxplus_project_new_claude),
+            () -> {
+                popup.dismiss();
+                openWorkspaceCommand(workspace, "claude:" + workspace.getName(),
+                    TermuxPlusAgentLaunchConfig.getNewCommand(TermuxPlusAgentSession.AGENT_CLAUDE));
+            }));
+
+        popup.showAsDropDown(anchor, -dp(104), dp(2), Gravity.NO_GRAVITY);
+    }
+
+    private TextView createWorkspaceActionMenuItem(String text, Runnable action) {
+        TextView item = new TextView(mActivity);
+        item.setText(text);
+        item.setTextColor(TpChrome.TEXT);
+        item.setTextSize(13);
+        item.setTypeface(mTypeface, Typeface.BOLD);
+        item.setIncludeFontPadding(false);
+        item.setGravity(Gravity.CENTER_VERTICAL);
+        item.setSingleLine(true);
+        item.setPadding(dp(10), 0, dp(10), dp(1));
+        item.setMinHeight(dp(34));
+        item.setBackground(TpChrome.pressBg(mActivity, false));
+        item.setOnClickListener(v -> action.run());
+        item.setLayoutParams(new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(34)));
+        return item;
+    }
+
+    private void copyAgentLaunchConfigPath() {
+        try {
+            TermuxPlusAgentLaunchConfig.ensureDefaultConfig();
+            ShareUtils.copyTextToClipboard(mActivity, "TermuxPlus agent launch config",
+                TermuxPlusAgentLaunchConfig.getConfigFile().getAbsolutePath(),
+                mActivity.getString(R.string.termuxplus_agent_launch_config_path_copied));
+        } catch (Exception e) {
+            Logger.logWarn("TermuxPlusWorkspaceLauncherSheet",
+                "Failed to create agent launch config: " + e.getMessage());
+            Logger.showToast(mActivity,
+                mActivity.getString(R.string.termuxplus_agent_launch_config_copy_failed), true);
+        }
     }
 
     private void openWorkspaceCommand(TermuxPlusWorkspace workspace, String sessionName, String command) {
@@ -312,12 +356,6 @@ public class TermuxPlusWorkspaceLauncherSheet {
         mList.addView(divider, params);
     }
 
-    private String workspaceStatus(TermuxPlusWorkspace workspace) {
-        if (workspace.getGitBranch() == null || workspace.getGitBranch().isEmpty())
-            return mActivity.getString(R.string.termuxplus_project_no_git);
-        return workspace.getGitBranch() + (workspace.isGitDirty() ? "*" : "");
-    }
-
     private String shortPath(String path) {
         if (path == null) return "";
         String home = TermuxConstants.TERMUX_HOME_DIR_PATH;
@@ -340,16 +378,6 @@ public class TermuxPlusWorkspaceLauncherSheet {
         if (delta < week) return String.format(Locale.US, "%dd", delta / day);
         if (delta < 9 * week) return String.format(Locale.US, "%dw", delta / week);
         return String.format(Locale.US, "%dmo", Math.max(1, delta / (30 * day)));
-    }
-
-    private String tmuxSessionName(String name) {
-        if (name == null || name.trim().isEmpty()) return "termuxplus";
-        return name.replaceAll("[^A-Za-z0-9_.-]", "_");
-    }
-
-    private String shellQuote(String value) {
-        if (value == null) return "''";
-        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     private int dp(float value) {

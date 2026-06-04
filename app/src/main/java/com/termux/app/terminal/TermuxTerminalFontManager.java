@@ -8,14 +8,14 @@ import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
 
-final class TermuxTerminalFontManager {
+public final class TermuxTerminalFontManager {
 
     private static final String LOG_TAG = "TermuxTerminalFontManager";
     private static final String DEFAULT_FONT_ASSET_PATH = "termuxplus/fonts/JetBrainsMonoNerdFontMono-Regular.ttf";
 
     private TermuxTerminalFontManager() {}
 
-    static Typeface loadTerminalTypeface(Context context) {
+    public static Typeface loadTerminalTypeface(Context context) {
         Typeface userTypeface = loadUserTypeface();
         if (userTypeface != null) {
             Logger.logInfo(LOG_TAG,

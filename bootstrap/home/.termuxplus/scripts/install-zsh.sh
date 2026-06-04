@@ -9,14 +9,102 @@ tp_require_termux
 TERMUX_OH_MY_ZSH_REPO="${TERMUX_OH_MY_ZSH_REPO:-https://github.com/ohmyzsh/ohmyzsh.git}"
 TERMUX_OH_MY_ZSH_BRANCH="master"
 TERMUX_OH_MY_ZSH_DIR="${TERMUX_OH_MY_ZSH_DIR:-$PREFIX/share/termuxplus/oh-my-zsh}"
-TERMUX_INSTALL_OH_MY_ZSH="${TERMUX_INSTALL_OH_MY_ZSH:-true}"
+TERMUX_INSTALL_OH_MY_ZSH="${TERMUX_INSTALL_OH_MY_ZSH:-}"
 TERMUX_OH_MY_ZSH_PLUGINS="${TERMUX_OH_MY_ZSH_PLUGINS:-git command-not-found colored-man-pages extract z safe-paste}"
 TERMUX_ZSH_AUTOSUGGESTIONS_REPO="${TERMUX_ZSH_AUTOSUGGESTIONS_REPO:-https://github.com/zsh-users/zsh-autosuggestions.git}"
 TERMUX_ZSH_AUTOSUGGESTIONS_BRANCH="master"
 TERMUX_ZSH_AUTOSUGGESTIONS_DIR="${TERMUX_ZSH_AUTOSUGGESTIONS_DIR:-$PREFIX/share/termuxplus/zsh-autosuggestions}"
+TERMUX_INSTALL_ZSH_AUTOSUGGESTIONS="${TERMUX_INSTALL_ZSH_AUTOSUGGESTIONS:-}"
 TERMUX_ZSH_SYNTAX_HIGHLIGHTING_REPO="${TERMUX_ZSH_SYNTAX_HIGHLIGHTING_REPO:-https://github.com/zsh-users/zsh-syntax-highlighting.git}"
 TERMUX_ZSH_SYNTAX_HIGHLIGHTING_BRANCH="master"
 TERMUX_ZSH_SYNTAX_HIGHLIGHTING_DIR="${TERMUX_ZSH_SYNTAX_HIGHLIGHTING_DIR:-$PREFIX/share/termuxplus/zsh-syntax-highlighting}"
+TERMUX_INSTALL_ZSH_SYNTAX_HIGHLIGHTING="${TERMUX_INSTALL_ZSH_SYNTAX_HIGHLIGHTING:-}"
+
+INSTALL_OH_MY_ZSH=false
+INSTALL_ZSH_AUTOSUGGESTIONS=false
+INSTALL_ZSH_SYNTAX_HIGHLIGHTING=false
+
+env_bool_is_true() {
+  case "$1" in
+    true|yes|y|1|on) return 0 ;;
+    false|no|n|0|off) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+prompt_bool() {
+  env_name="$1"
+  prompt_text="$2"
+  default_value="$3"
+  env_value="$(eval "printf '%s' \"\${$env_name:-}\"")"
+
+  if [ -n "$env_value" ]; then
+    bool_status=0
+    env_bool_is_true "$env_value" || bool_status=$?
+    case "$bool_status" in
+      0) return 0 ;;
+      1) return 1 ;;
+      *)
+        case "$env_value" in
+          ask|prompt) ;;
+          *) tp_die "$env_name must be true, false, ask, or unset" ;;
+        esac
+        ;;
+    esac
+  fi
+
+  case "$default_value" in
+    true) prompt_suffix="[Y/n]" ;;
+    false) prompt_suffix="[y/N]" ;;
+    *) tp_die "invalid default value for $env_name: $default_value" ;;
+  esac
+
+  if [ ! -t 0 ]; then
+    if [ "$default_value" = "true" ]; then
+      return 0
+    fi
+    return 1
+  fi
+
+  while true; do
+    printf '%s ' "[termuxplus] $prompt_text $prompt_suffix"
+    if ! IFS= read -r answer; then
+      answer=""
+    fi
+
+    case "$answer" in
+      "")
+        if [ "$default_value" = "true" ]; then
+          return 0
+        fi
+        return 1
+        ;;
+      y|Y|yes|YES|Yes)
+        return 0
+        ;;
+      n|N|no|NO|No)
+        return 1
+        ;;
+      *)
+        tp_warn "please answer yes or no"
+        ;;
+    esac
+  done
+}
+
+select_zsh_options() {
+  if prompt_bool TERMUX_INSTALL_OH_MY_ZSH "Install oh-my-zsh theme framework?" true; then
+    INSTALL_OH_MY_ZSH=true
+  fi
+
+  if prompt_bool TERMUX_INSTALL_ZSH_AUTOSUGGESTIONS "Install zsh-autosuggestions plugin?" true; then
+    INSTALL_ZSH_AUTOSUGGESTIONS=true
+  fi
+
+  if prompt_bool TERMUX_INSTALL_ZSH_SYNTAX_HIGHLIGHTING "Install zsh-syntax-highlighting plugin?" true; then
+    INSTALL_ZSH_SYNTAX_HIGHLIGHTING=true
+  fi
+}
 
 write_zshrc() {
   target_file="$1"
@@ -32,11 +120,26 @@ if [ -z "\${TERMUXPLUS_ZSHRC_LOADED:-}" ]; then
     export PREFIX="$PREFIX"
   fi
 
-  export ZSH="\$PREFIX/share/termuxplus/oh-my-zsh"
   if [ -x "\$PREFIX/bin/zsh" ]; then
     export SHELL="\$PREFIX/bin/zsh"
   fi
 
+  export EDITOR="\${EDITOR:-nano}"
+EOF
+
+  if [ "$INSTALL_OH_MY_ZSH" != "true" ]; then
+    cat >> "$temp_file" <<'EOF'
+
+  if autoload -Uz compinit 2>/dev/null; then
+    compinit -d "$HOME/.zcompdump" 2>/dev/null || true
+  fi
+EOF
+  fi
+
+  if [ "$INSTALL_OH_MY_ZSH" = "true" ]; then
+    cat >> "$temp_file" <<EOF
+
+  export ZSH="\$PREFIX/share/termuxplus/oh-my-zsh"
   ZSH_THEME="robbyrussell"
   plugins=($TERMUX_OH_MY_ZSH_PLUGINS)
 
@@ -50,20 +153,32 @@ if [ -z "\${TERMUXPLUS_ZSHRC_LOADED:-}" ]; then
     source "\$ZSH/oh-my-zsh.sh"
   fi
 
-  if [ -r "\$PREFIX/share/termuxplus/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
-    source "\$PREFIX/share/termuxplus/zsh-autosuggestions/zsh-autosuggestions.zsh"
-  fi
-
-  if [ -r "\$PREFIX/share/termuxplus/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
-    source "\$PREFIX/share/termuxplus/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-  fi
-
   # Termux runs as an Android app uid (u0_aNNN), so oh-my-zsh's default
   # %n@%m:%~ title is noisy. Keep tab titles focused on the current directory.
   ZSH_THEME_TERM_TAB_TITLE_IDLE="%~"
   ZSH_THEME_TERM_TITLE_IDLE="%~"
+EOF
+  fi
 
-  export EDITOR="\${EDITOR:-nano}"
+  if [ "$INSTALL_ZSH_AUTOSUGGESTIONS" = "true" ]; then
+    cat >> "$temp_file" <<'EOF'
+
+  if [ -r "$PREFIX/share/termuxplus/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
+    source "$PREFIX/share/termuxplus/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  fi
+EOF
+  fi
+
+  if [ "$INSTALL_ZSH_SYNTAX_HIGHLIGHTING" = "true" ]; then
+    cat >> "$temp_file" <<'EOF'
+
+  if [ -r "$PREFIX/share/termuxplus/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
+    source "$PREFIX/share/termuxplus/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+  fi
+EOF
+  fi
+
+  cat >> "$temp_file" <<'EOF'
 fi
 EOF
   tp_replace_file "$temp_file" "$target_file" "$file_mode"
@@ -102,10 +217,16 @@ prepare_oh_my_zsh_source() {
     "$TERMUX_OH_MY_ZSH_REPO" \
     "$TERMUX_OH_MY_ZSH_BRANCH" \
     "$TERMUX_OH_MY_ZSH_DIR"
+}
+
+prepare_zsh_autosuggestions_source() {
   prepare_git_source "zsh-autosuggestions" \
     "$TERMUX_ZSH_AUTOSUGGESTIONS_REPO" \
     "$TERMUX_ZSH_AUTOSUGGESTIONS_BRANCH" \
     "$TERMUX_ZSH_AUTOSUGGESTIONS_DIR"
+}
+
+prepare_zsh_syntax_highlighting_source() {
   prepare_git_source "zsh-syntax-highlighting" \
     "$TERMUX_ZSH_SYNTAX_HIGHLIGHTING_REPO" \
     "$TERMUX_ZSH_SYNTAX_HIGHLIGHTING_BRANCH" \
@@ -156,21 +277,34 @@ install_default_zshrc_if_missing() {
 tp_require_command apt-get
 tp_require_command dpkg-query
 
+select_zsh_options
+
 tp_install_packages zsh zsh-completions
 
-case "$TERMUX_INSTALL_OH_MY_ZSH" in
-  true)
-    tp_install_packages git ca-certificates
-    tp_require_command git
-    prepare_oh_my_zsh_source
-    ;;
-  false)
-    tp_log "skipping oh-my-zsh source install"
-    ;;
-  *)
-    tp_die "TERMUX_INSTALL_OH_MY_ZSH must be true or false"
-    ;;
-esac
+if [ "$INSTALL_OH_MY_ZSH" = "true" ] ||
+  [ "$INSTALL_ZSH_AUTOSUGGESTIONS" = "true" ] ||
+  [ "$INSTALL_ZSH_SYNTAX_HIGHLIGHTING" = "true" ]; then
+  tp_install_packages git ca-certificates
+  tp_require_command git
+fi
+
+if [ "$INSTALL_OH_MY_ZSH" = "true" ]; then
+  prepare_oh_my_zsh_source
+else
+  tp_log "skipping oh-my-zsh source install"
+fi
+
+if [ "$INSTALL_ZSH_AUTOSUGGESTIONS" = "true" ]; then
+  prepare_zsh_autosuggestions_source
+else
+  tp_log "skipping zsh-autosuggestions source install"
+fi
+
+if [ "$INSTALL_ZSH_SYNTAX_HIGHLIGHTING" = "true" ]; then
+  prepare_zsh_syntax_highlighting_source
+else
+  tp_log "skipping zsh-syntax-highlighting source install"
+fi
 
 write_zshrc "$PREFIX/etc/zshrc" 644
 install_default_shell_if_missing

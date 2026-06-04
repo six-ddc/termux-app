@@ -12,7 +12,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -29,6 +28,7 @@ import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.activities.TermuxPlusSnippetsActivity;
 import com.termux.app.ui.TpChrome;
+import com.termux.app.ui.TpIconView;
 import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
 import com.termux.terminal.TerminalSession;
@@ -223,10 +223,9 @@ public class TerminalToolbarViewPager {
 
             FrameLayout tile = new FrameLayout(mActivity);
             tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
-            ImageView icon = new ImageView(mActivity);
-            icon.setImageResource(R.drawable.ic_tp_braces);
-            icon.setColorFilter(TpChrome.ACCENT);
-            FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
+            TpIconView icon = new TpIconView(mActivity, TpIconView.BRACES);
+            icon.setColor(TpChrome.ACCENT);
+            FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(28), dp(28));
             iconParams.gravity = Gravity.CENTER;
             tile.addView(icon, iconParams);
             LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(dp(38), dp(38));

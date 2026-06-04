@@ -1,31 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="termuxplus_surface">#050607</color>
-    <color name="termuxplus_surface_elevated">#0D1013</color>
-    <color name="termuxplus_surface_pressed">#151A1F</color>
+    <color name="termuxplus_surface_elevated">#090D0E</color>
+    <color name="termuxplus_surface_pressed">#14201B</color>
     <color name="termuxplus_control">#0A0D10</color>
     <color name="termuxplus_control_selected">#101811</color>
-    <color name="termuxplus_control_pressed">#151C22</color>
-    <color name="termuxplus_outline">#242B32</color>
-    <color name="termuxplus_outline_subtle">#1A2026</color>
+    <color name="termuxplus_control_pressed">#14201B</color>
+    <color name="termuxplus_outline">#1A2422</color>
+    <color name="termuxplus_outline_subtle">#121A18</color>
     <color name="termuxplus_outline_selected">#0BC989</color>
-    <color name="termuxplus_text_primary">#E7ECEF</color>
-    <color name="termuxplus_text_secondary">#98A2AD</color>
-    <color name="termuxplus_text_muted">#66717C</color>
-    <color name="termuxplus_text_error">#FF6B6B</color>
+    <color name="termuxplus_text_primary">#ECC5DED5</color>
+    <color name="termuxplus_text_secondary">#A079968D</color>
+    <color name="termuxplus_text_muted">#6679968D</color>
+    <color name="termuxplus_text_error">#E8685C</color>
 
-    <!-- Termius-inspired modern chrome palette -->
-    <color name="termuxplus_header_bg">#080B0F</color>
-    <color name="termuxplus_hairline">#171D24</color>
+    <!-- Precision terminal HUD chrome palette. -->
+    <color name="termuxplus_header_bg">#E6090D0E</color>
+    <color name="termuxplus_hairline">#380BC989</color>
     <color name="termuxplus_scrim">#B3000000</color>
 
     <!-- Elevated sheets / cards -->
-    <color name="termuxplus_sheet_bg">#11151B</color>
-    <color name="termuxplus_sheet_border">#232B35</color>
-    <color name="termuxplus_sheet_handle">#3A434F</color>
-    <color name="termuxplus_card_bg">#121821</color>
+    <color name="termuxplus_sheet_bg">#F2090D0E</color>
+    <color name="termuxplus_sheet_border">#1A2422</color>
+    <color name="termuxplus_sheet_handle">#4079968D</color>
+    <color name="termuxplus_card_bg">#0D1211</color>
     <color name="termuxplus_card_bg_pressed">#14201B</color>
-    <color name="termuxplus_card_border">#232B35</color>
+    <color name="termuxplus_card_border">#1A2422</color>
 
     <!-- Accent: single phosphor-green HUD accent (matches the floating terminal). -->
     <color name="termuxplus_accent">#0BC989</color>
@@ -33,7 +33,7 @@
     <color name="termuxplus_accent_soft">#0C1A15</color>
     <color name="termuxplus_accent_border">#1C4034</color>
     <color name="termuxplus_run">#0BC989</color>
-    <color name="termuxplus_ripple">#1FFFFFFF</color>
+    <color name="termuxplus_ripple">#280BC989</color>
 
     <!-- HUD chrome: frosted near-black surfaces, faint green hairlines, press tints. -->
     <color name="termuxplus_glass_bg">#E6090D0E</color>

@@ -3,12 +3,12 @@
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <corners android:radius="3dp" />
-            <solid android:color="@color/termuxplus_surface_pressed" />
+            <solid android:color="@color/termuxplus_press" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="3dp" />
+            <corners android:radius="@dimen/termuxplus_action_row_radius" />
             <solid android:color="@android:color/transparent" />
         </shape>
     </item>

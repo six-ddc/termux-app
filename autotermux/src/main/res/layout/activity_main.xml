@@ -38,18 +38,22 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
                     android:text="@string/app_name"
                     android:textColor="@color/text_white"
-                    android:textSize="24sp"
-                    android:textStyle="bold" />
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:includeFontPadding="false" />
 
                 <TextView
                     android:id="@+id/status_summary"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
+                    android:fontFamily="monospace"
                     android:textColor="@color/text_gray_light"
                     android:textSize="13sp"
+                    android:includeFontPadding="false"
                     tools:text="Ready for local Termux control" />
             </LinearLayout>
 
@@ -72,7 +76,9 @@
             android:layout_marginTop="2dp"
             android:textColor="@color/autotermux_primary_light"
             android:textSize="11sp"
+            android:fontFamily="monospace"
             android:textStyle="bold"
+            android:includeFontPadding="false"
             tools:text="ARMED" />
 
         <!-- PERMISSIONS CARD -->
@@ -101,8 +107,10 @@
                     android:id="@+id/permissions_summary"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
                     android:textColor="@color/text_gray_light"
                     android:textSize="11sp"
+                    android:includeFontPadding="false"
                     tools:text="6/8 granted" />
             </LinearLayout>
 
@@ -195,9 +203,11 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
                     android:text="Bridge"
                     android:textColor="@color/text_white"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:includeFontPadding="false" />
 
                 <TextView
                     android:id="@+id/bridge_status"
@@ -237,8 +247,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="8dp"
+                    android:fontFamily="monospace"
                     android:textColor="@color/text_gray_light"
-                    android:textSize="11sp" />
+                    android:textSize="11sp"
+                    android:includeFontPadding="false" />
 
                 <Button
                     android:id="@+id/activity_clear"
@@ -266,6 +278,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
+                android:fontFamily="monospace"
                 android:paddingTop="24dp"
                 android:paddingBottom="24dp"
                 android:text="No activity yet"

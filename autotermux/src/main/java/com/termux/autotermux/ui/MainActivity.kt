@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -438,22 +439,25 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
 
     private fun applyPrimaryButton(button: Button, text: String) {
         button.text = text
+        button.typeface = Typeface.MONOSPACE
         button.isEnabled = true
         button.alpha = 1.0f
         button.backgroundTintList = colorStateList(R.color.autotermux_primary)
-        button.setTextColor(color(R.color.white))
+        button.setTextColor(color(R.color.background_primary))
     }
 
     private fun applySecondaryButton(button: Button, text: String) {
         button.text = text
+        button.typeface = Typeface.MONOSPACE
         button.isEnabled = true
         button.alpha = 1.0f
         button.backgroundTintList = colorStateList(R.color.background_tertiary)
-        button.setTextColor(color(R.color.white))
+        button.setTextColor(color(R.color.autotermux_primary))
     }
 
     private fun applyWarningButton(button: Button, text: String) {
         button.text = text
+        button.typeface = Typeface.MONOSPACE
         button.isEnabled = true
         button.alpha = 1.0f
         button.backgroundTintList = colorStateList(R.color.autotermux_warning_button)
@@ -462,10 +466,11 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
 
     private fun applyDisabledButton(button: Button, text: String) {
         button.text = text
+        button.typeface = Typeface.MONOSPACE
         button.isEnabled = false
         button.alpha = 0.45f
         button.backgroundTintList = colorStateList(R.color.background_tertiary)
-        button.setTextColor(color(R.color.white))
+        button.setTextColor(color(R.color.text_gray_light))
     }
 
     // ---- inner types ------------------------------------------------------

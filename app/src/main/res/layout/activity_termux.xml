@@ -1,4 +1,5 @@
 <com.termux.app.terminal.TermuxActivityRootView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/activity_termux_root_view"
     android:layout_width="match_parent"
@@ -53,16 +54,13 @@
 
                 </HorizontalScrollView>
 
-                <ImageButton
+                <com.termux.app.ui.TpIconView
                     android:id="@+id/tp_btn_menu"
                     android:layout_width="@dimen/termuxplus_header_button_size"
                     android:layout_height="@dimen/termuxplus_header_button_size"
                     android:layout_marginStart="1dp"
-                    android:background="@drawable/tp_header_button_bg"
                     android:contentDescription="@string/termuxplus_menu"
-                    android:padding="@dimen/termuxplus_header_button_padding"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_tp_menu" />
+                    app:tpIcon="menu" />
 
             </LinearLayout>
 
@@ -88,7 +86,7 @@
             android:layout_alignParentBottom="true" />
 
         <!-- Floating icon to leave fullscreen / focus mode -->
-        <ImageButton
+        <com.termux.app.ui.TpIconView
             android:id="@+id/tp_fullscreen_restore"
             android:layout_width="@dimen/termuxplus_fullscreen_restore_size"
             android:layout_height="@dimen/termuxplus_fullscreen_restore_size"
@@ -96,13 +94,11 @@
             android:layout_alignParentEnd="true"
             android:layout_marginTop="8dp"
             android:layout_marginEnd="8dp"
-            android:background="@drawable/tp_restore_chip_bg"
             android:contentDescription="@string/termuxplus_exit_fullscreen"
             android:elevation="10dp"
-            android:padding="@dimen/termuxplus_fullscreen_restore_padding"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_tp_fullscreen_exit"
-            android:visibility="gone" />
+            android:visibility="gone"
+            app:tpFramed="true"
+            app:tpIcon="fullscreen_exit" />
 
     </RelativeLayout>
 

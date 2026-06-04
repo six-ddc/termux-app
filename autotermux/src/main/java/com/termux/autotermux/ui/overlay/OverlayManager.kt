@@ -37,6 +37,8 @@ class OverlayManager(private val context: Context) {
 
     companion object {
         private const val TAG = "TOPVIEW_OVERLAY"
+        private const val HUD_ACCENT = -16004727
+        private const val HUD_TEXT = -322576683
         private const val OVERLAP_THRESHOLD = 0.5f // Lower overlap threshold for matching
         private const val FALLBACK_OFFSET = 0 // Safe default if detection fails
 
@@ -44,16 +46,18 @@ class OverlayManager(private val context: Context) {
         private const val MIN_REASONABLE_OFFSET = -200  // Negative because we shift up
         private const val MAX_REASONABLE_OFFSET = -10   // Minimum status bar size
 
-        // Define a color scheme with 8 visually distinct colors
+        // HUD-aligned inspection colors. Multiple hues are retained here because
+        // element overlays need visual disambiguation, but the palette avoids the
+        // old iOS-style saturated blue/purple set.
         private val COLOR_SCHEME = arrayOf(
-            Color.rgb(0, 122, 255),    // Blue
-            Color.rgb(255, 45, 85),    // Red
-            Color.rgb(52, 199, 89),    // Green
-            Color.rgb(255, 149, 0),    // Orange
-            Color.rgb(175, 82, 222),   // Purple
-            Color.rgb(255, 204, 0),    // Yellow
-            Color.rgb(90, 200, 250),   // Light Blue
-            Color.rgb(88, 86, 214)     // Indigo
+            Color.rgb(11, 201, 137),   // phosphor green
+            Color.rgb(232, 104, 92),   // error red
+            Color.rgb(255, 209, 102),  // warning amber
+            Color.rgb(197, 222, 213),  // terminal text
+            Color.rgb(121, 150, 141),  // muted green-gray
+            Color.rgb(54, 219, 168),   // bright green
+            Color.rgb(31, 120, 92),    // deep green
+            Color.rgb(176, 194, 186)   // pale neutral
         )
     }
 
@@ -62,7 +66,7 @@ class OverlayManager(private val context: Context) {
         val type: String, 
         val text: String,
         val depth: Int = 0, // Added depth field to track hierarchy level
-        val color: Int = Color.GREEN, // Add color field with default value
+        val color: Int = HUD_ACCENT, // Add color field with default value
         val index: Int = 0 // Index number for identifying the element
     )
     
@@ -284,7 +288,7 @@ class OverlayManager(private val context: Context) {
         refreshOverlay()
     }
 
-    fun addElement(rect: Rect, type: String, text: String, depth: Int = 0, color: Int = Color.GREEN, index: Int? = null) {
+    fun addElement(rect: Rect, type: String, text: String, depth: Int = 0, color: Int = HUD_ACCENT, index: Int? = null) {
         // Apply position correction to the rectangle
         val correctedRect = correctRectPosition(rect)
         val elementIndex = index ?: elementIndexCounter++
@@ -360,7 +364,7 @@ class OverlayManager(private val context: Context) {
         }
         
         private val textPaint = Paint().apply {
-            color = Color.WHITE
+            color = HUD_TEXT
             textSize = 32f  // Increased text size for better visibility
             isAntiAlias = true
             // Enable hardware acceleration features
@@ -383,11 +387,6 @@ class OverlayManager(private val context: Context) {
 
         override fun onDraw(canvas: Canvas) {
             try {
-                if (canvas == null) {
-                    Log.e(TAG, "Canvas is null in onDraw")
-                    return
-                }
-
                 if (!isOverlayVisible || !isDrawingEnabled) {
                     if (!isDrawingEnabled) {
                         Log.d(TAG, "Overlay drawing disabled, skipping draw")
@@ -497,7 +496,7 @@ class OverlayManager(private val context: Context) {
                     (screenWidth * 3) / 4,
                     (screenHeight * 3) / 4
                 )
-                boxPaint.color = Color.GREEN
+                boxPaint.color = HUD_ACCENT
                 canvas.drawRect(testRect, boxPaint)
                 Log.d(TAG, "Drew test rectangle at $testRect")
             } catch (e: Exception) {

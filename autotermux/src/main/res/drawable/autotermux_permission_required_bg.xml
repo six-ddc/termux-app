@@ -2,7 +2,7 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <solid android:color="@color/autotermux_warning_surface" />
     <stroke
-        android:width="2dp"
+        android:width="1dp"
         android:color="@color/autotermux_warning" />
-    <corners android:radius="8dp" />
+    <corners android:radius="7dp" />
 </shape>

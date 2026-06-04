@@ -15,7 +15,6 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -129,10 +128,9 @@ public class TermuxPlusSnippetsSheet {
 
         FrameLayout tile = new FrameLayout(mActivity);
         tile.setBackground(ContextCompat.getDrawable(mActivity, R.drawable.tp_icon_tile_bg));
-        ImageView icon = new ImageView(mActivity);
-        icon.setImageResource(R.drawable.ic_tp_braces);
-        icon.setColorFilter(TpChrome.ACCENT);
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
+        TpIconView icon = new TpIconView(mActivity, TpIconView.BRACES);
+        icon.setColor(TpChrome.ACCENT);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(28), dp(28));
         iconParams.gravity = Gravity.CENTER;
         tile.addView(icon, iconParams);
         LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(dp(40), dp(40));

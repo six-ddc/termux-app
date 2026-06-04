@@ -28,6 +28,8 @@
             android:id="@+id/row_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:includeFontPadding="false"
             android:textColor="@color/text_white"
             android:textSize="14sp"
             tools:text="Accessibility" />
@@ -36,6 +38,8 @@
             android:id="@+id/row_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:includeFontPadding="false"
             android:textColor="@color/text_gray_light"
             android:textSize="11sp"
             tools:text="Ready" />

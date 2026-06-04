@@ -107,11 +107,11 @@ class AutoTermuxBackgroundService : Service() {
 
         val titleParts = mutableListOf<String>()
         val prefix = when (s.state) {
-            "waiting" -> "⏸"
-            "error" -> "✗"
-            "done" -> "✓"
-            "cancelled" -> "◌"
-            else -> "●"
+            "waiting" -> "WAIT"
+            "error" -> "ERR"
+            "done" -> "DONE"
+            "cancelled" -> "STOP"
+            else -> "RUN"
         }
         titleParts += prefix
         if (s.totalSteps > 0) titleParts += "[${s.step}/${s.totalSteps}]"

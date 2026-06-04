@@ -1,8 +1,8 @@
 package com.termux.autotermux.ui.overlay
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
@@ -110,12 +110,12 @@ class HudOverlay(private val context: Context) {
         val s = currentState
 
         val prefix = when (s.state) {
-            "waiting" -> "⏸"
-            "error" -> "✗"
-            "done" -> "✓"
-            "cancelled" -> "◌"
-            "idle" -> "○"
-            else -> "●"
+            "waiting" -> "WAIT"
+            "error" -> "ERR"
+            "done" -> "DONE"
+            "cancelled" -> "STOP"
+            "idle" -> "IDLE"
+            else -> "RUN"
         }
         val taskText = s.task ?: "(no task)"
         val stepText = when {
@@ -126,19 +126,15 @@ class HudOverlay(private val context: Context) {
         val percentText = s.percent?.let { " · ${it.toInt()}%" } ?: ""
         val labelText = s.stepLabel?.let { " · $it" } ?: ""
         val promptSuffix = s.pendingPrompt?.let { " — ${it}" } ?: ""
-        title.text = "$prefix $taskText$stepText$percentText$labelText$promptSuffix"
+        title.text = "$prefix  $taskText$stepText$percentText$labelText$promptSuffix"
+        title.setTextColor(stateColor(s.state))
 
         v.background = GradientDrawable().apply {
-            setColor(when (s.state) {
-                "waiting" -> 0xCCA0660A.toInt() // amber
-                "error" -> 0xCCB33636.toInt() // red
-                "done" -> 0xCC2D8A3A.toInt() // green
-                "cancelled" -> 0xCC555555.toInt() // grey
-                else -> 0xCC1C1C1C.toInt() // dark default
-            })
+            setColor(HUD_BG)
+            setStroke(dp(1), stateColor(s.state))
         }
 
-        pause.text = if (s.state == "waiting") "▶" else "❚❚"
+        pause.text = if (s.state == "waiting") ">" else "II"
         // Disable Pause when nothing is running.
         pause.alpha = if (s.state in setOf("idle", "done", "cancelled", "error")) 0.35f else 1f
     }
@@ -157,26 +153,32 @@ class HudOverlay(private val context: Context) {
         }
         val title = TextView(context).apply {
             tag = "title"
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = Typeface.MONOSPACE
+            includeFontPadding = false
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val pause = TextView(context).apply {
             tag = "pause"
-            text = "❚❚"
-            setTextColor(Color.WHITE)
+            text = "II"
+            setTextColor(ACCENT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = Typeface.MONOSPACE
+            includeFontPadding = false
             setPadding(dp(10), dp(2), dp(10), dp(2))
             isClickable = true
             setOnClickListener { onPauseClick?.invoke() }
         }
         val cancel = TextView(context).apply {
             tag = "cancel"
-            text = "✕"
-            setTextColor(Color.WHITE)
+            text = "X"
+            setTextColor(ERROR)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.MONOSPACE
+            includeFontPadding = false
             setPadding(dp(10), dp(2), dp(10), dp(2))
             isClickable = true
             setOnClickListener { onCancelClick?.invoke() }
@@ -191,7 +193,23 @@ class HudOverlay(private val context: Context) {
     private fun dp(v: Int): Int =
         (v * context.resources.displayMetrics.density).toInt()
 
+    private fun stateColor(state: String): Int =
+        when (state) {
+            "waiting" -> WARNING
+            "error" -> ERROR
+            "done" -> ACCENT
+            "cancelled" -> TEXT_DIM
+            "idle" -> TEXT_DIM
+            else -> ACCENT
+        }
+
     companion object {
         private const val TAG = "TP_HUD_OVERLAY"
+        private const val ACCENT = -16004727
+        private const val WARNING = -11930
+        private const val ERROR = -1546148
+        private const val TEXT = -322576683
+        private const val TEXT_DIM = -2139515251
+        private const val HUD_BG = -435614450
     }
 }

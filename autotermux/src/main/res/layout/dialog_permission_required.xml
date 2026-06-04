@@ -40,8 +40,10 @@
             android:layout_height="wrap_content"
             android:text="@string/permission_required_title"
             android:textColor="@color/text_white"
-            android:textSize="20sp"
+            android:textSize="18sp"
             android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:includeFontPadding="false"
             android:gravity="center"
             android:layout_marginBottom="12dp" />
 
@@ -53,6 +55,8 @@
             android:text="@string/install_permission_message"
             android:textColor="@color/text_gray_light"
             android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:includeFontPadding="false"
             android:gravity="center"
             android:lineSpacingExtra="4dp"
             android:layout_marginBottom="24dp" />
@@ -73,6 +77,8 @@
                 android:text="@string/install_permission_steps"
                 android:textColor="@color/text_gray_light"
                 android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:includeFontPadding="false"
                 android:lineSpacingExtra="6dp" />
 
         </LinearLayout>
@@ -92,6 +98,7 @@
                 android:text="@string/cancel"
                 android:textColor="@color/text_gray_light"
                 android:textSize="14sp"
+                android:fontFamily="monospace"
                 android:layout_marginEnd="8dp" />
 
             <com.google.android.material.button.MaterialButton
@@ -100,10 +107,11 @@
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
                 android:text="@string/open_settings"
-                android:textColor="@color/text_white"
+                android:textColor="@color/background_primary"
                 android:textSize="14sp"
+                android:fontFamily="monospace"
                 app:backgroundTint="@color/autotermux_primary"
-                app:cornerRadius="8dp" />
+                app:cornerRadius="7dp" />
 
         </LinearLayout>
 

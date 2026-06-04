@@ -10,9 +10,33 @@
     <style name="Theme.TermuxApp.Light.NoActionBar" parent="Theme.BaseActivity.Light.NoActionBar"/>
 
     <!-- TermuxApp DayNight DarkActionBar theme. -->
-    <style name="Theme.TermuxApp.DayNight.DarkActionBar" parent="Theme.BaseActivity.DayNight.DarkActionBar"/>
+    <style name="Theme.TermuxApp.DayNight.DarkActionBar" parent="Theme.BaseActivity.DayNight.DarkActionBar">
+        <item name="colorPrimary">@color/termuxplus_surface</item>
+        <item name="colorPrimaryVariant">@color/termuxplus_surface</item>
+        <item name="colorPrimaryDark">@color/termuxplus_surface</item>
+        <item name="colorAccent">@color/termuxplus_accent</item>
+        <item name="android:colorAccent">@color/termuxplus_accent</item>
+        <item name="android:windowBackground">@color/termuxplus_surface</item>
+        <item name="android:navigationBarColor">@color/termuxplus_surface</item>
+        <item name="android:textColorPrimary">@color/termuxplus_text_primary</item>
+        <item name="android:textColorSecondary">@color/termuxplus_text_secondary</item>
+        <item name="android:alertDialogTheme">@style/TermuxAlertDialogStyle</item>
+        <item name="alertDialogTheme">@style/TermuxAlertDialogStyleCompat</item>
+    </style>
     <!-- TermuxApp DayNight NoActionBar theme. -->
-    <style name="Theme.TermuxApp.DayNight.NoActionBar" parent="Theme.BaseActivity.DayNight.NoActionBar"/>
+    <style name="Theme.TermuxApp.DayNight.NoActionBar" parent="Theme.BaseActivity.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/termuxplus_surface</item>
+        <item name="colorPrimaryVariant">@color/termuxplus_surface</item>
+        <item name="colorPrimaryDark">@color/termuxplus_surface</item>
+        <item name="colorAccent">@color/termuxplus_accent</item>
+        <item name="android:colorAccent">@color/termuxplus_accent</item>
+        <item name="android:windowBackground">@color/termuxplus_surface</item>
+        <item name="android:navigationBarColor">@color/termuxplus_surface</item>
+        <item name="android:textColorPrimary">@color/termuxplus_text_primary</item>
+        <item name="android:textColorSecondary">@color/termuxplus_text_secondary</item>
+        <item name="android:alertDialogTheme">@style/TermuxAlertDialogStyle</item>
+        <item name="alertDialogTheme">@style/TermuxAlertDialogStyleCompat</item>
+    </style>
 
 
     <!-- TermuxActivity DayNight NoActionBar theme. -->
@@ -36,10 +60,10 @@
         <item name="android:windowAllowEnterTransitionOverlap">true</item>
 
         <!-- Extra keys colors. -->
-        <item name="extraKeysButtonTextColor">@color/white</item>
-        <item name="extraKeysButtonActiveTextColor">@color/red_400</item>
-        <item name="extraKeysButtonBackgroundColor">@color/black</item>
-        <item name="extraKeysButtonActiveBackgroundColor">@color/grey_500</item>
+        <item name="extraKeysButtonTextColor">@color/termuxplus_text_primary</item>
+        <item name="extraKeysButtonActiveTextColor">@color/termuxplus_accent</item>
+        <item name="extraKeysButtonBackgroundColor">@android:color/transparent</item>
+        <item name="extraKeysButtonActiveBackgroundColor">@color/termuxplus_press</item>
 
         <!-- HUD dark dialogs (rename / create / delete / select-url etc.). -->
         <item name="android:alertDialogTheme">@style/TermuxAlertDialogStyle</item>
@@ -57,7 +81,7 @@
     </style>
 
     <!-- ============================================================= -->
-    <!-- Termius-style modern bottom sheet (Material scaffold, custom skin) -->
+    <!-- Terminal HUD bottom sheet (Material scaffold, custom skin) -->
     <!-- Used by TermuxPlusActionSheet and TermuxPlusTabOverview.       -->
     <!-- ============================================================= -->
     <style name="ShapeAppearance.TermuxPlus.Sheet" parent="">

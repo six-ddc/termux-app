@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.res.ColorStateList
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -12,7 +14,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.NumberPicker
 import android.widget.ScrollView
-import android.widget.TextView
+import androidx.core.content.ContextCompat
+import com.termux.autotermux.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -109,6 +112,7 @@ class DialogBridgeActivity : Activity() {
 
     private fun showText() {
         val input = EditText(this)
+        styleDialogInput(input)
         input.hint = params.optString("hint", params.optString("input_hint", ""))
         var type = if (params.optBoolean("numeric", false)) {
             InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED or InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -141,7 +145,15 @@ class DialogBridgeActivity : Activity() {
 
     private fun showCheckbox() {
         val values = values()
-        val checks = values.map { CheckBox(this).apply { text = it; textSize = 18f } }
+        val checks = values.map {
+            CheckBox(this).apply {
+                text = it
+                textSize = 15f
+                typeface = Typeface.MONOSPACE
+                setTextColor(color(R.color.text_white))
+                buttonTintList = ColorStateList.valueOf(color(R.color.autotermux_primary))
+            }
+        }
         val layout = paddedContainer()
         checks.forEach { layout.addView(it) }
         AlertDialog.Builder(this)
@@ -265,6 +277,16 @@ class DialogBridgeActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(56, 32, 56, 16)
         }
+
+    private fun styleDialogInput(input: EditText) {
+        input.typeface = Typeface.MONOSPACE
+        input.textSize = 14f
+        input.setTextColor(color(R.color.text_white))
+        input.setHintTextColor(color(R.color.text_gray_light))
+        input.backgroundTintList = ColorStateList.valueOf(color(R.color.autotermux_primary))
+    }
+
+    private fun color(resId: Int): Int = ContextCompat.getColor(this, resId)
 
     private fun completeResult(result: DialogResult) {
         if (completed) return

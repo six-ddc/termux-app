@@ -22,7 +22,6 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -37,6 +36,8 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.termux.R;
 import com.termux.app.terminal.io.TermuxPlusSnippet;
 import com.termux.app.terminal.io.TermuxPlusSnippetRepository;
+import com.termux.app.ui.TpChrome;
+import com.termux.app.ui.TpIconView;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
 import com.termux.shared.theme.NightMode;
 
@@ -167,10 +168,9 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
 
         FrameLayout tile = new FrameLayout(this);
         tile.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_icon_tile_bg));
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.ic_tp_braces);
-        icon.setColorFilter(color(R.color.termuxplus_text_primary));
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(22), dp(22));
+        TpIconView icon = new TpIconView(this, TpIconView.BRACES);
+        icon.setColor(TpChrome.ACCENT);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(28), dp(28));
         iconParams.gravity = Gravity.CENTER;
         tile.addView(icon, iconParams);
         LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(dp(40), dp(40));
@@ -188,15 +188,25 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
             textColumn.addView(createText(metaText, R.color.termuxplus_text_muted, 10, Typeface.NORMAL, true));
         row.addView(textColumn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-        Button edit = createActionButton(getString(R.string.termuxplus_edit), false, false);
+        TpIconView edit = new TpIconView(this, TpIconView.EDIT);
+        edit.setColor(TpChrome.TEXT_DIM);
+        edit.setContentDescription(getString(R.string.termuxplus_edit));
         edit.setOnClickListener(v -> showSnippetEditor(snippet));
-        row.addView(edit, createActionLayoutParams(58));
+        row.addView(edit, snippetActionIconParams());
 
-        Button delete = createActionButton(getString(R.string.termuxplus_delete), false, true);
+        TpIconView delete = new TpIconView(this, TpIconView.TRASH);
+        delete.setColor(TpChrome.ERROR);
+        delete.setContentDescription(getString(R.string.termuxplus_delete));
         delete.setOnClickListener(v -> showDeleteConfirmation(snippet, true));
-        row.addView(delete, createActionLayoutParams(72));
+        row.addView(delete, snippetActionIconParams());
 
         return row;
+    }
+
+    private LinearLayout.LayoutParams snippetActionIconParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(34), dp(34));
+        params.setMargins(dp(2), 0, 0, 0);
+        return params;
     }
 
     private void showSnippetEditor(@Nullable TermuxPlusSnippet snippet) {
@@ -399,9 +409,9 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         button.setPadding(dp(8), 0, dp(8), 0);
         button.setSingleLine(true);
         button.setTextSize(12);
-        button.setTextColor(color(danger ? R.color.termuxplus_text_error :
-            (primary ? R.color.termuxplus_text_primary : R.color.termuxplus_text_secondary)));
-        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setTextColor(danger ? TpChrome.ERROR :
+            (primary ? TpChrome.ACCENT : TpChrome.TEXT_DIM));
+        button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         button.setBackground(ContextCompat.getDrawable(this,
             primary ? R.drawable.tp_accent_button_bg : R.drawable.tp_chip_bg));
         return button;
@@ -434,12 +444,6 @@ public class TermuxPlusSnippetsActivity extends AppCompatActivity {
         editText.setTypeface(Typeface.MONOSPACE);
         editText.setBackground(ContextCompat.getDrawable(this, R.drawable.tp_sheet_input_bg));
         editText.setPadding(dp(12), 0, dp(12), 0);
-    }
-
-    private LinearLayout.LayoutParams createActionLayoutParams(int widthDp) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(widthDp), dp(34));
-        params.setMargins(dp(4), 0, 0, 0);
-        return params;
     }
 
     private void setSheetContent(View sheet) {

@@ -2,7 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="#444444"
+    android:background="@drawable/autotermux_keyboard_bar_bg"
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingHorizontal="16dp"
@@ -16,7 +16,8 @@
         android:maxLines="1"
         android:singleLine="true"
         android:text="@string/keyboard_on"
-        android:textColor="#FFFFFF"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_white"
         android:textStyle="bold" />
 
     <Button
@@ -28,5 +29,7 @@
         android:paddingHorizontal="16dp"
         android:paddingVertical="8dp"
         android:text="@string/switch_keyboard"
-        android:textAllCaps="false" />
+        android:textAllCaps="false"
+        android:textColor="@color/autotermux_primary"
+        android:fontFamily="monospace" />
 </LinearLayout>

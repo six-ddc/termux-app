@@ -82,10 +82,11 @@ class AuditLogAdapter : RecyclerView.Adapter<AuditLogAdapter.ViewHolder>() {
 
         private fun chipBackground(strokeColor: Int): GradientDrawable =
             GradientDrawable().apply {
+                val density = itemView.resources.displayMetrics.density
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = itemView.resources.displayMetrics.density * 4
+                cornerRadius = density * 7
                 setColor(Color.TRANSPARENT)
-                setStroke(1, strokeColor)
+                setStroke(density.toInt().coerceAtLeast(1), strokeColor)
             }
     }
 

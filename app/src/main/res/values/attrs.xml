@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="TpIconView">
+        <attr name="tpIcon" format="enum">
+            <enum name="close" value="0" />
+            <enum name="add" value="1" />
+            <enum name="minimize" value="2" />
+            <enum name="maximize" value="3" />
+            <enum name="menu" value="4" />
+            <enum name="braces" value="5" />
+            <enum name="run" value="6" />
+            <enum name="insert" value="7" />
+            <enum name="edit" value="8" />
+            <enum name="trash" value="9" />
+            <enum name="search" value="10" />
+            <enum name="back" value="11" />
+            <enum name="chevron_down" value="12" />
+            <enum name="grid" value="13" />
+            <enum name="link" value="14" />
+            <enum name="share" value="15" />
+            <enum name="refresh" value="16" />
+            <enum name="power" value="17" />
+            <enum name="fullscreen" value="18" />
+            <enum name="fullscreen_exit" value="19" />
+            <enum name="palette" value="20" />
+            <enum name="screen_on" value="21" />
+            <enum name="floating" value="22" />
+            <enum name="user" value="23" />
+            <enum name="key" value="24" />
+            <enum name="settings" value="25" />
+            <enum name="help" value="26" />
+            <enum name="report" value="27" />
+        </attr>
+        <attr name="tpFramed" format="boolean" />
+    </declare-styleable>
+</resources>

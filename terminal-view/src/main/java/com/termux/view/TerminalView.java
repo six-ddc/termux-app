@@ -157,6 +157,13 @@ public final class TerminalView extends GLSurfaceView {
 
     public TerminalView(Context context, AttributeSet attributes) { // NO_UCD (unused code)
         super(context, attributes);
+        // Required because we are a GLSurfaceView, not a plain View: SurfaceView
+        // defaults to focusableInTouchMode=false, so requestFocus() inside the
+        // tap listener silently fails and showSoftInput() that follows is then
+        // ignored by the IME framework. Upstream Termux's plain-View TerminalView
+        // gets this for free via onCheckIsTextEditor().
+        setFocusable(true);
+        setFocusableInTouchMode(true);
         setEGLContextClientVersion(2);
         // Request an RGBA8888 surface so terminal background transparency
         // (terminal-transparency property) can composite the wallpaper through

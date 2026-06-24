@@ -337,6 +337,8 @@ def termuxPlusScriptsAssetDir = new File(termuxPlusHomeGeneratedAssetsRoot, "ter
 def termuxPlusHomeAgentsSource = rootProject.file("bootstrap/home/AGENTS.md")
 def termuxPlusHomeSkillsSource = rootProject.file("bootstrap/home/.codex/skills")
 def termuxPlusHomeScriptsSource = rootProject.file("bootstrap/home/.termuxplus/scripts")
+def termuxPlusHomeGitconfigSource = rootProject.file("bootstrap/home/.gitconfig")
+def termuxPlusHomeGitIgnoreSource = rootProject.file("bootstrap/home/.config/git/ignore")
 def termuxPlusHomeAssetMappings = [
     [
         label: "TermuxPlus home AGENTS.md",
@@ -356,6 +358,21 @@ def termuxPlusHomeAssetMappings = [
         source: termuxPlusHomeScriptsSource,
         target: termuxPlusScriptsAssetDir,
         directory: true
+    ],
+    // Note: aapt ignores asset entries whose path components start with ".",
+    // so we stage these under non-dotted names and the on-device installer
+    // re-adds the dot when copying them to $HOME.
+    [
+        label: "TermuxPlus home .gitconfig",
+        source: termuxPlusHomeGitconfigSource,
+        target: new File(termuxPlusHomeAssetDir, "gitconfig"),
+        directory: false
+    ],
+    [
+        label: "TermuxPlus home .config/git/ignore",
+        source: termuxPlusHomeGitIgnoreSource,
+        target: new File(termuxPlusHomeAssetDir, "config/git/ignore"),
+        directory: false
     ]
 ]
 def copyTermuxPlusHomeAssetTask = tasks.register("copyTermuxPlusHomeAsset") {

@@ -23,15 +23,23 @@ final class TermuxPlusHomeInstaller {
     private static final String PREFIX_AGENTS_SOURCE_FILE_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/AGENTS.md";
     private static final String PREFIX_SKILLS_SOURCE_DIR_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/.codex/skills";
     private static final String PREFIX_SCRIPTS_SOURCE_DIR_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/.termuxplus/scripts";
+    private static final String PREFIX_GITCONFIG_SOURCE_FILE_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/.gitconfig";
+    private static final String PREFIX_GIT_IGNORE_SOURCE_FILE_PATH = PREFIX_HOME_SOURCE_DIR_PATH + "/.config/git/ignore";
 
     private static final String ASSET_AGENTS_SOURCE_FILE_PATH = "termuxplus/home/AGENTS.md";
     private static final String ASSET_SKILLS_SOURCE_DIR_PATH = "termuxplus/codex-skills";
     private static final String ASSET_SCRIPTS_SOURCE_DIR_PATH = "termuxplus/home-scripts";
+    // aapt ignores asset paths whose components start with ".", so these are
+    // staged under non-dotted names in the APK and renamed when copied to $HOME.
+    private static final String ASSET_GITCONFIG_SOURCE_FILE_PATH = "termuxplus/home/gitconfig";
+    private static final String ASSET_GIT_IGNORE_SOURCE_FILE_PATH = "termuxplus/home/config/git/ignore";
 
     private static final String HOME_AGENTS_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/AGENTS.md";
     private static final String HOME_SKILLS_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.codex/skills";
     private static final String HOME_TERMUXPLUS_TARGET_DIR_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.termuxplus";
     private static final String HOME_SCRIPTS_TARGET_DIR_PATH = HOME_TERMUXPLUS_TARGET_DIR_PATH + "/scripts";
+    private static final String HOME_GITCONFIG_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.gitconfig";
+    private static final String HOME_GIT_IGNORE_TARGET_FILE_PATH = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.config/git/ignore";
 
     private static final int PRIVATE_DIRECTORY_MODE = 0700;
     private static final int PRIVATE_FILE_MODE = 0600;
@@ -58,6 +66,23 @@ final class TermuxPlusHomeInstaller {
             ASSET_SCRIPTS_SOURCE_DIR_PATH,
             HOME_SCRIPTS_TARGET_DIR_PATH,
             EXECUTABLE_FILE_MODE
+        ),
+        // User-owned dotfiles: seed them on first boot so a fresh install gets
+        // gh credential helper and the agent-friendly gitignore, but never
+        // overwrite a user's existing file on subsequent APK upgrades.
+        HomeTemplateEntry.preservedFile(
+            "TermuxPlus home .gitconfig",
+            PREFIX_GITCONFIG_SOURCE_FILE_PATH,
+            ASSET_GITCONFIG_SOURCE_FILE_PATH,
+            HOME_GITCONFIG_TARGET_FILE_PATH,
+            PRIVATE_FILE_MODE
+        ),
+        HomeTemplateEntry.preservedFile(
+            "TermuxPlus home .config/git/ignore",
+            PREFIX_GIT_IGNORE_SOURCE_FILE_PATH,
+            ASSET_GIT_IGNORE_SOURCE_FILE_PATH,
+            HOME_GIT_IGNORE_TARGET_FILE_PATH,
+            PRIVATE_FILE_MODE
         )
     };
 
@@ -78,6 +103,12 @@ final class TermuxPlusHomeInstaller {
         if (entry.isDirectory) {
             copyPrefixDirectoryContentsIfExists(entry.label, new File(entry.prefixSourcePath), targetFile, entry.fileMode);
             copyAssetDirectoryContentsIfExists(context, entry.assetSourcePath, targetFile, entry.fileMode);
+            return;
+        }
+
+        if (entry.preserveExisting && targetFile.exists()) {
+            // User already owns this file (e.g. they added [user] to ~/.gitconfig);
+            // do not clobber it on APK upgrade.
             return;
         }
 
@@ -224,25 +255,33 @@ final class TermuxPlusHomeInstaller {
         final String homeTargetPath;
         final boolean isDirectory;
         final int fileMode;
+        final boolean preserveExisting;
 
         private HomeTemplateEntry(String label, String prefixSourcePath, String assetSourcePath,
-                                  String homeTargetPath, boolean isDirectory, int fileMode) {
+                                  String homeTargetPath, boolean isDirectory, int fileMode,
+                                  boolean preserveExisting) {
             this.label = label;
             this.prefixSourcePath = prefixSourcePath;
             this.assetSourcePath = assetSourcePath;
             this.homeTargetPath = homeTargetPath;
             this.isDirectory = isDirectory;
             this.fileMode = fileMode;
+            this.preserveExisting = preserveExisting;
         }
 
         static HomeTemplateEntry file(String label, String prefixSourcePath, String assetSourcePath,
                                       String homeTargetPath, int fileMode) {
-            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, false, fileMode);
+            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, false, fileMode, false);
+        }
+
+        static HomeTemplateEntry preservedFile(String label, String prefixSourcePath, String assetSourcePath,
+                                               String homeTargetPath, int fileMode) {
+            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, false, fileMode, true);
         }
 
         static HomeTemplateEntry directory(String label, String prefixSourcePath, String assetSourcePath,
                                            String homeTargetPath, int fileMode) {
-            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, true, fileMode);
+            return new HomeTemplateEntry(label, prefixSourcePath, assetSourcePath, homeTargetPath, true, fileMode, false);
         }
     }
 }

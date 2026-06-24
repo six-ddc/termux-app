@@ -161,14 +161,6 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                     Logger.logDebug(LOG_TAG, "ACTION_SERVICE_EXECUTE intent received");
                     actionServiceExecute(intent);
                     break;
-                case "com.termux.HIDE_FLOATING":
-                    // Companion-driven hide. Used by AutoTermux right before
-                    // screenshots/dumps so its overlay isn't included.
-                    hideFloatingTerminal();
-                    break;
-                case "com.termux.SHOW_FLOATING":
-                    showFloatingTerminalIfAllowed();
-                    break;
                 default:
                     Logger.logError(LOG_TAG, "Invalid action: \"" + action + "\"");
                     break;

@@ -27,9 +27,6 @@
 
     <!-- Termux Bootstrap Packages Installation -->
     <string name="bootstrap_installer_body">Installing bootstrap packages…</string>
-    <string name="autotermux_install_permission_required">Allow Termux to install unknown apps, then run tp-android install-companion again.</string>
-    <string name="autotermux_install_failed">Could not start AutoTermux installer: %1$s</string>
-    <string name="autotermux_install_complete">AutoTermux installed.</string>
     <string name="bootstrap_error_title">Unable to install bootstrap</string>
     <string name="bootstrap_error_body">&TERMUX_APP_NAME; was unable to install the bootstrap packages.</string>
     <string name="bootstrap_error_abort">Abort</string>

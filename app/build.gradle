@@ -152,8 +152,6 @@ android {
 
     sourceSets {
         main {
-            assets.srcDirs += "$buildDir/generated/assets/autotermux"
-            assets.srcDirs += "$buildDir/generated/assets/termuxplus-cli"
             assets.srcDirs += "$buildDir/generated/assets/termuxplus-home"
         }
     }
@@ -327,130 +325,84 @@ tasks.register("assertGhosttyNativeLibsPresent") {
     }
 }
 
+// Bootstrap-home asset pipeline. The output is identical across build variants
+// so we register a single Copy task and wire every variant's mergeAssets to it;
+// otherwise per-variant tasks would race on the same output dir (Gradle would
+// flag the implicit dependency between e.g. mergeDebugAssets and
+// copyTermuxPlusHomeReleaseAsset when both variants are evaluated).
+def termuxPlusHomeGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-home")
+def termuxPlusHomeAssetDir = new File(termuxPlusHomeGeneratedAssetsRoot, "termuxplus/home")
+def termuxPlusSkillsAssetDir = new File(termuxPlusHomeGeneratedAssetsRoot, "termuxplus/codex-skills")
+def termuxPlusScriptsAssetDir = new File(termuxPlusHomeGeneratedAssetsRoot, "termuxplus/home-scripts")
+def termuxPlusHomeAgentsSource = rootProject.file("bootstrap/home/AGENTS.md")
+def termuxPlusHomeSkillsSource = rootProject.file("bootstrap/home/.codex/skills")
+def termuxPlusHomeScriptsSource = rootProject.file("bootstrap/home/.termuxplus/scripts")
+def termuxPlusHomeAssetMappings = [
+    [
+        label: "TermuxPlus home AGENTS.md",
+        source: termuxPlusHomeAgentsSource,
+        target: new File(termuxPlusHomeAssetDir, "AGENTS.md"),
+        directory: false
+    ],
+    [
+        label: "TermuxPlus home skills",
+        source: termuxPlusHomeSkillsSource,
+        target: termuxPlusSkillsAssetDir,
+        directory: true,
+        optional: true
+    ],
+    [
+        label: "TermuxPlus home scripts",
+        source: termuxPlusHomeScriptsSource,
+        target: termuxPlusScriptsAssetDir,
+        directory: true
+    ]
+]
+def copyTermuxPlusHomeAssetTask = tasks.register("copyTermuxPlusHomeAsset") {
+    termuxPlusHomeAssetMappings.each { mapping ->
+        if (mapping.optional && !mapping.source.exists()) {
+            return
+        }
+        if (mapping.directory) {
+            inputs.dir(mapping.source)
+        } else {
+            inputs.file(mapping.source)
+        }
+    }
+    outputs.dir(termuxPlusHomeGeneratedAssetsRoot)
+    doLast {
+        project.delete(termuxPlusHomeGeneratedAssetsRoot)
+
+        termuxPlusHomeAssetMappings.each { mapping ->
+            if (mapping.directory) {
+                if (!mapping.source.isDirectory()) {
+                    if (mapping.optional) {
+                        return
+                    }
+                    throw new GradleException("${mapping.label} source was not found at ${mapping.source}")
+                }
+                project.copy {
+                    from mapping.source
+                    into mapping.target
+                    includeEmptyDirs = false
+                }
+            } else {
+                if (!mapping.source.isFile()) {
+                    if (mapping.optional) {
+                        return
+                    }
+                    throw new GradleException("${mapping.label} source was not found at ${mapping.source}")
+                }
+                mapping.target.parentFile.mkdirs()
+                mapping.target.bytes = mapping.source.bytes
+            }
+        }
+    }
+}
+
 afterEvaluate {
     android.applicationVariants.all { variant ->
-        def autoTermuxVariantName = variant.name.capitalize()
-        def autoTermuxBuildTypeName = variant.buildType.name
-        def autoTermuxGeneratedAssetsRoot = file("$buildDir/generated/assets/autotermux")
-        def autoTermuxAssetDir = file("$buildDir/generated/assets/autotermux/autotermux")
-        def autoTermuxApkCandidates = {
-            [
-                project(":autotermux").layout.buildDirectory.file(
-                    "outputs/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
-                ).get().asFile,
-                project(":autotermux").layout.buildDirectory.file(
-                    "intermediates/apk/${autoTermuxBuildTypeName}/autotermux-${autoTermuxBuildTypeName}.apk"
-                ).get().asFile
-            ]
-        }
-        def termuxPlusCliGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-cli")
-        def termuxPlusCliAssetDir = file("$buildDir/generated/assets/termuxplus-cli/termuxplus/bin")
-        def termuxPlusCliSource = rootProject.file("bootstrap/bin/tp-android")
-        def termuxPlusHomeGeneratedAssetsRoot = file("$buildDir/generated/assets/termuxplus-home")
-        def termuxPlusHomeAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/home")
-        def termuxPlusSkillsAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/codex-skills")
-        def termuxPlusScriptsAssetDir = file("$buildDir/generated/assets/termuxplus-home/termuxplus/home-scripts")
-        def termuxPlusHomeAgentsSource = rootProject.file("bootstrap/home/AGENTS.md")
-        def termuxPlusHomeSkillsSource = rootProject.file("bootstrap/home/.codex/skills")
-        def termuxPlusHomeScriptsSource = rootProject.file("bootstrap/home/.termuxplus/scripts")
-        def termuxPlusHomeAssetMappings = [
-            [
-                label: "TermuxPlus home AGENTS.md",
-                source: termuxPlusHomeAgentsSource,
-                target: new File(termuxPlusHomeAssetDir, "AGENTS.md"),
-                directory: false
-            ],
-            [
-                label: "TermuxPlus home skills",
-                source: termuxPlusHomeSkillsSource,
-                target: termuxPlusSkillsAssetDir,
-                directory: true
-            ],
-            [
-                label: "TermuxPlus home scripts",
-                source: termuxPlusHomeScriptsSource,
-                target: termuxPlusScriptsAssetDir,
-                directory: true
-            ],
-            [
-                label: "TermuxPlus home tp-android script",
-                source: termuxPlusCliSource,
-                target: new File(termuxPlusScriptsAssetDir, "tp-android"),
-                directory: false
-            ]
-        ]
-        def copyAutoTermuxAssetTask = tasks.register("copyAutoTermux${autoTermuxVariantName}Asset") {
-            dependsOn(":autotermux:assemble${autoTermuxVariantName}")
-            outputs.dir(autoTermuxGeneratedAssetsRoot)
-            doLast {
-                def sourceApk = autoTermuxApkCandidates().find { it.isFile() }
-                if (sourceApk == null) {
-                    throw new GradleException("AutoTermux APK was not built at any expected path: ${autoTermuxApkCandidates()}")
-                }
-
-                project.delete(autoTermuxGeneratedAssetsRoot)
-                autoTermuxAssetDir.mkdirs()
-                def targetApk = new File(autoTermuxAssetDir, "AutoTermux.apk")
-                targetApk.bytes = sourceApk.bytes
-
-                def manifestFile = new File(autoTermuxAssetDir, "manifest.json")
-                manifestFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
-                    packageName: "com.termux.autotermux",
-                    versionName: "0.1.0",
-                    sourceApk: sourceApk.name
-                ])) + "\n"
-            }
-        }
-        def copyTermuxPlusCliAssetTask = tasks.register("copyTermuxPlusCli${autoTermuxVariantName}Asset") {
-            inputs.file(termuxPlusCliSource)
-            outputs.dir(termuxPlusCliGeneratedAssetsRoot)
-            doLast {
-                if (!termuxPlusCliSource.isFile()) {
-                    throw new GradleException("TermuxPlus CLI source was not found at ${termuxPlusCliSource}")
-                }
-
-                project.delete(termuxPlusCliGeneratedAssetsRoot)
-                termuxPlusCliAssetDir.mkdirs()
-                def targetCli = new File(termuxPlusCliAssetDir, "tp-android")
-                targetCli.bytes = termuxPlusCliSource.bytes
-            }
-        }
-        def copyTermuxPlusHomeAssetTask = tasks.register("copyTermuxPlusHome${autoTermuxVariantName}Asset") {
-            termuxPlusHomeAssetMappings.each { mapping ->
-                if (mapping.directory) {
-                    inputs.dir(mapping.source)
-                } else {
-                    inputs.file(mapping.source)
-                }
-            }
-            outputs.dir(termuxPlusHomeGeneratedAssetsRoot)
-            doLast {
-                project.delete(termuxPlusHomeGeneratedAssetsRoot)
-
-                termuxPlusHomeAssetMappings.each { mapping ->
-                    if (mapping.directory) {
-                        if (!mapping.source.isDirectory()) {
-                            throw new GradleException("${mapping.label} source was not found at ${mapping.source}")
-                        }
-                        project.copy {
-                            from mapping.source
-                            into mapping.target
-                            includeEmptyDirs = false
-                        }
-                    } else {
-                        if (!mapping.source.isFile()) {
-                            throw new GradleException("${mapping.label} source was not found at ${mapping.source}")
-                        }
-                        mapping.target.parentFile.mkdirs()
-                        mapping.target.bytes = mapping.source.bytes
-                    }
-                }
-            }
-        }
-
         variant.mergeAssetsProvider.configure {
-            dependsOn(copyAutoTermuxAssetTask)
-            dependsOn(copyTermuxPlusCliAssetTask)
             dependsOn(copyTermuxPlusHomeAssetTask)
         }
         variant.preBuildProvider.configure { dependsOn(downloadBootstraps) }

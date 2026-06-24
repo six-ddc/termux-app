@@ -1,4 +1,0 @@
-interface:
-  display_name: "TP Android"
-  short_description: "Control Android through TermuxPlus CLI"
-  default_prompt: "Use $tp-android to inspect and control the Android device from Termux."

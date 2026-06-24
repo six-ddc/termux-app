@@ -37,7 +37,6 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
-    <uses-permission android:name="com.termux.autotermux.permission.BRIDGE" />
 
     <application
         android:name=".app.TermuxApplication"
@@ -114,21 +113,6 @@
             tools:targetApi="n" />
 
         <activity
-            android:name=".app.autotermux.AutoTermuxInstallActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:resizeableActivity="false"
-            android:theme="@style/Theme.TermuxActivity.DayNight.NoActionBar" />
-
-        <receiver
-            android:name=".app.autotermux.AutoTermuxInstallReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.termux.autotermux.INSTALL_COMPANION" />
-            </intent-filter>
-        </receiver>
-
-        <activity
             android:name=".shared.activities.ReportActivity"
             android:theme="@style/Theme.MarkdownViewActivity.DayNight"
             android:documentLaunchMode="intoExisting" />
@@ -201,12 +185,6 @@
             android:grantUriPermissions="true"
             android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND" />
 
-        <provider
-            android:name=".app.autotermux.AutoTermuxApkProvider"
-            android:authorities="${TERMUX_PACKAGE_NAME}.autotermux.apk"
-            android:exported="false"
-            android:grantUriPermissions="true" />
-
         <receiver
             android:name=".app.TermuxOpenReceiver"
             android:exported="false" />
@@ -222,19 +200,6 @@
         <receiver
             android:name=".shared.activities.ReportActivity$ReportActivityBroadcastReceiver"
             android:exported="false" />
-
-        <!-- Signature-protected trampoline so AutoTermux (same signing key) can
-             ask Termux to hide / restore its floating-terminal bubble without
-             needing TermuxService itself to be exported. -->
-        <receiver
-            android:name=".app.TermuxFloatingControlReceiver"
-            android:exported="true"
-            android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND">
-            <intent-filter>
-                <action android:name="com.termux.HIDE_FLOATING" />
-                <action android:name="com.termux.SHOW_FLOATING" />
-            </intent-filter>
-        </receiver>
 
         <service
             android:name=".app.TermuxService"

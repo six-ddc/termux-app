@@ -476,4 +476,3 @@ committed:
 - `terminal-emulator/build`
 - `terminal-view/build`
 - `termux-shared/build`
-- `autotermux/build`

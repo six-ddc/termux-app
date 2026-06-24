@@ -107,7 +107,6 @@ final class TermuxInstaller {
                 Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" exists but is empty or only contains specific unimportant files.");
             } else {
                 TermuxPlusHomeInstaller.syncBundledHomeFilesIfAvailable(activity);
-                TermuxPlusCliInstaller.syncBundledCliIfNeeded(activity);
                 activity.runOnUiThread(whenDone);
                 return;
             }
@@ -218,7 +217,6 @@ final class TermuxInstaller {
                     }
 
                     TermuxPlusHomeInstaller.syncBundledHomeFilesIfAvailable(activity);
-                    TermuxPlusCliInstaller.syncBundledCliIfNeeded(activity);
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
 

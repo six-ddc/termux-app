@@ -110,23 +110,6 @@ Create a workspace for repositories:
 mkdir -p ~/projects
 ```
 
-## Android Automation CLI
-
-`tp-android` is preinstalled and is the canonical way to control the Android
-device from inside Termux — UI inspection, input, screenshots, screen
-recording, app launches, SMS/notifications, files, persistent triggers, all
-57 Termux:API commands. It talks to the AutoTermux companion app over a
-signature-protected local broadcast (the "bridge"); the CLI does not expose
-any HTTP/WebSocket entry points.
-
-For full usage, load the `tp-android` skill: `~/.codex/skills/tp-android/SKILL.md`.
-
-First-line sanity check when anything Android-side feels off:
-
-```sh
-tp-android doctor --pretty
-```
-
 ## Useful Inspection
 
 ```sh

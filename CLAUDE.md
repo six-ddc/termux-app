@@ -19,7 +19,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 模块 | 产物 | 说明 |
 |------|------|------|
 | `:app` | `com.termux` APK | 主终端 App，Java，包含 TermuxPlus UI 改动 |
-| `:autotermux` | `com.termux.autotermux` APK | AutoTermux 独立配套 App，Kotlin，最低 API 26 |
 | `:terminal-emulator` | 库 | 终端仿真核心（纯 Java，无 Android 依赖） |
 | `:terminal-view` | 库 | 终端 Android View 渲染层 |
 | `:termux-shared` | 库 | 跨模块共享常量、工具类、TermuxConstants |
@@ -46,23 +45,8 @@ Android/Termux 本机构建的 APK 输出路径：
 app/build/intermediates/apk/debug/termux-app_apt-android-7-debug_arm64-v8a.apk
 ```
 
-在 Android/Termux 本机安装 APK 时，`tp-android apk install` 只接受 `http(s)` URL，不接受本地相对路径或
-`file://` URI。用 localhost 临时服务安装：
-
-```sh
-cd app/build/intermediates/apk/debug
-python3 -m http.server 8765 --bind 127.0.0.1
-```
-
-另一个 shell 中执行：
-
-```sh
-tp-android apk install "http://127.0.0.1:8765/termux-app_apt-android-7-debug_arm64-v8a.apk" --pretty
-```
-
-安装后停止 `python3 -m http.server`。如果安装替换的是当前正在运行的 `com.termux`，
-Termux/Codex 或 bridge 可能被系统杀掉；`tp-android` 可能显示 `Broadcast completed: result=0`，
-但只要本地 HTTP 服务出现 APK 的 `GET ... 200` 且系统安装器/自动确认完成，就先以设备实际安装状态为准。
+在 Android/Termux 本机想直接安装时，用系统包安装器手动打开 APK，或者用另一台机器走 `adb install`。
+如果安装替换的是当前正在运行的 `com.termux`，Termux/Codex 进程会被系统杀掉，以设备实际安装状态为准。
 
 本地快速验证（只构建 aarch64）：
 
@@ -70,17 +54,10 @@ Termux/Codex 或 bridge 可能被系统杀掉；`tp-android` 可能显示 `Broad
 TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
 ```
 
-构建 AutoTermux：
-
-```sh
-./gradlew :autotermux:assembleDebug
-```
-
 运行单元测试：
 
 ```sh
 ./gradlew :app:test
-./gradlew :autotermux:test
 ```
 
 安装到设备：
@@ -102,7 +79,7 @@ adb -s <device> shell am start -n com.termux/com.termux.app.TermuxActivity
 - 只使用官方 Termux bootstrap zip。`app/build.gradle` 从 `termux/termux-packages` release 下载官方 `bootstrap-<arch>.zip`，并用固定 SHA-256 校验。
 - 自定义 bootstrap 生成/注入流程已移除，不要恢复 `TERMUX_BOOTSTRAP_DIR`、`bootstrap-output/`、`.termuxplus-cache/` 或 `scripts/build-termuxplus-bootstrap.sh`。
 - `TERMUX_BOOTSTRAP_ARCHS` 只用于选择构建/下载哪些官方架构 zip，以及控制 ABI split；它不是自定义 bootstrap 入口。
-- TermuxPlus 自带内容通过 APK assets 打包，不写进 bootstrap zip：`bootstrap/home/` 首启后复制到 `$HOME`，`bootstrap/bin/tp-android` 首启后复制到 `$PREFIX/bin/tp-android`。
+- TermuxPlus 自带内容通过 APK assets 打包，不写进 bootstrap zip：`bootstrap/home/` 首启后复制到 `$HOME`。
 - 按需安装工具脚本位于 `bootstrap/home/.termuxplus/scripts/`，首启后同步到 `$HOME/.termuxplus/scripts/`。zsh、oh-my-zsh、Codex、Claude Code、Python 等都通过这些脚本由用户手动安装。
 - App 首启**不**写入 `~/.zshrc`，也**不**联网安装 zsh/oh-my-zsh/Codex/Claude Code。
 
@@ -120,53 +97,7 @@ TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
 - **输入栏**：extra-keys / text-input 两栏合并为单一 `Keys` 工具栏，内部横滑多组；第一组右上角图标键弹出 snippets 面板
 - **Snippets**：内置 JSON schema（`app/src/main/assets/termuxplus/snippets.json`），用户配置写入 `~/.termuxplus/snippets.json`；字段：`id, title, description, command, category, tags, mode`（mode 只有 `insert` 和 `run` 两值）；Java 模型在 `terminal/io/TermuxPlusSnippet.java`，存储库在 `TermuxPlusSnippetRepository.java`
 - **悬浮终端**：后台运行时出现 `TP` 气泡（`TermuxFloatingTerminalController`），点击展开半透明小终端，直接复用当前 TerminalSession
-- **AutoTermux 集成**：`app/src/main/java/com/termux/app/autotermux/` 包含安装引导（`AutoTermuxInstallActivity`、`AutoTermuxInstallReceiver`）和 APK provider（`AutoTermuxApkProvider`）
-- **官方 Bootstrap 安装后处理**：`TermuxPlusCliInstaller`（安装 `tp-android` CLI）、`TermuxPlusHomeInstaller`（复制 home 模板文件和按需安装脚本）
-
-## AutoTermux 模块架构（`:autotermux`）
-
-独立 App（`com.termux.autotermux`），通过 Android 跨进程机制向 Termux 提供设备自动化能力。
-
-**通信协议**：
-- `TermuxAutomationBridgeReceiver`：`signature`-protected broadcast bridge，是 `tp-android` CLI 默认 transport，支持 `CALL` 分发小型控制命令
-- `AutoTermuxContentProvider`：ContentProvider passthrough，保留用于直接 URI 访问
-- `LocalAutomationService` + `SocketServer`：可选本地 HTTP/WebSocket RPC 服务（显式启动后默认 8080）
-- `AutoTermuxWebSocketServer`：本地 WebSocket 事件推送（device-event）
-
-**核心服务**：
-- `AutoTermuxAccessibilityService`：无障碍服务，驱动 UI tree 遍历和手势注入
-- `StateRepository`：无障碍状态中心，提供 getVisibleElements/getPhoneState/takeScreenshot/inputText，是其他服务读取 UI 状态的唯一入口
-- `EventHub`：中央事件总线，36+ 事件类型（APP_FOREGROUND、FOREGROUND_APP_CHANGED、NOTIFICATION_POSTED、BATTERY_LEVEL_CHANGED、SMS_RECEIVED 等）
-- `NotificationAccessService`：通知监听器
-- `ScreenCaptureService`：MediaProjection 截图
-- `GestureController`：坐标手势（tap/swipe/drag/edge-swipe 等）
-- `ActionDispatcher`：bridge CALL 命令分发路由
-- `AutoAcceptGate`：受保护的截图授权和 APK 安装自动确认开关
-- `AutoTermuxKeyboardIME`：配套 IME，用于文本注入
-
-**配置管理**（`ConfigManager`）：三套 SharedPreferences：
-- `PREFS_NAME`：主配置（overlay、server 端口、noA11yMode、autoAccept 等）
-- `DEVICE_PREFS_NAME`：设备身份（deviceId）
-- `SECRET_PREFS_NAME`：认证 token
-
-**保活机制**（`keepalive/`）：多层恢复策略（`KeepAliveController` → `KeepAliveRecoveryPolicy` → `KeepAliveRecoveryActivity`），状态由 `KeepAliveStatus` 追踪（consecutiveRecoveryFailures、degradedReason）。
-
-**触发器系统**（`triggers/`）：
-- `TriggerRuntime` + `TriggerRepository`：持久化规则存储和运行
-- `TriggerScheduler` + `TriggerAlarmReceiver`：定时触发（AlarmManager）
-- `TriggerBootReceiver`：开机自启触发
-- `TriggerTermuxCommandLauncher`：通过 `com.termux.permission.RUN_COMMAND` 启动 Termux 本地命令
-- `TriggerTemplateRenderer`：把 `{{trigger.*}}` 模板渲染到命令参数
-- 触发源：定时、通知、前台应用、activity、电量（<15%）、充电、解锁、网络、短信
-
-**UI 桥接 Activity**（透明 Activity，无历史记录）：
-- `ScreenCaptureActivity`、`DialogBridgeActivity`、`FingerprintBridgeActivity`、`NfcBridgeActivity`、`SpeechToTextActivity`、`StorageGetActivity`、`SafManageActivity`
-
-**大数据 transfer cache**：`/storage/emulated/0/Download/.termuxplus/tp-android-cache`，截图/大 JSON/文件传输通过此路径桥接，bridge 仅返回 cache path。
-
-## tp-android CLI
-
-`bootstrap/bin/tp-android` 是 227KB Python 脚本（v0.5.0），构建时作为 APK asset 打包，首启后复制到 `$PREFIX/bin/tp-android`。默认 transport 是 signature-protected broadcast bridge（`TermuxAutomationBridgeReceiver`）；HTTP transport 仅在显式使用 `tp-android server` 命令或 `--transport=http` 时才启动（`127.0.0.1:8080`）。用户配置读自 `~/.termuxplus/android-automation.json`。完整命令集运行 `tp-android --help` 查看。
+- **官方 Bootstrap 安装后处理**：`TermuxPlusHomeInstaller`（首启把 APK assets 中的 home 模板文件和按需安装脚本复制到 `$HOME`）
 
 ## 设置页架构
 
@@ -194,25 +125,7 @@ TERMUX_BOOTSTRAP_ARCHS=aarch64 ./gradlew :app:assembleDebug
   - 一些 ContentProvider 访问被加严
 - 错把 `run-as` 当成 Termux 会得出"Termux 沙箱挡了文件读取"之类的错误结论，然后绕弯实现 ContentProvider openFile / 分块传输 / base64 inline 等"修复"，全是无效劳动。
 
-**正确测试 Termux 行为的方式**：
-1. 让脚本写到 `/data/data/com.termux/files/home/` 下，赋 +x。
-2. 用 trigger（`tp-android trigger rule add ... --command <script-path>` + `tp-android trigger rule test <id>`）触发，TriggerTermuxCommandLauncher 走 `RunCommandService`，spawn 出来的进程 **是真 Termux 的 untrusted_app context**。
-3. 让脚本把 `id`、`cat /proc/self/attr/current`、命令结果都 dump 到 Termux home 的 log 文件，事后 `adb shell run-as com.termux cat <log>` 读。
-4. 如果只是想验权限，至少 `cat /proc/self/attr/current` 跟 `id` 一起打出来比对 SELinux 上下文。
-
-### Binder 事务大小上限 ~1MB
-
-跨进程 IPC（broadcast `setResultData`、ContentProvider query/insert 等）的单次事务受 `IBinder.MAX_IPC_SIZE` 限制（约 1 MB 包含头部和 base64 膨胀）。**call-log 全量返回、screenshot/screenrec base64 inline 都会爆**：
-
-- AOSP 部分 ContentProvider（如 vivo 的 `CallLogProvider`）会**忽略 `QUERY_ARG_LIMIT` Bundle 参数**，返回全部行。客户端必须自己在 cursor 迭代时按 limit 截断，不能只靠 Bundle 参数。
-- 大文件不要 base64 inline 经 broadcast 返回。当前方案：文件落到 `Download/.termuxplus/tp-android-cache/` 共享路径，bridge 返 path，**真 Termux** 直接读（不要在 `runas_app` 上下文 fallback）。
-- 真出现 result=0 错误时，先 `adb logcat --pid $(pidof com.termux.autotermux)` 找 `Binder transaction failure` / `Large outgoing transaction` 关键字。
-
-### vivo / OEM 后台 kill 策略
-
-vivo 在 1-2 分钟内会回收 AutoTermux 进程，导致 bridge broadcast 收不到响应（`Broadcast completed: result=0`，无 logcat）。要长跑时：
-- 设置 → 电池 → 后台高耗电应用 → AutoTermux → 允许后台运行/自启动（用户手动）
-- 测试时把所有 bridge 调用塞进一个 batch，AutoTermux 唤起后立即跑完，不留缝隙
+**正确测试 Termux 行为的方式**：直接在 Termux 终端里跑命令（不要走 `adb shell run-as`），或通过 `RunCommandService`（`com.termux.RUN_COMMAND` intent）从 adb 触发，spawn 出来的进程才是真 Termux 的 untrusted_app context。验权限时至少把 `id` 和 `cat /proc/self/attr/current` 一起打出来比对 SELinux 上下文。
 
 ### `cmd content read --uri` 在 app 上下文不可用
 

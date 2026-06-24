@@ -204,7 +204,15 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             }
         }
 
-        if (!term.isMouseTrackingActive() && !e.isFromSource(InputDevice.SOURCE_MOUSE)) {
+        // A finger tap should always wake the soft keyboard, even when the
+        // program has DECSET mouse tracking enabled (claude/vim/nvim/tmux/...).
+        // The mouse event itself is still delivered to the program via the
+        // separate sendMouseEventCode() path in GestureRecognizer.onUp(), so
+        // cursor movement / UI clicks keep working — we just additionally
+        // surface the keyboard so the user can type. Real mouse input (e.g.
+        // an attached USB mouse) is excluded since those users do not need
+        // the on-screen IME.
+        if (!e.isFromSource(InputDevice.SOURCE_MOUSE)) {
             if (!KeyboardUtils.areDisableSoftKeyboardFlagsSet(mActivity))
                 KeyboardUtils.showSoftKeyboard(mActivity, mActivity.getTerminalView());
             else

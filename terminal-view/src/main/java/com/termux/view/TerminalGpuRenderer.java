@@ -8,6 +8,7 @@ import android.graphics.Typeface;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
+import android.os.Build;
 import android.util.Log;
 
 import com.termux.terminal.TerminalEngine;
@@ -28,6 +29,7 @@ import javax.microedition.khronos.opengles.GL10;
 final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
 
     private static final String LOG_TAG = "TerminalGpuRenderer";
+    private static final String BUNDLED_FALLBACK_FONT_ASSET = "termuxplus/fonts/TermuxPlusSymbolsFallback-Regular.ttf";
     private static final int ATLAS_SIZE = 2048;
     private static final int MAX_BATCH_QUADS = 8192;
     private static final int UNDERLINE_NONE = 0;
@@ -75,6 +77,14 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private Bitmap mAtlasBitmap;
     private Canvas mAtlasCanvas;
     private Paint mGlyphPaint;
+    // Used to rasterize glyphs the primary (bundled) font lacks. Carries the
+    // system default typeface and thus Android's full font fallback chain.
+    private Paint mFallbackGlyphPaint;
+    // Bundled symbol fallback font (loaded once from assets). Covers non-emoji
+    // symbols like U+23F5 ⏵ that some ROMs strip from the system font chain;
+    // tried before the system typeface in the fallback order.
+    private Typeface mBundledFallbackTypeface;
+    private Paint mBundledFallbackPaint;
     private int mAtlasX;
     private int mAtlasY;
     private int mAtlasRowHeight;
@@ -173,6 +183,20 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         mAtlasCanvas = new Canvas(mAtlasBitmap);
         mGlyphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         mGlyphPaint.setColor(Color.WHITE);
+        mFallbackGlyphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        mFallbackGlyphPaint.setColor(Color.WHITE);
+        if (mBundledFallbackTypeface == null) {
+            try {
+                mBundledFallbackTypeface = Typeface.createFromAsset(
+                    mView.getContext().getAssets(), BUNDLED_FALLBACK_FONT_ASSET);
+            } catch (Exception e) {
+                Log.w(LOG_TAG, "bundled symbol fallback font unavailable: " + BUNDLED_FALLBACK_FONT_ASSET, e);
+            }
+        }
+        if (mBundledFallbackTypeface != null) {
+            mBundledFallbackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            mBundledFallbackPaint.setColor(Color.WHITE);
+        }
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasBitmap, 0);
 
         GLES20.glEnable(GLES20.GL_BLEND);
@@ -615,6 +639,15 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         mCodepointGlyphs.clear();
         mGlyphCacheTypeface = renderer.mTypeface;
         mGlyphCacheTextSize = renderer.mTextSize;
+        // Keep the fallback paint's metrics/antialias in sync with the primary
+        // paint (already configured via copyGlyphPaintTo() earlier this frame),
+        // then swap in the system default typeface for its fallback chain.
+        mFallbackGlyphPaint.set(mGlyphPaint);
+        mFallbackGlyphPaint.setTypeface(Typeface.DEFAULT);
+        if (mBundledFallbackPaint != null) {
+            mBundledFallbackPaint.set(mGlyphPaint);
+            mBundledFallbackPaint.setTypeface(mBundledFallbackTypeface);
+        }
         mAtlasBitmap.eraseColor(Color.TRANSPARENT);
         mAtlasX = 0;
         mAtlasY = 0;
@@ -630,7 +663,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
             (bold ? 1L : 0L) | (italic ? 2L : 0L);
         Glyph cached = mCodepointGlyphs.get(key);
         if (cached != null) return cached;
-        Glyph glyph = createGlyph(renderer, new String(Character.toChars(codePoint)), maxGlyphPixelWidth(widthColumns, cellWidth));
+        Glyph glyph = createGlyph(renderer, new String(Character.toChars(codePoint)), maxGlyphPixelWidth(widthColumns, cellWidth), bold, italic);
         mCodepointGlyphs.put(key, glyph);
         return glyph;
     }
@@ -641,7 +674,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         String key = bold + ":" + italic + ":" + widthColumns + ":" + text;
         Glyph cached = mGlyphs.get(key);
         if (cached != null) return cached;
-        Glyph glyph = createGlyph(renderer, text, maxGlyphPixelWidth(widthColumns, cellWidth));
+        Glyph glyph = createGlyph(renderer, text, maxGlyphPixelWidth(widthColumns, cellWidth), bold, italic);
         mGlyphs.put(key, glyph);
         return glyph;
     }
@@ -650,9 +683,32 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         return Math.max(1, Math.min(ATLAS_SIZE, (int) Math.ceil(Math.max(1, widthColumns) * cellWidth) + 4));
     }
 
-    private Glyph createGlyph(TerminalRenderer renderer, String text, int maxGlyphWidth) {
-        int measuredGlyphWidth = Math.max(1, (int) Math.ceil(mGlyphPaint.measureText(text)) + 4);
-        int glyphWidth = Math.min(measuredGlyphWidth, maxGlyphWidth);
+    private Glyph createGlyph(TerminalRenderer renderer, String text, int maxGlyphWidth, boolean bold, boolean italic) {
+        // Prefer the primary (bundled) font. When it lacks a glyph for this text
+        // (e.g. U+23F5 ⏵, absent from every Nerd Font), fall back in order:
+        // 1) the bundled symbol font, then 2) the system default typeface (which
+        // carries Android's emoji/Noto chain). Paint.hasGlyph requires API 23+.
+        Paint paint = mGlyphPaint;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !mGlyphPaint.hasGlyph(text)) {
+            if (mBundledFallbackPaint != null) {
+                mBundledFallbackPaint.setFakeBoldText(bold);
+                mBundledFallbackPaint.setTextSkewX(italic ? -0.35f : 0.f);
+                if (mBundledFallbackPaint.hasGlyph(text))
+                    paint = mBundledFallbackPaint;
+            }
+            if (paint == mGlyphPaint) {
+                mFallbackGlyphPaint.setFakeBoldText(bold);
+                mFallbackGlyphPaint.setTextSkewX(italic ? -0.35f : 0.f);
+                if (mFallbackGlyphPaint.hasGlyph(text))
+                    paint = mFallbackGlyphPaint;
+            }
+        }
+        int measuredGlyphWidth = Math.max(1, (int) Math.ceil(paint.measureText(text)) + 4);
+        // Rasterize at full measured width -- do NOT clip to the cell here. Color
+        // glyphs (emoji) are square and wider than a width-1 cell; clipping now
+        // would lose their right half. Mono glyphs are instead clipped to the cell
+        // at draw time (see drawGlyph), so their on-screen result is unchanged.
+        int glyphWidth = Math.min(measuredGlyphWidth, ATLAS_SIZE);
         int glyphHeight = Math.max(1, renderer.mFontLineSpacing);
         if (mAtlasX + glyphWidth >= ATLAS_SIZE) {
             mAtlasX = 0;
@@ -686,7 +742,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         float baseline = mAtlasY + renderer.mFontLineSpacing - renderer.mFontLineSpacingAndAscent;
         int saveCount = mAtlasCanvas.save();
         mAtlasCanvas.clipRect(mAtlasX, mAtlasY, mAtlasX + glyphWidth, mAtlasY + glyphHeight);
-        mAtlasCanvas.drawText(text, mAtlasX + 2, baseline, mGlyphPaint);
+        mAtlasCanvas.drawText(text, mAtlasX + 2, baseline, paint);
         mAtlasCanvas.restoreToCount(saveCount);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mAtlasTexture);
         Bitmap glyphBitmap = Bitmap.createBitmap(mAtlasBitmap, mAtlasX, mAtlasY, glyphWidth, glyphHeight);
@@ -694,7 +750,7 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, mAtlasX, mAtlasY, glyphBitmap);
         glyphBitmap.recycle();
 
-        Glyph glyph = new Glyph(mAtlasX, mAtlasY, glyphWidth, glyphHeight, colored);
+        Glyph glyph = new Glyph(mAtlasX, mAtlasY, glyphWidth, glyphHeight, colored, maxGlyphWidth);
         mAtlasX += glyphWidth;
         mAtlasRowHeight = Math.max(mAtlasRowHeight, glyphHeight);
         return glyph;
@@ -730,13 +786,29 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         mFrameGlyphs++;
         float u1 = (float) glyph.x / ATLAS_SIZE;
         float v1 = (float) glyph.y / ATLAS_SIZE;
-        float u2 = (float) (glyph.x + glyph.width) / ATLAS_SIZE;
         float v2 = (float) (glyph.y + glyph.height) / ATLAS_SIZE;
         if (glyph.colored) {
-            drawColorGlyph(x, y, glyph.width, glyph.height, u1, v1, u2, v2);
+            // Color glyphs (emoji) are rasterized full-size in the atlas. Fit the
+            // whole glyph inside its cell preserving aspect ratio, centered, never
+            // upscaling. A width-1 emoji (square, ~line height) ends up scaled to
+            // the cell width (~half line height) and vertically centered, so it
+            // stays complete and never bleeds into neighboring cells.
+            float u2 = (float) (glyph.x + glyph.width) / ATLAS_SIZE;
+            float scale = Math.min((float) glyph.cellWidth / glyph.width, 1f);
+            float tw = glyph.width * scale;
+            float th = glyph.height * scale;
+            float ox = x + (glyph.cellWidth - tw) / 2f;
+            float oy = y + (glyph.height - th) / 2f;
+            drawColorGlyph(ox, oy, tw, th, u1, v1, u2, v2);
             return;
         }
-        drawTexturedQuadBatched(x, y, glyph.width, glyph.height, u1, v1, u2, v2, color);
+        // Mono glyph: clip to the cell width by taking only the left part of the
+        // (full-width) atlas glyph. For normal text the full width already equals
+        // the cell width so this is a no-op; for occasional over-wide glyphs it
+        // reproduces the previous clip-to-cell behavior.
+        int dispW = Math.min(glyph.width, glyph.cellWidth);
+        float u2 = (float) (glyph.x + dispW) / ATLAS_SIZE;
+        drawTexturedQuadBatched(x, y, dispW, glyph.height, u1, v1, u2, v2, color);
     }
 
     /**
@@ -1139,19 +1211,25 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
     private static final class Glyph {
         final int x;
         final int y;
+        /** Full rasterized width of the glyph in the atlas (NOT clipped to the cell). */
         final int width;
         final int height;
         /** True when the rasterized glyph carries its own color (emoji / color
          * fonts) and must be drawn via the full-RGBA path instead of being tinted
          * by the cell foreground through the alpha-coverage path. */
         final boolean colored;
+        /** Target on-screen cell width in pixels (widthColumns * cellWidth). Mono
+         * glyphs are clipped to this at draw time (left part only, matching the
+         * old behavior); color glyphs are fit-inside-scaled and centered into it. */
+        final int cellWidth;
 
-        Glyph(int x, int y, int width, int height, boolean colored) {
+        Glyph(int x, int y, int width, int height, boolean colored, int cellWidth) {
             this.x = x;
             this.y = y;
             this.width = width;
             this.height = height;
             this.colored = colored;
+            this.cellWidth = cellWidth;
         }
     }
 

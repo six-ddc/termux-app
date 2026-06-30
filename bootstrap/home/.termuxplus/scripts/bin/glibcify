@@ -1,0 +1,99 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# glibcify <bin> [wrapper-name]
+#
+# Make a glibc-linked Linux binary runnable on Termux (bionic):
+#   1. patchelf --set-interpreter -> $PREFIX/glibc/lib/ld-linux-aarch64.so.1
+#      (or the x86_64 equivalent)
+#   2. (if wrapper-name given) write $PREFIX/bin/<wrapper-name> that unsets
+#      LD_PRELOAD before exec. Termux's global LD_PRELOAD points at
+#      libtermux-exec-ld-preload.so (bionic) which breaks glibc binaries with
+#      "invalid ELF header" on libc.so when inherited.
+#
+# Requires: glibc-runner + patchelf-glibc (apt install via install-glibc-env.sh).
+#
+# Examples:
+#   glibcify ~/.local/share/foo/foo foo            # patch + wrapper named "foo" on PATH
+#   glibcify ~/.local/share/foo/foo                # patch only, no wrapper
+#   glibcify --no-wrapper ~/.local/share/foo/foo   # same
+#   glibcify --check ~/.local/share/foo/foo        # print current interpreter, no change
+set -eu
+
+PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+ARCH="$(uname -m)"
+case "$ARCH" in
+  aarch64|arm64) LOADER="$PREFIX/glibc/lib/ld-linux-aarch64.so.1" ;;
+  x86_64|amd64)  LOADER="$PREFIX/glibc/lib/ld-linux-x86-64.so.2" ;;
+  *) printf 'glibcify: unsupported architecture: %s\n' "$ARCH" >&2; exit 1 ;;
+esac
+
+PATCHELF=""
+for candidate in \
+  "$PREFIX/glibc/bin/patchelf" \
+  "$(command -v patchelf 2>/dev/null || true)" \
+  "$(command -v patchelf-glibc 2>/dev/null || true)"
+do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    PATCHELF="$candidate"
+    break
+  fi
+done
+
+die() { printf 'glibcify: %s\n' "$*" >&2; exit 1; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+CHECK_ONLY=0
+WRITE_WRAPPER=1
+BIN=""
+NAME=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage 0 ;;
+    --check) CHECK_ONLY=1; shift ;;
+    --no-wrapper) WRITE_WRAPPER=0; shift ;;
+    -*) die "unknown flag: $1 (use --help)" ;;
+    *)
+      if [ -z "$BIN" ]; then BIN="$1"
+      elif [ -z "$NAME" ]; then NAME="$1"
+      else die "too many positional args (use --help)"
+      fi
+      shift ;;
+  esac
+done
+
+[ -n "$BIN" ] || usage 1
+[ -f "$BIN" ] || die "binary not found: $BIN"
+[ -n "$PATCHELF" ] || die "patchelf not found — run install-glibc-env.sh"
+[ -r "$LOADER" ]   || die "glibc loader not found at $LOADER — run install-glibc-env.sh"
+
+BIN_ABS="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  printf 'binary:      %s\n' "$BIN_ABS"
+  printf 'interpreter: %s\n' "$(LD_PRELOAD= "$PATCHELF" --print-interpreter "$BIN_ABS" 2>&1)"
+  exit 0
+fi
+
+CURRENT="$(LD_PRELOAD= "$PATCHELF" --print-interpreter "$BIN_ABS" 2>/dev/null || printf '')"
+if [ "$CURRENT" = "$LOADER" ]; then
+  printf 'glibcify: %s already patched\n' "$BIN_ABS"
+else
+  LD_PRELOAD= "$PATCHELF" --set-interpreter "$LOADER" "$BIN_ABS"
+  printf 'glibcify: patched %s\n' "$BIN_ABS"
+fi
+
+if [ "$WRITE_WRAPPER" -eq 1 ] && [ -n "$NAME" ]; then
+  case "$NAME" in */*) die "wrapper name must not contain '/': $NAME" ;; esac
+  WRAPPER="$PREFIX/bin/$NAME"
+  TMP="$WRAPPER.tmp.$$"
+  cat > "$TMP" <<EOF
+#!/data/data/com.termux/files/usr/bin/sh
+unset LD_PRELOAD
+exec /system/bin/sh -c 'exec "\$0" "\$@"' "$BIN_ABS" "\$@"
+EOF
+  chmod 755 "$TMP"
+  mv -f "$TMP" "$WRAPPER"
+  printf 'glibcify: wrote wrapper %s -> %s\n' "$WRAPPER" "$BIN_ABS"
+elif [ "$WRITE_WRAPPER" -eq 1 ] && [ -z "$NAME" ]; then
+  printf 'glibcify: (no wrapper-name given; skipping wrapper. add a name as 2nd arg to expose on PATH.)\n'
+fi

@@ -80,8 +80,9 @@ adb -s <device> shell am start -n com.termux/com.termux.app.TermuxActivity
 - 自定义 bootstrap 生成/注入流程已移除，不要恢复 `TERMUX_BOOTSTRAP_DIR`、`bootstrap-output/`、`.termuxplus-cache/` 或 `scripts/build-termuxplus-bootstrap.sh`。
 - `TERMUX_BOOTSTRAP_ARCHS` 只用于选择构建/下载哪些官方架构 zip，以及控制 ABI split；它不是自定义 bootstrap 入口。
 - TermuxPlus 自带内容通过 APK assets 打包，不写进 bootstrap zip：`bootstrap/home/` 首启后复制到 `$HOME`。
-- 按需安装工具脚本位于 `bootstrap/home/.termuxplus/scripts/`，首启后同步到 `$HOME/.termuxplus/scripts/`。zsh、oh-my-zsh、Codex、Claude Code、Python 等都通过这些脚本由用户手动安装。
-- App 首启**不**写入 `~/.zshrc`，也**不**联网安装 zsh/oh-my-zsh/Codex/Claude Code。
+- 按需安装工具脚本位于 `bootstrap/home/.termuxplus/scripts/`，首启后同步到 `$HOME/.termuxplus/scripts/`。zsh、oh-my-zsh、Codex、Claude Code、Python（Termux 原生 bionic）、Android 构建环境都通过这些脚本由用户手动安装。
+- glibc 兼容栈也是内置脚本：`install-glibc-env.sh`（apt 装 glibc-runner+patchelf-glibc，落 `glibcify` 到 `$PREFIX/bin/`）、`install-uv.sh`（astral-sh/uv）、`install-python-glibc.sh`（python-build-standalone，曝光为 `python3.12-glibc`）。所有 glibc 共用逻辑封在 `lib/termuxplus-installer-lib.sh` 的 `tp_ensure_glibc_env` / `tp_glibcify_bin` / `tp_write_glibc_launcher` 中——新写 install-*.sh 要跑 glibc 二进制时直接调用，不要再各自拼 patchelf 命令。
+- App 首启**不**写入 `~/.zshrc`，也**不**联网安装 zsh/oh-my-zsh/Codex/Claude Code/glibc 栈。
 
 常用构建：
 

@@ -204,3 +204,116 @@ tp_codex_supported_arch() {
 tp_script_dir() {
   CDPATH= cd -- "$(dirname -- "$0")" && pwd
 }
+
+# ---- glibc compatibility helpers ----
+# Termux is bionic libc; many tools the user wants (uv, python-build-standalone,
+# Claude Code, ...) ship only glibc Linux binaries. These helpers wrap the
+# patchelf + glibc-runner + LD_PRELOAD-unset launcher recipe so each installer
+# does not re-implement it.
+
+tp_glibc_loader_for_arch() {
+  case "$1" in
+    aarch64|arm64) printf '%s\n' "$PREFIX/glibc/lib/ld-linux-aarch64.so.1" ;;
+    x86_64|amd64) printf '%s\n' "$PREFIX/glibc/lib/ld-linux-x86-64.so.2" ;;
+    *) return 1 ;;
+  esac
+}
+
+tp_find_patchelf() {
+  if tp_has_command patchelf; then
+    command -v patchelf
+    return 0
+  fi
+  if [ -x "$PREFIX/glibc/bin/patchelf" ]; then
+    printf '%s\n' "$PREFIX/glibc/bin/patchelf"
+    return 0
+  fi
+  if tp_has_command patchelf-glibc; then
+    command -v patchelf-glibc
+    return 0
+  fi
+  return 1
+}
+
+# Install glibc-runner + patchelf-glibc via apt (glibc-repo adds a new apt
+# source, so we force a refresh between the two installs) and deploy the
+# standalone `glibcify` helper to $PREFIX/bin/. Idempotent.
+tp_ensure_glibc_env() {
+  tp_require_command apt-get
+  tp_require_command dpkg-query
+
+  tp_install_packages glibc-repo
+
+  # glibc-repo just added an apt source; refresh before installing from it.
+  tp_require_apt_config
+  tp_log "refreshing apt package indexes after glibc-repo"
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  TERMUXPLUS_APT_UPDATED=true
+  export TERMUXPLUS_APT_UPDATED
+
+  tp_install_packages glibc-runner patchelf-glibc
+
+  tp_install_glibcify_helper
+}
+
+# Copy bootstrap/home/.termuxplus/scripts/bin/glibcify into $PREFIX/bin/ with
+# 755 perms so the user can call it from any shell.
+tp_install_glibcify_helper() {
+  glibcify_source="$(tp_script_dir)/bin/glibcify"
+  if [ ! -f "$glibcify_source" ]; then
+    tp_die "glibcify helper source not found: $glibcify_source"
+  fi
+  tp_replace_file "$glibcify_source" "$PREFIX/bin/glibcify" 755
+  tp_log "glibcify helper installed at $PREFIX/bin/glibcify"
+}
+
+# Patchelf BIN so it loads the glibc-runner loader instead of bionic. Idempotent.
+# Requires that tp_ensure_glibc_env has already run (or its apt packages were
+# installed manually).
+tp_glibcify_bin() {
+  bin_path="$1"
+  arch="$(tp_bootstrap_arch)"
+  if ! loader="$(tp_glibc_loader_for_arch "$arch")"; then
+    tp_die "unsupported glibc loader architecture: $arch"
+  fi
+  if [ ! -r "$loader" ]; then
+    tp_die "glibc-runner loader not found: $loader — call tp_ensure_glibc_env first"
+  fi
+  if ! patchelf_bin="$(tp_find_patchelf)"; then
+    tp_die "patchelf command not found — call tp_ensure_glibc_env first"
+  fi
+
+  current="$(LD_PRELOAD= "$patchelf_bin" --print-interpreter "$bin_path" 2>/dev/null || printf '')"
+  if [ "$current" = "$loader" ]; then
+    tp_log "already glibcified: $bin_path"
+    return 0
+  fi
+  LD_PRELOAD= "$patchelf_bin" --set-interpreter "$loader" "$bin_path"
+  tp_log "glibcified: $bin_path -> $loader"
+}
+
+# Write a launcher that unsets LD_PRELOAD before exec.
+# Termux's global LD_PRELOAD=$PREFIX/lib/libtermux-exec-ld-preload.so is bionic
+# and breaks glibc binaries with "invalid ELF header" on libc.so when inherited.
+#
+# Usage: tp_write_glibc_launcher <target_wrapper> <real_binary_abs_path> [extra_env_block]
+#   extra_env_block is optional shell text inserted before the LD_PRELOAD unset
+#   line (e.g. 'export DISABLE_AUTOUPDATER="${DISABLE_AUTOUPDATER:-1}"').
+tp_write_glibc_launcher() {
+  target_file="$1"
+  real_bin="$2"
+  extra_env="${3:-}"
+
+  launcher_temp_dir="$(tp_mktemp_dir)"
+  temp_file="$launcher_temp_dir/$(basename "$target_file").launcher"
+  {
+    printf '%s\n' "#!/data/data/com.termux/files/usr/bin/sh"
+    if [ -n "$extra_env" ]; then
+      printf '%s\n' "$extra_env"
+    fi
+    printf '%s\n' "unset LD_PRELOAD"
+    printf 'exec /system/bin/sh -c '\''exec "$0" "$@"'\'' "%s" "$@"\n' "$real_bin"
+  } > "$temp_file"
+  tp_replace_file "$temp_file" "$target_file" 700
+  rm -rf "$launcher_temp_dir"
+}

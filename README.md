@@ -42,7 +42,7 @@ A floating mini terminal window that appears while running in the background, re
 
 - Uses **only the official Termux bootstrap zip** (downloaded with a pinned SHA-256 in `app/build.gradle`); no custom bootstrap.
 - On first launch, `TermuxPlusHomeInstaller` copies the home templates (`AGENTS.md`, `.gitconfig`, `.config/git/ignore`) and on-demand install scripts from the APK assets into `$HOME`; it does **not** write `~/.zshrc` and does **not** install anything over the network.
-- On-demand install scripts (`~/.termuxplus/scripts/`, run manually by the user): zsh + oh-my-zsh, Codex, Claude Code, Python, the Android build environment.
+- On-demand install scripts (`~/.termuxplus/scripts/`, run manually by the user): zsh + oh-my-zsh, Codex, Claude Code, Python (native bionic), the Android build environment, plus a glibc compatibility stack — `install-glibc-env.sh` (glibc-runner + patchelf + a `glibcify` helper on PATH), `install-uv.sh` (astral-sh/uv) and `install-python-glibc.sh` (python-build-standalone exposed as `python3.12-glibc`) — for tools that ship only glibc Linux binaries / PyPI manylinux wheels.
 
 ### Settings
 

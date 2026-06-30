@@ -35,14 +35,6 @@ claude_platform_for_arch() {
   esac
 }
 
-glibc_ld_for_arch() {
-  case "$1" in
-    aarch64|arm64) printf '%s\n' "$PREFIX/glibc/lib/ld-linux-aarch64.so.1" ;;
-    x86_64|amd64) printf '%s\n' "$PREFIX/glibc/lib/ld-linux-x86-64.so.2" ;;
-    *) return 1 ;;
-  esac
-}
-
 resolve_claude_version() {
   if [ "$CLAUDE_CODE_VERSION" != "latest" ]; then
     printf '%s\n' "$CLAUDE_CODE_VERSION"
@@ -53,49 +45,18 @@ resolve_claude_version() {
   curl -fsSL "$CLAUDE_CODE_NPM_METADATA_URL" | jq -er '.version'
 }
 
-find_patchelf() {
-  if tp_has_command patchelf; then
-    command -v patchelf
-    return 0
-  fi
-  if [ -x "$PREFIX/glibc/bin/patchelf" ]; then
-    printf '%s\n' "$PREFIX/glibc/bin/patchelf"
-    return 0
-  fi
-  if tp_has_command patchelf-glibc; then
-    command -v patchelf-glibc
-    return 0
-  fi
-  return 1
-}
-
 install_claude_dependencies() {
   tp_require_command apt-get
   tp_require_command dpkg-query
 
-  tp_install_packages curl jq coreutils termux-exec glibc-repo
-
-  # glibc-repo adds an apt source; refresh indexes after it is present.
-  tp_require_apt_config
-  tp_log "refreshing apt package indexes after glibc-repo"
-  DEBIAN_FRONTEND=noninteractive apt-get update
-
-  tp_install_packages glibc-runner patchelf-glibc
+  tp_install_packages curl jq coreutils termux-exec
+  tp_ensure_glibc_env
 }
 
 download_and_patch_claude() {
   arch="$(tp_bootstrap_arch)"
   if ! platform="$(claude_platform_for_arch "$arch")"; then
     tp_die "Claude Code native install only supports aarch64/arm64 and x86_64/amd64; got '$arch'"
-  fi
-  if ! glibc_ld="$(glibc_ld_for_arch "$arch")"; then
-    tp_die "unsupported glibc loader architecture: $arch"
-  fi
-  if [ ! -r "$glibc_ld" ]; then
-    tp_die "glibc-runner loader not found: $glibc_ld"
-  fi
-  if ! patchelf_bin="$(find_patchelf)"; then
-    tp_die "patchelf command not found after installing patchelf-glibc"
   fi
 
   version="$(resolve_claude_version)"
@@ -119,8 +80,7 @@ download_and_patch_claude() {
   fi
 
   chmod 700 "$raw_binary"
-  tp_log "patching ELF interpreter to $glibc_ld"
-  LD_PRELOAD= "$patchelf_bin" --set-interpreter "$glibc_ld" "$raw_binary"
+  tp_glibcify_bin "$raw_binary"
 
   mkdir -p "$(dirname "$CLAUDE_CODE_BINARY")"
   tp_replace_file "$raw_binary" "$CLAUDE_CODE_BINARY" 700
@@ -129,36 +89,24 @@ download_and_patch_claude() {
   CLAUDE_CODE_INSTALLED_VERSION="$version"
 }
 
-write_claude_launcher() {
-  target_file="$1"
-  target_binary="$2"
-  temp_launcher="$temp_dir/$(basename "$target_file").launcher"
-
-  cat > "$temp_launcher" <<EOF
-#!/data/data/com.termux/files/usr/bin/sh
-export DISABLE_AUTOUPDATER="\${DISABLE_AUTOUPDATER:-1}"
-export DISABLE_UPDATES="\${DISABLE_UPDATES:-1}"
-unset LD_PRELOAD
-exec /system/bin/sh -c 'exec "\$0" "\$@"' "$target_binary" "\$@"
-EOF
-  tp_replace_file "$temp_launcher" "$target_file" 700
-}
-
 write_claude_wrappers() {
   if [ -z "$CLAUDE_CODE_INSTALLED_VERSION" ]; then
     tp_die "internal error: Claude Code version was not resolved before writing wrappers"
   fi
 
+  claude_env_block='export DISABLE_AUTOUPDATER="${DISABLE_AUTOUPDATER:-1}"
+export DISABLE_UPDATES="${DISABLE_UPDATES:-1}"'
+
   native_version_launcher="$CLAUDE_CODE_NATIVE_ROOT/versions/$CLAUDE_CODE_INSTALLED_VERSION"
 
-  write_claude_launcher "$CLAUDE_CODE_WRAPPER" "$CLAUDE_CODE_BINARY"
+  tp_write_glibc_launcher "$CLAUDE_CODE_WRAPPER" "$CLAUDE_CODE_BINARY" "$claude_env_block"
   # Claude's native layout may relink ~/.local/bin/claude to this version path.
   # Keep the version path as a launcher too, so that relink remains Termux-safe.
-  write_claude_launcher "$native_version_launcher" "$CLAUDE_CODE_BINARY"
+  tp_write_glibc_launcher "$native_version_launcher" "$CLAUDE_CODE_BINARY" "$claude_env_block"
 
   case "$CLAUDE_CODE_WRITE_PREFIX_WRAPPER" in
     true)
-      write_claude_launcher "$CLAUDE_CODE_PREFIX_WRAPPER" "$CLAUDE_CODE_BINARY"
+      tp_write_glibc_launcher "$CLAUDE_CODE_PREFIX_WRAPPER" "$CLAUDE_CODE_BINARY" "$claude_env_block"
       ;;
     false) ;;
     *) tp_die "CLAUDE_CODE_WRITE_PREFIX_WRAPPER must be true or false" ;;

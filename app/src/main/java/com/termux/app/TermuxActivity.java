@@ -148,6 +148,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     TermuxSessionTabStripController mTermuxSessionTabStripController;
 
     /**
+     * The currently showing TermuxPlus action sheet, tracked so it can be dismissed in
+     * {@link #onDestroy()} to avoid leaking the destroyed activity via its {@code Dialog} window.
+     */
+    private TermuxPlusActionSheet mActiveActionSheet;
+
+    /**
+     * The currently showing TermuxPlus tab overview, tracked so it can be dismissed in
+     * {@link #onDestroy()} to avoid leaking the destroyed activity via its {@code Dialog} window.
+     */
+    private TermuxPlusTabOverview mActiveTabOverview;
+
+    /**
      * The {@link TermuxActivity} broadcast receiver for various things like terminal style configuration changes.
      */
     private final BroadcastReceiver mTermuxActivityBroadcastReceiver = new TermuxActivityBroadcastReceiver();
@@ -412,6 +424,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onDestroy();
 
         Logger.logDebug(LOG_TAG, "onDestroy");
+
+        // Dismiss any TermuxPlus sheet/overview still attached to this activity's window so its
+        // Dialog does not leak the destroyed activity (android.view.WindowLeaked).
+        dismissActiveActionSheet();
+        dismissActiveTabOverview();
 
         if (mIsInvalidState) return;
 
@@ -959,8 +976,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public void showActionSheet() {
         if (getCurrentSession() == null) return;
+        // Avoid stacking and leaking a previously shown sheet before opening a new one.
+        dismissActiveActionSheet();
         try {
-            new TermuxPlusActionSheet(this).show();
+            mActiveActionSheet = new TermuxPlusActionSheet(this);
+            mActiveActionSheet.show();
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to show action sheet", e);
         }
@@ -968,11 +988,36 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public void showTabOverview() {
         if (mTermuxService == null || getCurrentSession() == null) return;
+        // Avoid stacking and leaking a previously shown overview before opening a new one.
+        dismissActiveTabOverview();
         try {
-            new TermuxPlusTabOverview(this).show();
+            mActiveTabOverview = new TermuxPlusTabOverview(this);
+            mActiveTabOverview.show();
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to show tab overview", e);
         }
+    }
+
+    /** Dismiss and clear the tracked action sheet, guarded against an already-detached dialog. */
+    private void dismissActiveActionSheet() {
+        if (mActiveActionSheet == null) return;
+        try {
+            mActiveActionSheet.dismiss();
+        } catch (Exception e) {
+            // Dialog may already be detached from the window; ignore.
+        }
+        mActiveActionSheet = null;
+    }
+
+    /** Dismiss and clear the tracked tab overview, guarded against an already-detached dialog. */
+    private void dismissActiveTabOverview() {
+        if (mActiveTabOverview == null) return;
+        try {
+            mActiveTabOverview.dismiss();
+        } catch (Exception e) {
+            // Dialog may already be detached from the window; ignore.
+        }
+        mActiveTabOverview = null;
     }
 
     public boolean isFullscreen() {

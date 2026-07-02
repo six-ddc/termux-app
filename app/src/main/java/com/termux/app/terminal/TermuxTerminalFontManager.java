@@ -13,6 +13,16 @@ public final class TermuxTerminalFontManager {
     private static final String LOG_TAG = "TermuxTerminalFontManager";
     private static final String DEFAULT_FONT_ASSET_PATH = "termuxplus/fonts/JetBrainsMonoNerdFontMono-Regular.ttf";
 
+    // Typeface.createFromFile() does NOT cache, so it re-reads and re-parses the whole TTF on every
+    // call (user Nerd Fonts can be several MB). loadUserTypeface() is invoked from ~6 main-thread
+    // sites (activity start/reload and each sheet/panel open), so memoize the parsed Typeface keyed
+    // by the font file's absolute path + lastModified(). An edited font changes lastModified() and
+    // naturally invalidates the cache.
+    private static final Object USER_TYPEFACE_LOCK = new Object();
+    private static String sUserTypefaceCachePath;
+    private static long sUserTypefaceCacheLastModified;
+    private static Typeface sUserTypefaceCache;
+
     private TermuxTerminalFontManager() {}
 
     public static Typeface loadTerminalTypeface(Context context) {
@@ -38,12 +48,29 @@ public final class TermuxTerminalFontManager {
         if (!fontFile.isFile() || fontFile.length() <= 0)
             return null;
 
-        try {
-            return Typeface.createFromFile(fontFile);
-        } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG,
-                "Failed to load user terminal font at \"" + TermuxConstants.TERMUX_FONT_FILE_PATH + "\"", e);
-            return null;
+        String path = fontFile.getAbsolutePath();
+        long lastModified = fontFile.lastModified();
+
+        synchronized (USER_TYPEFACE_LOCK) {
+            if (sUserTypefaceCache != null
+                    && path.equals(sUserTypefaceCachePath)
+                    && lastModified == sUserTypefaceCacheLastModified) {
+                return sUserTypefaceCache;
+            }
+
+            try {
+                Typeface typeface = Typeface.createFromFile(fontFile);
+                sUserTypefaceCache = typeface;
+                sUserTypefaceCachePath = path;
+                sUserTypefaceCacheLastModified = lastModified;
+                return typeface;
+            } catch (Exception e) {
+                sUserTypefaceCache = null;
+                sUserTypefaceCachePath = null;
+                Logger.logStackTraceWithMessage(LOG_TAG,
+                    "Failed to load user terminal font at \"" + TermuxConstants.TERMUX_FONT_FILE_PATH + "\"", e);
+                return null;
+            }
         }
     }
 

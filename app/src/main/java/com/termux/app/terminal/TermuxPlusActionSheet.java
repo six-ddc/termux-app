@@ -51,7 +51,7 @@ public class TermuxPlusActionSheet {
         mDialog.show();
     }
 
-    private void dismiss() {
+    public void dismiss() {
         if (mDialog != null) mDialog.dismiss();
     }
 

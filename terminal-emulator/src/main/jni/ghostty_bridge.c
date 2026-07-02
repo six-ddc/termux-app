@@ -1464,7 +1464,13 @@ JNIEXPORT jboolean JNICALL Java_com_termux_terminal_JNI_ghosttyGetMode(
     return (result == 0 && value) ? JNI_TRUE : JNI_FALSE;
 }
 
-JNIEXPORT jstring JNICALL Java_com_termux_terminal_JNI_ghosttyGetTitle(
+// Returns the window title as raw standard-UTF-8 bytes. We deliberately do NOT
+// use NewStringUTF here: libghostty emits standard UTF-8, but NewStringUTF
+// requires JNI Modified UTF-8 (which forbids 4-byte sequences), so a title
+// containing any non-BMP character (e.g. an emoji from `printf '\033]2;🚀\a'`)
+// would abort under CheckJNI or produce an undefined string on release. The
+// Java side decodes these bytes with the standard UTF-8 charset instead.
+JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyGetTitle(
         JNIEnv* env,
         jclass TERMUX_UNUSED(clazz),
         jlong context)
@@ -1475,23 +1481,21 @@ JNIEXPORT jstring JNICALL Java_com_termux_terminal_JNI_ghosttyGetTitle(
     GhosttyString title = {0};
     GhosttyResult result = gTerminalGet(bridge->terminal, 12, &title);
     if (result != 0 || title.ptr == NULL || title.len == 0) return NULL;
+    if (title.len > (size_t) INT32_MAX) return NULL;
 
-    char* copy = (char*) malloc(title.len + 1);
-    if (copy == NULL) {
-        throw_runtime_exception(env, "Failed to allocate title string");
-        return NULL;
-    }
-    for (size_t i = 0; i < title.len; i++) copy[i] = (char) title.ptr[i];
-    copy[title.len] = '\0';
-    jstring resultString = (*env)->NewStringUTF(env, copy);
-    free(copy);
-    return resultString;
+    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize) title.len);
+    if (resultArray != NULL)
+        (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize) title.len, (const jbyte*) title.ptr);
+    return resultArray;
 }
 
 // libghostty-vt 1.3.0: GHOSTTY_TERMINAL_DATA_PWD = 13. Returns the shell's
-// reported working directory as set via OSC 7. Empty when not set; we let
-// callers fall back to /proc/<pid>/cwd in that case.
-JNIEXPORT jstring JNICALL Java_com_termux_terminal_JNI_ghosttyGetPwd(
+// reported working directory (set via OSC 7) as raw standard-UTF-8 bytes.
+// Empty when not set; we let callers fall back to /proc/<pid>/cwd in that case.
+// Returns bytes rather than a jstring for the same Modified-UTF-8 reason as
+// ghosttyGetTitle: a directory name containing a non-BMP character would
+// otherwise abort under CheckJNI.
+JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyGetPwd(
         JNIEnv* env,
         jclass TERMUX_UNUSED(clazz),
         jlong context)
@@ -1502,17 +1506,12 @@ JNIEXPORT jstring JNICALL Java_com_termux_terminal_JNI_ghosttyGetPwd(
     GhosttyString pwd = {0};
     GhosttyResult result = gTerminalGet(bridge->terminal, 13, &pwd);
     if (result != 0 || pwd.ptr == NULL || pwd.len == 0) return NULL;
+    if (pwd.len > (size_t) INT32_MAX) return NULL;
 
-    char* copy = (char*) malloc(pwd.len + 1);
-    if (copy == NULL) {
-        throw_runtime_exception(env, "Failed to allocate pwd string");
-        return NULL;
-    }
-    for (size_t i = 0; i < pwd.len; i++) copy[i] = (char) pwd.ptr[i];
-    copy[pwd.len] = '\0';
-    jstring resultString = (*env)->NewStringUTF(env, copy);
-    free(copy);
-    return resultString;
+    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize) pwd.len);
+    if (resultArray != NULL)
+        (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize) pwd.len, (const jbyte*) pwd.ptr);
+    return resultArray;
 }
 
 static jint saturated_jint_from_uint64(uint64_t value) {
@@ -1940,12 +1939,17 @@ JNIEXPORT jobjectArray JNICALL Java_com_termux_terminal_JNI_ghosttySnapshotKitty
         return NULL;
     }
 
-    size_t capacity = 8;
-    size_t count = 0;
-    jobject* placements = (jobject*) calloc(capacity, sizeof(jobject));
-    if (placements == NULL) {
+    // Build directly into a Java object array, releasing each placement's local
+    // reference as soon as it is stored in the array. The previous approach
+    // accumulated one live local ref per placement in a C array until the whole
+    // loop finished, overflowing the JNI local reference table (default 512 on
+    // ART through Android 13) when a screen held hundreds of visible Kitty
+    // placements — aborting the process on every syncScreenSnapshot.
+    jsize capacity = 8;
+    jsize count = 0;
+    jobjectArray result_array = (*env)->NewObjectArray(env, capacity, placement_class, NULL);
+    if (result_array == NULL) {
         gKittyGraphicsPlacementIteratorFree(iterator);
-        throw_runtime_exception(env, "Failed to allocate Kitty placement snapshot");
         return NULL;
     }
 
@@ -1957,32 +1961,46 @@ JNIEXPORT jobjectArray JNICALL Java_com_termux_terminal_JNI_ghosttySnapshotKitty
         if (placement == NULL)
             continue;
         if (count == capacity) {
-            size_t new_capacity = capacity * 2;
-            jobject* new_placements = (jobject*) realloc(placements, new_capacity * sizeof(jobject));
-            if (new_placements == NULL) {
+            jsize new_capacity = capacity * 2;
+            jobjectArray grown = (*env)->NewObjectArray(env, new_capacity, placement_class, NULL);
+            if (grown == NULL) {
                 (*env)->DeleteLocalRef(env, placement);
-                throw_runtime_exception(env, "Failed to grow Kitty placement snapshot");
                 break;
             }
-            placements = new_placements;
+            // Move existing elements into the larger array; each fetched local
+            // ref is deleted immediately so at most one extra local lives here.
+            for (jsize i = 0; i < count; i++) {
+                jobject existing = (*env)->GetObjectArrayElement(env, result_array, i);
+                (*env)->SetObjectArrayElement(env, grown, i, existing);
+                (*env)->DeleteLocalRef(env, existing);
+            }
+            (*env)->DeleteLocalRef(env, result_array);
+            result_array = grown;
             capacity = new_capacity;
         }
-        placements[count++] = placement;
+        (*env)->SetObjectArrayElement(env, result_array, count, placement);
+        (*env)->DeleteLocalRef(env, placement);
+        count++;
     }
 
     gKittyGraphicsPlacementIteratorFree(iterator);
 
-    jobjectArray result_array = NULL;
-    if (!(*env)->ExceptionCheck(env)) {
-        result_array = (*env)->NewObjectArray(env, (jsize) count, placement_class, NULL);
-        if (result_array != NULL) {
-            for (size_t i = 0; i < count; i++)
-                (*env)->SetObjectArrayElement(env, result_array, (jsize) i, placements[i]);
+    if ((*env)->ExceptionCheck(env))
+        return NULL;
+
+    // Trim to the exact count so callers see no trailing nulls.
+    if (count != capacity) {
+        jobjectArray trimmed = (*env)->NewObjectArray(env, count, placement_class, NULL);
+        if (trimmed == NULL)
+            return NULL;
+        for (jsize i = 0; i < count; i++) {
+            jobject existing = (*env)->GetObjectArrayElement(env, result_array, i);
+            (*env)->SetObjectArrayElement(env, trimmed, i, existing);
+            (*env)->DeleteLocalRef(env, existing);
         }
+        (*env)->DeleteLocalRef(env, result_array);
+        result_array = trimmed;
     }
-    for (size_t i = 0; i < count; i++)
-        (*env)->DeleteLocalRef(env, placements[i]);
-    free(placements);
     return result_array;
 }
 
@@ -2824,5 +2842,105 @@ JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyGetHyperlinkAtL
         throw_runtime_exception(env, "Failed to read libghostty-vt hyperlink URI");
         return NULL;
     }
+    return resultArray;
+}
+
+// Scan the whole grid (scrollback + viewport) for OSC 8 hyperlinks in a single
+// JNI crossing and return every discovered URI newline-separated as one UTF-8
+// byte[]. Doing the per-cell walk natively avoids the ~columns*(rows+scrollback)
+// JNI round-trips (100k+ on a full 2000-row transcript) that the previous
+// per-cell getHyperlinkAtLocation approach forced onto the UI thread. A cell's
+// URI is appended only when it differs from the previous cell's URI, collapsing
+// links that span consecutive cells; the Java side de-duplicates the remainder.
+JNIEXPORT jbyteArray JNICALL Java_com_termux_terminal_JNI_ghosttyGetHyperlinks(
+        JNIEnv* env,
+        jclass TERMUX_UNUSED(clazz),
+        jlong context)
+{
+    GhosttyBridgeContext* bridge = require_context(env, context);
+    if (bridge == NULL) return NULL;
+
+    uint16_t columns = 0;
+    uint16_t rows = 0;
+    uint64_t scrollback_rows = 0;
+    if (gTerminalGet(bridge->terminal, 1, &columns) != 0 || columns == 0 ||
+        gTerminalGet(bridge->terminal, 2, &rows) != 0 || rows == 0 ||
+        gTerminalGet(bridge->terminal, 15, &scrollback_rows) != 0) {
+        return (*env)->NewByteArray(env, 0);
+    }
+
+    int64_t total_rows = (int64_t) scrollback_rows + (int64_t) rows;
+    if (total_rows <= 0) return (*env)->NewByteArray(env, 0);
+
+    size_t out_cap = 1024;
+    size_t out_len = 0;
+    uint8_t* out = (uint8_t*) malloc(out_cap);
+    if (out == NULL) {
+        throw_runtime_exception(env, "Failed to allocate hyperlink scan buffer");
+        return NULL;
+    }
+
+    uint8_t uri[2048];
+    uint8_t prev[2048];
+    size_t prev_len = 0;
+
+    for (int64_t sy = 0; sy < total_rows && sy <= (int64_t) UINT32_MAX; sy++) {
+        for (uint16_t x = 0; x < columns; x++) {
+            GhosttyPoint point = {
+                .tag = GHOSTTY_POINT_TAG_SCREEN,
+                .value = { .coordinate = { .x = x, .y = (uint32_t) sy } },
+            };
+            GhosttyGridRef ref = { .size = sizeof(GhosttyGridRef), .node = NULL, .x = 0, .y = 0 };
+            GhosttyResult refResult = gTerminalGridRef(bridge->terminal, point, &ref);
+            if (refResult != 0) {
+                if (refResult != GHOSTTY_NO_VALUE)
+                    (*env)->ExceptionClear(env);
+                prev_len = 0;
+                continue;
+            }
+
+            size_t written = 0;
+            GhosttyResult r = gGridRefHyperlinkUri(&ref, uri, sizeof(uri), &written);
+            if (r != 0 || written == 0) {
+                // OUT_OF_SPACE (URI longer than our stack buffer) is treated as
+                // "no link here"; such URIs are pathologically rare.
+                prev_len = 0;
+                continue;
+            }
+
+            if (written == prev_len && memcmp(uri, prev, written) == 0)
+                continue; // same URI as the previous cell — same link run
+
+            memcpy(prev, uri, written);
+            prev_len = written;
+
+            size_t need = out_len + written + 1;
+            if (need > out_cap) {
+                size_t new_cap = out_cap * 2;
+                while (new_cap < need) new_cap *= 2;
+                uint8_t* new_out = (uint8_t*) realloc(out, new_cap);
+                if (new_out == NULL) {
+                    free(out);
+                    throw_runtime_exception(env, "Failed to grow hyperlink scan buffer");
+                    return NULL;
+                }
+                out = new_out;
+                out_cap = new_cap;
+            }
+            memcpy(out + out_len, uri, written);
+            out_len += written;
+            out[out_len++] = (uint8_t) '\n';
+        }
+    }
+
+    if (out_len > (size_t) INT32_MAX) {
+        free(out);
+        throw_runtime_exception(env, "Hyperlink scan exceeds JNI array limits");
+        return NULL;
+    }
+    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize) out_len);
+    if (resultArray != NULL && out_len > 0)
+        (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize) out_len, (const jbyte*) out);
+    free(out);
     return resultArray;
 }

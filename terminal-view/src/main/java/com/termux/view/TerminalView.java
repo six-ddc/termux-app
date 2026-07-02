@@ -513,8 +513,29 @@ public final class TerminalView extends GLSurfaceView {
     public void onScreenUpdated(boolean skipScrolling) {
         if (mTerminalEngine == null) return;
 
-        mTopRow = mTerminalEngine.getViewportTopRow();
         int rowsInHistory = mTerminalEngine.getScrollbackRows();
+
+        // Compensate an active text selection for rows that scrolled into scrollback
+        // since the last update. Selection coordinates are top-of-active-screen
+        // relative, so appended rows shift the selected content upward; without this
+        // the highlight (and the eventually-copied text) drifts down by however many
+        // rows entered history since the selection was last set.
+        if (isSelectingText() && mTextSelectionCursorController != null) {
+            int rowShift = mTerminalEngine.getScrollCounter();
+            if (rowShift > 0) {
+                int[] selectors = new int[]{-1, -1, -1, -1};
+                mTextSelectionCursorController.getSelectors(selectors);
+                // selectors[1] is the bottom-most selected row (mSelY2). If even it has
+                // scrolled above the top of the scrollback buffer the selection is gone.
+                if (selectors[1] - rowShift < -rowsInHistory) {
+                    stopTextSelectionMode();
+                } else {
+                    decrementYTextSelectionCursors(rowShift);
+                }
+            }
+        }
+
+        mTopRow = mTerminalEngine.getViewportTopRow();
         if (mTopRow < -rowsInHistory) mTopRow = -rowsInHistory;
 
         mTerminalEngine.clearScrollCounter();

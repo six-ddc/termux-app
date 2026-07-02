@@ -38,6 +38,15 @@ android {
     def apkVersionTag = System.getenv("TERMUX_APK_VERSION_TAG") ?: ""
     def splitAPKsForDebugBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS") ?: "1"
     def splitAPKsForReleaseBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS") ?: "0" // F-Droid does not support split APKs #1904
+    // Whether per-ABI APK splitting is active for this invocation. When it is, the
+    // splits.abi block below already restricts the packaged ABIs to termuxBootstrapAbis.
+    // When it is NOT (the default for release builds), nothing otherwise bounds the ABIs
+    // ndkBuild produces, so a universal APK would ship 32-bit ABI directories that contain
+    // libtermux-bootstrap.so / liblocal-socket.so but not libghostty-vt.so / libtermux.so —
+    // crashing on first session on a 32-bit device. abiFilters (applied only in that case,
+    // since it cannot coexist with abi splits) closes that gap.
+    def abiSplitsEnabled = (gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
+        (gradle.startParameter.taskNames.any { it.contains("Release") } && splitAPKsForReleaseBuilds == "1")
 
     dependencies {
         implementation "androidx.annotation:annotation:1.9.0"
@@ -84,10 +93,18 @@ android {
             }
         }
 
+        // Only when abi splits are NOT active — abiFilters cannot coexist with a
+        // splits.abi filter (Gradle rejects it), and when splits are active the block
+        // below already bounds the packaged ABIs.
+        if (!abiSplitsEnabled) {
+            ndk {
+                abiFilters(*termuxBootstrapAbis)
+            }
+        }
+
         splits {
             abi {
-                enable ((gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
-                    (gradle.startParameter.taskNames.any { it.contains("Release") } && splitAPKsForReleaseBuilds == "1"))
+                enable abiSplitsEnabled
                 reset ()
                 include(*termuxBootstrapAbis)
                 universalApk termuxBootstrapAbis.size() > 1

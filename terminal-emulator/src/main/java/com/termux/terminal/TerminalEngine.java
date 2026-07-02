@@ -51,6 +51,13 @@ public interface TerminalEngine {
 
     void append(byte[] buffer, int length);
 
+    /**
+     * Rebuild the render snapshot if any {@link #append(byte[], int)} since the last snapshot left
+     * one pending. Called once before a screen-update is delivered so a burst of appends (drained in
+     * a loop by TerminalSession) rebuilds the snapshot a single time instead of per chunk.
+     */
+    void flushPendingSnapshot();
+
     void reset();
 
     boolean isGhosttyBacked();

@@ -64,6 +64,17 @@ final class TermuxPlusOscInterceptor {
     }
 
     private void step(int b) {
+        // CAN (0x18) and SUB (0x1a) abort any in-progress escape/control string
+        // anywhere in the stream (ECMA-48). libghostty honours this, so if we did
+        // not, a program that begins an OSC 52 and then cancels it with CAN would
+        // leave us buffering until the next BEL/ST and emit a clipboard write the
+        // real terminal discarded. Cancel and return to ground on either.
+        if (b == 0x18 || b == 0x1a) {
+            mBuffer.reset();
+            mOverflowed = false;
+            mState = STATE_GROUND;
+            return;
+        }
         switch (mState) {
             case STATE_GROUND:
                 if (b == 0x1b) mState = STATE_ESC;

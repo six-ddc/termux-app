@@ -69,6 +69,7 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
     private boolean mCursorBlinkingEnabled;
     private volatile boolean mCursorBlinkState = true;
     private int mScrollCounter;
+    private boolean mSnapshotPending;
     private int mViewportTopRow;
     private String mLastTitle;
     private boolean mAutoScrollDisabled;
@@ -135,11 +136,22 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
             JNI.ghosttyWrite(mNativeContext, buffer, 0, length);
             drainGhosttyEffects();
             drainOscEffects();
-            syncScreenSnapshot();
+            // Defer the expensive full-screen snapshot. TerminalSession drains many
+            // 64KB chunks in a loop before a single notifyScreenUpdate(), so building
+            // a snapshot per append would allocate (cols*rows*stride ints + per-cell
+            // grapheme strings + ~10 JNI reads) and immediately discard all but the
+            // last. flushPendingSnapshot() rebuilds it once before the update.
+            mSnapshotPending = true;
             int scrollbackRowsAfter = getScrollbackRows();
             if (scrollbackRowsAfter > scrollbackRowsBefore)
                 mScrollCounter += scrollbackRowsAfter - scrollbackRowsBefore;
         }
+    }
+
+    @Override
+    public void flushPendingSnapshot() {
+        if (mNativeContext != 0 && mSnapshotPending)
+            syncScreenSnapshot();
     }
 
     @Override
@@ -153,6 +165,7 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
     }
 
     private void syncScreenSnapshot() {
+        mSnapshotPending = false;
         int[] cells = JNI.ghosttySnapshotCells(mNativeContext, mColumns, mRows);
         int cellCount = mColumns * mRows;
         if (cells == null || cells.length < cellCount * RENDER_CELL_STRIDE) {
@@ -678,16 +691,15 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
     @Override
     public String[] getHyperlinks() {
         if (mNativeContext == 0) return new String[0];
+        // Single native scan of the whole grid; the bridge returns all URIs
+        // newline-separated in one byte[] instead of one JNI call per cell (which
+        // was 100k+ crossings on a full transcript and froze the UI thread).
+        byte[] raw = JNI.ghosttyGetHyperlinks(mNativeContext);
+        if (raw == null || raw.length == 0) return new String[0];
         java.util.LinkedHashSet<String> links = new java.util.LinkedHashSet<>();
-        int rows = getRows();
-        int columns = getColumns();
-        int startRow = -getScrollbackRows();
-        for (int y = startRow; y < rows; y++) {
-            for (int x = 0; x < columns; x++) {
-                String hyperlink = getHyperlinkAtLocation(x, y);
-                if (hyperlink != null && !hyperlink.isEmpty())
-                    links.add(hyperlink);
-            }
+        for (String uri : new String(raw, StandardCharsets.UTF_8).split("\n")) {
+            if (!uri.isEmpty())
+                links.add(uri);
         }
         return links.toArray(new String[0]);
     }
@@ -711,12 +723,16 @@ final class GhosttyTerminalEngine implements TerminalEngine, AutoCloseable {
 
     @Override
     public String getTitle() {
-        return mNativeContext == 0 ? null : JNI.ghosttyGetTitle(mNativeContext);
+        if (mNativeContext == 0) return null;
+        byte[] bytes = JNI.ghosttyGetTitle(mNativeContext);
+        return (bytes == null || bytes.length == 0) ? null : new String(bytes, StandardCharsets.UTF_8);
     }
 
     @Override
     public String getPwd() {
-        return mNativeContext == 0 ? null : JNI.ghosttyGetPwd(mNativeContext);
+        if (mNativeContext == 0) return null;
+        byte[] bytes = JNI.ghosttyGetPwd(mNativeContext);
+        return (bytes == null || bytes.length == 0) ? null : new String(bytes, StandardCharsets.UTF_8);
     }
 
     @Override

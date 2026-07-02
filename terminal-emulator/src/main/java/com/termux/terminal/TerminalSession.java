@@ -37,6 +37,10 @@ public final class TerminalSession extends TerminalOutput {
 
     volatile TerminalEngine mTerminalEngine;
 
+    /** Set when {@link #initializeEmulator} failed to create the native engine, to avoid
+     * re-attempting (and re-crashing/log-spamming) on every subsequent layout pass. */
+    private boolean mEmulatorInitFailed;
+
     /**
      * A queue written to from a separate thread when the process outputs, and read by main thread to process by
      * terminal emulator.
@@ -121,7 +125,20 @@ public final class TerminalSession extends TerminalOutput {
      * @param rows    The number of rows in the terminal window.
      */
     public void initializeEmulator(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
-        mTerminalEngine = TerminalEngineFactory.create(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
+        if (mEmulatorInitFailed) return;
+        try {
+            mTerminalEngine = TerminalEngineFactory.create(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
+        } catch (Throwable t) {
+            // The native terminal engine could not be created (e.g. libghostty-vt
+            // failed to dlopen on this device). initializeEmulator runs on the UI
+            // layout thread via TerminalView.onSizeChanged, so letting this
+            // propagate would crash the app on every layout pass in a loop. Fail
+            // once, log it, and leave the session engine-less rather than crashing.
+            mEmulatorInitFailed = true;
+            mTerminalEngine = null;
+            Logger.logStackTraceWithMessage(mClient, LOG_TAG, "Failed to initialize terminal engine; terminal will be unavailable", t instanceof Exception ? (Exception) t : new Exception(t));
+            return;
+        }
 
         int[] processId = new int[1];
         mTerminalFileDescriptor = JNI.createSubprocess(mShellPath, mCwd, mArgs, mEnv, processId, rows, columns, cellWidthPixels, cellHeightPixels);
@@ -240,6 +257,9 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Notify the {@link #mClient} that the screen has changed. */
     protected void notifyScreenUpdate() {
+        // Rebuild the render snapshot once for the whole batch of appends that
+        // preceded this update, rather than once per drained chunk.
+        mTerminalEngine.flushPendingSnapshot();
         mClient.onTextChanged(this);
     }
 

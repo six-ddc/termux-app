@@ -1,6 +1,8 @@
 package com.termux.app.terminal.io;
 
 import android.content.Context;
+import android.system.ErrnoException;
+import android.system.Os;
 
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
@@ -197,9 +199,26 @@ public final class TermuxPlusSnippetRepository {
     }
 
     private static void writeText(File file, String text) throws IOException {
-        try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-            writer.write(text);
-            writer.write('\n');
+        File parent = file.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs())
+            throw new IOException("Failed to create \"" + parent + "\"");
+
+        // Write to a sibling temp file on the same filesystem then atomically rename
+        // over the target, so a mid-write failure (ENOSPC, process kill) can never
+        // leave snippets.json truncated/corrupt. Mirrors TermuxPlusHomeInstaller.copyAssetFile.
+        File tempFile = new File(parent, "." + file.getName() + ".tmp");
+        try {
+            try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(tempFile, false), StandardCharsets.UTF_8)) {
+                writer.write(text);
+                writer.write('\n');
+            }
+            Os.rename(tempFile.getAbsolutePath(), file.getAbsolutePath());
+        } catch (ErrnoException e) {
+            tempFile.delete();
+            throw new IOException("Failed to rename \"" + tempFile + "\" to \"" + file + "\": " + e.getMessage(), e);
+        } catch (IOException e) {
+            tempFile.delete();
+            throw e;
         }
     }
 }

@@ -77,11 +77,11 @@ final class JNI {
     /** Read a mode from a libghostty-vt terminal context. */
     public static native boolean ghosttyGetMode(long context, int mode);
 
-    /** Read the terminal title from a libghostty-vt terminal context. */
-    public static native String ghosttyGetTitle(long context);
+    /** Read the terminal title as raw UTF-8 bytes (decode with StandardCharsets.UTF_8), or null when unset. */
+    public static native byte[] ghosttyGetTitle(long context);
 
-    /** Read the shell-reported working directory (OSC 7) or null when unset. */
-    public static native String ghosttyGetPwd(long context);
+    /** Read the shell-reported working directory (OSC 7) as raw UTF-8 bytes, or null when unset. */
+    public static native byte[] ghosttyGetPwd(long context);
 
     /** Read scrollbar state as [totalRows, viewportOffset, viewportRows]. */
     public static native int[] ghosttyGetScrollbar(long context);
@@ -138,5 +138,11 @@ final class JNI {
 
     /** Return the OSC 8 hyperlink URI at a screen-coordinate cell, or an empty byte array. */
     public static native byte[] ghosttyGetHyperlinkAtLocation(long context, int x, int y);
+
+    /**
+     * Scan the whole grid (scrollback + viewport) for OSC 8 hyperlinks in a single JNI crossing and
+     * return every discovered URI newline-separated as one UTF-8 byte array. Empty when none.
+     */
+    public static native byte[] ghosttyGetHyperlinks(long context);
 
 }

@@ -545,19 +545,37 @@ final class TerminalGpuRenderer implements GLSurfaceView.Renderer {
         int sizeBytes = placement.imageData.length;
         KittyTexture texture = new KittyTexture(textureId, placement.imageWidth, placement.imageHeight,
             placement.imageFormat, sizeBytes);
+        // The cache key does not encode width/height/format, so an existing entry can be
+        // replaced here when only the dimensions/format changed. Release the stale GL
+        // texture and back out its byte count before overwriting, otherwise the texture
+        // leaks and mKittyTexturesByteCount stays permanently inflated.
+        KittyTexture stale = mKittyTextures.get(key);
+        if (stale != null) {
+            if (stale.textureId != 0) {
+                int[] handle = new int[]{stale.textureId};
+                GLES20.glDeleteTextures(1, handle, 0);
+            }
+            mKittyTexturesByteCount -= stale.sizeBytes;
+        }
         mKittyTextures.put(key, texture);
         mKittyTexturesByteCount += sizeBytes;
-        evictKittyTexturesIfNeeded();
+        evictKittyTexturesIfNeeded(key);
         return texture;
     }
 
-    private void evictKittyTexturesIfNeeded() {
+    private void evictKittyTexturesIfNeeded(long protectedKey) {
         java.util.Iterator<java.util.Map.Entry<Long, KittyTexture>> it = mKittyTextures.entrySet().iterator();
         int[] handle = new int[1];
         while (it.hasNext()
                 && (mKittyTextures.size() > KITTY_TEXTURE_MAX_ENTRIES
                     || mKittyTexturesByteCount > KITTY_TEXTURE_MAX_BYTES)) {
             java.util.Map.Entry<Long, KittyTexture> oldest = it.next();
+            // Never evict the entry we just inserted / are about to return. For a single
+            // image larger than KITTY_TEXTURE_MAX_BYTES deleting it would leave
+            // getKittyTexture() returning a dead (black) texture and re-uploading every
+            // frame. Accept temporary over-cap instead.
+            if (oldest.getKey() == protectedKey)
+                continue;
             KittyTexture evicted = oldest.getValue();
             handle[0] = evicted.textureId;
             GLES20.glDeleteTextures(1, handle, 0);

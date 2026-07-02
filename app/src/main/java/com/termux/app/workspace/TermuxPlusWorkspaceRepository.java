@@ -442,7 +442,11 @@ public final class TermuxPlusWorkspaceRepository {
         env.put("PATH", currentPath == null || currentPath.isEmpty()
             ? TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH
             : TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + currentPath);
-        env.put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+        // Do NOT set LD_LIBRARY_PATH: Termux binaries on Android 7+ (the apt-android-7
+        // variant this app ships) rely on DT_RUNPATH, and TermuxShellEnvironment
+        // deliberately leaves LD_LIBRARY_PATH unset for real sessions. Forcing
+        // $PREFIX/lib here diverged from that and could make a spawned binary load
+        // the wrong shared libraries.
     }
 
     private static String readFirstLine(File file) throws IOException {
